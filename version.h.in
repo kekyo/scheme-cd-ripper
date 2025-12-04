@@ -1,0 +1,3 @@
+#pragma once
+#define VERSION "{version}"
+#define COMMIT_ID "{git.commit.hash}"
