@@ -5,7 +5,7 @@ Scheme CD Ripper is a linux CLI tool that rips audio CDs to FLAC.
 [![Project Status: Active – The project has reached a stable, usable state and is being actively developed.](https://www.repostatus.org/badges/latest/active.svg)](https://www.repostatus.org/#active)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Packages are available in: https://github.com/kekyo/scheme-cd-ripper/releases
+Packages are available in (Debian/Ubuntu): https://github.com/kekyo/scheme-cd-ripper/releases
 
 ----
 
@@ -92,6 +92,14 @@ Done.
 ```
 
 -----
+
+## Installation
+
+For Debian (bookworm) / Ubuntu (noble, jammy), [prebuilt binaries are available here](https://github.com/kekyo/scheme-cd-ripper/releases).
+There are two packages available (`cdrip.deb`, `libcdrip-dev.deb`), but if you only need to use `cdrip` command, installing just the first one is sufficient.
+The second one is an API library for C language when you want to use this feature.
+
+For environments other than those listed above, you can build it yourself. In that case, please refer to [Self Building](https://github.com/kekyo/scheme-cd-ripper#self-building).
 
 ## CLI Usage
 

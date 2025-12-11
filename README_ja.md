@@ -5,7 +5,7 @@ Scheme CD Ripperは、オーディオCDをFLAC形式にリッピングするLinu
 [![Project Status: Active – The project has reached a stable, usable state and is being actively developed.](https://www.repostatus.org/badges/latest/active.svg)](https://www.repostatus.org/#active)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Packages are available in: https://github.com/kekyo/scheme-cd-ripper/releases
+配布パッケージ一覧(Debian/Ubuntu): https://github.com/kekyo/scheme-cd-ripper/releases
 
 ----
 
@@ -93,6 +93,14 @@ Done.
 ```
 
 -----
+
+## インストール
+
+Debian (bookworm) / Ubuntu (noble, jammy) では、[ビルド済みバイナリがここにあります](https://github.com/kekyo/scheme-cd-ripper/releases)。
+パッケージは環境ごとに2種類 (`cdrip.deb`, `libcdrip-dev.deb`) がありますが、`cdrip`コマンドを使うだけなら前者のみインストールすればOKです。
+後者はこの機能を使いたい場合の、C言語向けAPIライブラリです。
+
+上記以外の環境の場合は、自分でビルドすることも可能です。その場合は [Self Building](https://github.com/kekyo/scheme-cd-ripper#self-building) を参照してください。
 
 ## コマンドの使用方法
 
