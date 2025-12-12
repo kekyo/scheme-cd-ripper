@@ -162,6 +162,10 @@ int cdrip_fetch_cover_art(
     if (source_label != "musicbrainz") {
         return 0;
     }
+    // Respect MusicBrainz metadata: if it indicates no artwork, don't attempt downloading.
+    if (entry->cover_art.available == 0) {
+        return 0;
+    }
 
     std::string release_id = album_tag(entry, "MUSICBRAINZ_RELEASE");
     if (release_id.empty() && toc) {
@@ -173,7 +177,6 @@ int cdrip_fetch_cover_art(
         return 0;
     }
 
-    const bool release_has_art = entry->cover_art.available != 0;
     std::string content_type;
     std::vector<uint8_t> data;
     std::string err_msg;
@@ -192,7 +195,7 @@ int cdrip_fetch_cover_art(
     };
 
     bool success = false;
-    if (!release_id.empty() && (release_has_art || release_group_id.empty())) {
+    if (!release_id.empty()) {
         const std::string url = "https://coverartarchive.org/release/" + release_id + "/front";
         success = try_fetch(url);
     }
