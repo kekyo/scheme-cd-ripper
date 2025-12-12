@@ -113,7 +113,7 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-s] [-r] [-n] [-a] [-i
 - `-d`, `--device`: CD device path (`/dev/cdrom` or others). If not specified, it will automatically detect available CD devices and list them.
 - `-f`, `--format`: FLAC destination path format. using tag names inside `{}`, tags are case-insensitive. (default: `{album}/{tracknumber:02d}_{safetitle}.flac`)
 - `-m`, `--mode`: Integrity check mode: `best` (full integrity checks, default), `fast` (disabled any checks)
-- `-c`, `--compression`: FLAC compression level (default: `auto` (best --> `8`, fast --> `1`))
+- `-c`, `--compression`: FLAC compression level (default: `auto` (best --> `5`, fast --> `1`))
 - `-s`, `--sort`: Sort CDDB results by album name on the prompt.
 - `-r`, `--repeat`: Prompt for next disc after finishing.
 - `-n`, `--no-eject`: Keep disc in the drive after ripping finishes.
@@ -125,6 +125,8 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-s] [-r] [-n] [-a] [-i
 All command-line options (except `-u` and `-i`) can override the contents of the config file specified with `-i`.
 
 TIPS: If you want to import a large number of CDs continuously with MusicBrainz tagging, you can do so by specifying the `cdrip -a -r` option.
+
+TIPS: Some hardware media players malfunction when the compression level is set to 6 or higher. Therefore, the default for Scheme CD ripper is set to 5.
 
 ## Vorbis comments
 

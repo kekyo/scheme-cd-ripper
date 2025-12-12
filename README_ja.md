@@ -114,7 +114,7 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-s] [-r] [-n] [-a] [-i
 - `-d`, `--device`: CDデバイスのパス（`/dev/cdrom` など）。指定しない場合、利用可能なCDデバイスを自動検出して一覧表示します。
 - `-f`, `--format`: FLAC出力ファイルパスの形式。`{}`内のタグ名を使用し、タグは大文字小文字を区別しません（デフォルト: `{album}/{tracknumber:02d}_{safetitle}.flac`）。
 - `-m`, `--mode`: 整合性チェックモード: `best`（完全な整合性チェック。デフォルト）または `fast` (チェックを無効化)
-- `-c`, `--compression`: FLAC圧縮レベル (デフォルト: `auto` (best --> `8`, fast --> `1`))
+- `-c`, `--compression`: FLAC圧縮レベル (デフォルト: `auto` (best --> `5`, fast --> `1`))
 - `-s`, `--sort`: CDDB検索結果をアルバム名順に並べ替えて表示。
 - `-r`, `--repeat`: 終了後に次のCDのリッピング作業を連続して行う。
 - `-n`, `--no-eject`: リッピング終了後もCDをドライブ内に保持する。
@@ -126,6 +126,8 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-s] [-r] [-n] [-a] [-i
 すべてのコマンドラインオプション（`-u` および `-i` を除く）は、`-i` で指定された設定ファイルの内容を上書きできます。
 
 TIPS: MusicBrainzタグ付けで大量のCDを連続してインポートしたい場合は、`cdrip -a -r` オプションを指定することで実現できます。
+
+TIPS: いくつかのハードウェアメディアプレーヤーでは、圧縮レベルを6以上にすると誤動作を起こします。したがって、Scheme CD ripperのデフォルトは5となっています。
 
 ## Vorbis comments
 

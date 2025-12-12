@@ -707,7 +707,7 @@ Options parse_args(int argc, char** argv) {
             std::cout << "  -d / --device: CD device path (default: auto-detect)\n";
             std::cout << "  -f / --format: FLAC destination path format (default: \"{album}/{tracknumber:02d}_{safetitle}.flac\")\n";
             std::cout << "  -m / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disabled any checks)\n";
-            std::cout << "  -c / --compression: FLAC compression level (default: auto (best --> 8, fast --> 1))\n";
+            std::cout << "  -c / --compression: FLAC compression level (default: auto (best --> 5, fast --> 1))\n";
             std::cout << "  -s / --sort: Sort CDDB results by album name on the prompt\n";
             std::cout << "  -r / --repeat: Prompt for next disc after finishing\n";
             std::cout << "  -n / --no-eject: Keep disc in the drive after ripping finishes\n";
@@ -978,7 +978,7 @@ int main(int argc, char** argv) {
     CdRipRipModes effective_mode = (rip_mode == RIP_MODES_DEFAULT) ? RIP_MODES_BEST : rip_mode;
     int resolved_compression = compression_level >= 0
         ? compression_level
-        : (effective_mode == RIP_MODES_FAST ? 1 : 8);
+        : (effective_mode == RIP_MODES_FAST ? 1 : 5);
     std::cout << "  compression : " << resolved_compression;
     if (compression_level < 0) std::cout << " (auto)";
     std::cout << "\n";
