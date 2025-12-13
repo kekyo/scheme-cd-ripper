@@ -642,14 +642,20 @@ static bool fetch_musicbrainz_entries(
         url = "https://musicbrainz.org/ws/2/release/" + release_id +
             "?fmt=json&inc=" + kMusicBrainzReleaseInc;
         use_release_endpoint = true;
-    } else if (!discid.empty()) {
-        const std::string toc_param = build_toc_param(toc);
-        url = "https://musicbrainz.org/ws/2/discid/" + discid +
-            "?fmt=json&toc=" + toc_param +
-            "&inc=" + kMusicBrainzInc;
     } else {
-        err = "MusicBrainz query failed: missing discid and release id";
-        return false;
+        const std::string toc_param = build_toc_param(toc);
+        if (toc_param.empty()) {
+            err = "MusicBrainz query failed: unable to build TOC";
+            return false;
+        }
+
+        // Prefer release matches over CD stubs, and allow fuzzy TOC lookups even when a CD stub exists.
+        // See: https://musicbrainz.org/doc/MusicBrainz_API#discid
+        const std::string discid_path = discid.empty() ? "-" : discid;
+        url = "https://musicbrainz.org/ws/2/discid/" + discid_path +
+            "?fmt=json&toc=" + toc_param +
+            "&cdstubs=no" +
+            "&inc=" + kMusicBrainzInc;
     }
 
     std::string body;
