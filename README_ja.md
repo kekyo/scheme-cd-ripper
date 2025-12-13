@@ -280,6 +280,10 @@ path=/~cddb/cddb.cgi
 
 このソフトウェアにおいて、「CDDB」は特定の製品の用語を指すのではなく、「CDメタデータデータベース」を指します。
 
+## ディスカッションとPR
+
+ディスカッションは、 [GitHubのディスカッションページ](https://github.com/kekyo/scheme-cd-ripper/discussions) を参照して下さい。現在はissueベースのディスカッションを取りやめています。
+
 ## License
 
 Under MIT.
