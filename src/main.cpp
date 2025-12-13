@@ -21,6 +21,7 @@
 #include <cerrno>
 #include <vector>
 #include <map>
+#include <unordered_set>
 
 #include <sys/select.h>
 #include <unistd.h>
@@ -301,6 +302,13 @@ void ensure_entry_ready_for_toc(
     }
 
     if (entry->tracks) {
+        // We rebuild the track tag arrays below, reusing the underlying C strings.
+        // Free only the old tag arrays here to avoid leaking them (strings are freed later).
+        for (size_t i = 0; i < entry->tracks_count; ++i) {
+            delete[] entry->tracks[i].tags;
+            entry->tracks[i].tags = nullptr;
+            entry->tracks[i].tags_count = 0;
+        }
         delete[] entry->tracks;
     }
     entry->tracks_count = rebuilt.size();
@@ -345,9 +353,290 @@ CdRipCddbEntry* make_fallback_entry(const CdRipDiscToc* toc) {
     return entry;
 }
 
+std::string to_lower_ascii(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (unsigned char ch : s) {
+        out.push_back(static_cast<char>(std::tolower(ch)));
+    }
+    return out;
+}
+
+std::string to_upper_ascii(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (unsigned char ch : s) {
+        out.push_back(static_cast<char>(std::toupper(ch)));
+    }
+    return out;
+}
+
+std::string trim_ws(const std::string& s) {
+    const size_t start = s.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) return {};
+    const size_t end = s.find_last_not_of(" \t\r\n");
+    return s.substr(start, end - start + 1);
+}
+
+bool is_multi_value_tag_key(const std::string& key_upper) {
+    // Tags that may contain multiple values separated by ',' or ';'.
+    // e.g. GENRE: "foo; bar" / ISRC: "AAA; BBB"
+    return key_upper == "GENRE" || key_upper == "ISRC";
+}
+
+std::vector<std::string> split_multi_values(const std::string& raw) {
+    std::vector<std::string> out;
+    std::string token;
+    token.reserve(raw.size());
+    auto flush = [&]() {
+        std::string t = trim_ws(token);
+        if (!t.empty()) out.push_back(std::move(t));
+        token.clear();
+    };
+    for (char ch : raw) {
+        if (ch == ',' || ch == ';') {
+            flush();
+            continue;
+        }
+        token.push_back(ch);
+    }
+    flush();
+    return out;
+}
+
+std::string join_multi_values(const std::vector<std::string>& values) {
+    std::ostringstream oss;
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) oss << ";";
+        oss << values[i];
+    }
+    return oss.str();
+}
+
+std::string merge_multi_values_zip(
+    const std::vector<std::vector<std::string>>& per_entry_tokens) {
+
+    size_t max_len = 0;
+    for (const auto& tokens : per_entry_tokens) {
+        max_len = std::max(max_len, tokens.size());
+    }
+
+    std::vector<std::string> merged;
+    merged.reserve(max_len * (per_entry_tokens.empty() ? 0 : per_entry_tokens.size()));
+    std::unordered_set<std::string> seen;
+    for (size_t pos = 0; pos < max_len; ++pos) {
+        for (const auto& tokens : per_entry_tokens) {
+            if (pos >= tokens.size()) continue;
+            const std::string t = trim_ws(tokens[pos]);
+            if (t.empty()) continue;
+            const std::string norm = to_lower_ascii(t);
+            if (seen.insert(norm).second) {
+                merged.push_back(t);
+            }
+        }
+    }
+
+    return join_multi_values(merged);
+}
+
+CdRipCddbEntryList* merge_cddb_entries_for_toc(
+    const CdRipDiscToc* toc,
+    const std::vector<CdRipCddbEntry*>& selected_entries) {
+
+    if (!toc || selected_entries.empty()) return nullptr;
+
+    CdRipCddbEntry merged{};
+
+    auto pick_first_nonempty = [&](auto selector) -> std::string {
+        for (const auto* e : selected_entries) {
+            if (!e) continue;
+            const std::string v = trim_ws(selector(*e));
+            if (!v.empty()) return v;
+        }
+        return {};
+    };
+
+    std::string discid = pick_first_nonempty([](const CdRipCddbEntry& e) { return view_string(e.cddb_discid); });
+    if (discid.empty()) discid = trim_ws(view_string(toc->cddb_discid));
+    if (discid.empty()) discid = "unknown";
+    merged.cddb_discid = dup_cstr(discid);
+
+    const std::string source_label = pick_first_nonempty([](const CdRipCddbEntry& e) { return view_string(e.source_label); });
+    const std::string source_url = pick_first_nonempty([](const CdRipCddbEntry& e) { return view_string(e.source_url); });
+    const std::string fetched_at = pick_first_nonempty([](const CdRipCddbEntry& e) { return view_string(e.fetched_at); });
+    merged.source_label = dup_cstr(source_label);
+    merged.source_url = dup_cstr(source_url);
+    merged.fetched_at = dup_cstr(fetched_at);
+
+    std::map<std::string, std::string> merged_album_tags;
+    std::unordered_set<std::string> album_keys_seen;
+    for (const auto* e : selected_entries) {
+        if (!e || !e->album_tags) continue;
+        for (size_t i = 0; i < e->album_tags_count; ++i) {
+            const std::string key_upper = to_upper_ascii(view_string(e->album_tags[i].key));
+            if (key_upper.empty() || is_multi_value_tag_key(key_upper)) continue;
+            if (album_keys_seen.find(key_upper) != album_keys_seen.end()) continue;
+            const std::string value = trim_ws(view_string(e->album_tags[i].value));
+            if (value.empty()) continue;
+            merged_album_tags[key_upper] = value;
+            album_keys_seen.insert(key_upper);
+        }
+    }
+    for (const char* multi_key : {"GENRE", "ISRC"}) {
+        std::vector<std::vector<std::string>> per_entry_tokens;
+        per_entry_tokens.reserve(selected_entries.size());
+        for (const auto* e : selected_entries) {
+            std::vector<std::string> tokens;
+            if (e && e->album_tags) {
+                for (size_t i = 0; i < e->album_tags_count; ++i) {
+                    const std::string key_upper = to_upper_ascii(view_string(e->album_tags[i].key));
+                    if (key_upper != multi_key) continue;
+                    const std::string value = view_string(e->album_tags[i].value);
+                    auto parts = split_multi_values(value);
+                    tokens.insert(tokens.end(), parts.begin(), parts.end());
+                }
+            }
+            per_entry_tokens.push_back(std::move(tokens));
+        }
+        const std::string merged_value = merge_multi_values_zip(per_entry_tokens);
+        if (!merged_value.empty()) {
+            merged_album_tags[multi_key] = merged_value;
+        }
+    }
+
+    if (!merged_album_tags.empty()) {
+        merged.album_tags_count = merged_album_tags.size();
+        merged.album_tags = new CdRipTagKV[merged.album_tags_count]{};
+        size_t idx = 0;
+        for (const auto& [key, value] : merged_album_tags) {
+            merged.album_tags[idx].key = dup_cstr(key);
+            merged.album_tags[idx].value = dup_cstr(value);
+            ++idx;
+        }
+    }
+
+    const size_t tracks = toc->tracks_count;
+    merged.tracks_count = tracks;
+    if (tracks > 0) {
+        merged.tracks = new CdRipTrackTags[tracks]{};
+    }
+
+    for (size_t ti = 0; ti < tracks; ++ti) {
+        std::map<std::string, std::string> merged_track_tags;
+        std::unordered_set<std::string> track_keys_seen;
+        for (const auto* e : selected_entries) {
+            if (!e || !e->tracks || ti >= e->tracks_count) continue;
+            const auto& tt = e->tracks[ti];
+            if (!tt.tags) continue;
+            for (size_t k = 0; k < tt.tags_count; ++k) {
+                const std::string key_upper = to_upper_ascii(view_string(tt.tags[k].key));
+                if (key_upper.empty() || is_multi_value_tag_key(key_upper)) continue;
+                if (track_keys_seen.find(key_upper) != track_keys_seen.end()) continue;
+                const std::string value = trim_ws(view_string(tt.tags[k].value));
+                if (value.empty()) continue;
+                merged_track_tags[key_upper] = value;
+                track_keys_seen.insert(key_upper);
+            }
+        }
+        for (const char* multi_key : {"GENRE", "ISRC"}) {
+            std::vector<std::vector<std::string>> per_entry_tokens;
+            per_entry_tokens.reserve(selected_entries.size());
+            for (const auto* e : selected_entries) {
+                std::vector<std::string> tokens;
+                if (e && e->tracks && ti < e->tracks_count) {
+                    const auto& tt = e->tracks[ti];
+                    if (tt.tags) {
+                        for (size_t k = 0; k < tt.tags_count; ++k) {
+                            const std::string key_upper = to_upper_ascii(view_string(tt.tags[k].key));
+                            if (key_upper != multi_key) continue;
+                            const std::string value = view_string(tt.tags[k].value);
+                            auto parts = split_multi_values(value);
+                            tokens.insert(tokens.end(), parts.begin(), parts.end());
+                        }
+                    }
+                }
+                per_entry_tokens.push_back(std::move(tokens));
+            }
+            const std::string merged_value = merge_multi_values_zip(per_entry_tokens);
+            if (!merged_value.empty()) {
+                merged_track_tags[multi_key] = merged_value;
+            }
+        }
+
+        if (!merged_track_tags.empty()) {
+            merged.tracks[ti].tags_count = merged_track_tags.size();
+            merged.tracks[ti].tags = new CdRipTagKV[merged.tracks[ti].tags_count]{};
+            size_t idx = 0;
+            for (const auto& [key, value] : merged_track_tags) {
+                merged.tracks[ti].tags[idx].key = dup_cstr(key);
+                merged.tracks[ti].tags[idx].value = dup_cstr(value);
+                ++idx;
+            }
+        }
+    }
+
+    auto* out = new CdRipCddbEntryList{};
+    out->count = 1;
+    out->entries = new CdRipCddbEntry[1]{};
+    out->entries[0] = merged;
+    return out;
+}
+
+void clear_cover_art(CdRipCoverArt& art) {
+    if (art.data) {
+        delete[] art.data;
+        art.data = nullptr;
+    }
+    art.size = 0;
+    if (art.mime_type) {
+        delete[] art.mime_type;
+        art.mime_type = nullptr;
+    }
+    art.is_front = 0;
+    art.available = 0;
+}
+
+bool ensure_cover_art_merged(
+    CdRipCddbEntry* target,
+    const std::vector<CdRipCddbEntry*>& candidates,
+    const CdRipDiscToc* toc,
+    std::string& notice_out) {
+
+    notice_out.clear();
+    if (!target) return false;
+    if (target->cover_art.data && target->cover_art.size > 0) {
+        return true;
+    }
+
+    const std::vector<CdRipCddbEntry*> effective =
+        !candidates.empty() ? candidates : std::vector<CdRipCddbEntry*>{target};
+
+    for (CdRipCddbEntry* e : effective) {
+        if (!e) continue;
+        const char* cover_err = nullptr;
+        const int ok = cdrip_fetch_cover_art(e, toc, &cover_err);
+        if (ok && e->cover_art.data && e->cover_art.size > 0) {
+            if (e != target) {
+                clear_cover_art(target->cover_art);
+                target->cover_art = clone_cover_art(e->cover_art);
+            }
+            if (cover_err) cdrip_release_error(cover_err);
+            return true;
+        }
+        if (cover_err) {
+            notice_out = view_string(cover_err);
+            cdrip_release_error(cover_err);
+        }
+    }
+
+    return false;
+}
+
 struct CddbSelection {
     CdRipCddbEntryList* entries{nullptr};
+    CdRipCddbEntryList* merged{nullptr};
     CdRipCddbEntry* selected{nullptr};
+    std::vector<CdRipCddbEntry*> selected_entries{};
     bool ignored{false};
 };
 
@@ -357,6 +646,7 @@ CddbSelection select_cddb_entry_for_toc(
     bool sort,
     const std::string& context_label = std::string{},
     bool auto_mode = false,
+    bool no_merge = false,
     bool allow_fallback = true,
     EntryListCache* metadata_cache = nullptr) {
 
@@ -477,56 +767,128 @@ CddbSelection select_cddb_entry_for_toc(
     }
     std::cout << "[0] (Ignore all, not use these tags)\n";
 
-    size_t choice = 1;
+    std::vector<size_t> choices;
     if (auto_mode) {
         if (!had_initial_matches) {
-            choice = 0;
+            choices = {0};
             std::cout << "\nAuto mode: no CDDB candidates; proceeding without selection.\n";
         } else {
-            size_t preferred_index = sorted_indices.size();  // index in sorted_indices (0-based)
-            for (size_t i = 0; i < sorted_indices.size(); ++i) {
-                const auto& candidate = entries->entries[sorted_indices[i]];
-                if (has_cover_art(candidate)) {
-                    preferred_index = i;
+            choices = {1};  // Always use the first entry (no merge).
+            const auto& chosen = entries->entries[sorted_indices[0]];
+            std::cout << "\nAuto mode: selected \"" << get_album_tag(&chosen, "ARTIST") << " - "
+                      << get_album_tag(&chosen, "ALBUM") << "\".\n";
+        }
+    } else {
+        while (true) {
+            std::cout << "\nSelect match [0-" << entries->count
+                      << "] (comma/space separated, default 1): ";
+            std::string choice_line;
+            if (!std::getline(std::cin, choice_line)) {
+                choice_line.clear();
+            }
+            if (choice_line.empty()) {
+                choices = {1};
+                break;
+            }
+
+            std::string normalized = choice_line;
+            for (char& ch : normalized) {
+                if (ch == ',') ch = ' ';
+            }
+            std::istringstream iss(normalized);
+            std::vector<int> nums;
+            std::string token;
+            bool parse_ok = true;
+            while (iss >> token) {
+                try {
+                    nums.push_back(std::stoi(token));
+                } catch (...) {
+                    parse_ok = false;
                     break;
                 }
             }
-            if (preferred_index == sorted_indices.size()) {
-                preferred_index = 0;
+            if (!parse_ok || nums.empty()) {
+                std::cerr << "Invalid selection. Example: 1 or 1,2 or 1 2\n";
+                continue;
             }
-            choice = preferred_index + 1;  // 1-based as with prompts
-            const auto& chosen = entries->entries[sorted_indices[choice - 1]];
-            std::cout << "\nAuto mode: selected \"" << get_album_tag(&chosen, "ARTIST") << " - "
-                      << get_album_tag(&chosen, "ALBUM") << "\"";
-            if (has_cover_art(chosen)) {
-                std::cout << " (with cover art)";
+
+            std::unordered_set<int> seen;
+            std::vector<int> unique_nums;
+            unique_nums.reserve(nums.size());
+            for (int n : nums) {
+                if (seen.insert(n).second) unique_nums.push_back(n);
             }
-            std::cout << ".\n";
-        }
-    } else {
-        std::cout << "\nSelect match [0-" << entries->count << "] (default 1): ";
-        std::string choice_line;
-        std::getline(std::cin, choice_line);
-        if (!choice_line.empty()) {
-            try {
-                int parsed = std::stoi(choice_line);
-                if (parsed == 0) choice = 0;
-                else if (parsed >= 1 && static_cast<size_t>(parsed) <= entries->count) choice = static_cast<size_t>(parsed);
-            } catch (...) {
-                std::cerr << "Invalid selection, using first match\n";
+
+            bool has_zero = false;
+            bool range_ok = true;
+            for (int n : unique_nums) {
+                if (n == 0) {
+                    has_zero = true;
+                    continue;
+                }
+                if (n < 0 || static_cast<size_t>(n) > entries->count) {
+                    range_ok = false;
+                    break;
+                }
             }
+            if (!range_ok) {
+                std::cerr << "Invalid selection range. Valid: 0-" << entries->count << "\n";
+                continue;
+            }
+            if (has_zero && unique_nums.size() > 1) {
+                std::cerr << "Error: 0 must be selected alone.\n";
+                continue;
+            }
+            if (no_merge && unique_nums.size() > 1) {
+                std::cerr << "Error: multiple selections require merge; omit -nm/--no-merge.\n";
+                continue;
+            }
+
+            choices.clear();
+            choices.reserve(unique_nums.size());
+            for (int n : unique_nums) choices.push_back(static_cast<size_t>(n));
+            break;
         }
     }
 
-    CdRipCddbEntry* selected = (choice == 0)
-        ? nullptr
-        : &entries->entries[sorted_indices[choice - 1]];
-
+    const bool ignored = (choices.size() == 1 && choices[0] == 0);
     result.entries = entries;
-    result.selected = selected;
-    result.ignored = (choice == 0);
-    if (choice == 0) {
-        // Mark selection as ignored by leaving selected null.
+    result.ignored = ignored;
+    if (ignored) {
+        result.selected = nullptr;
+        result.selected_entries.clear();
+        return result;
+    }
+
+    std::vector<CdRipCddbEntry*> selected_entries;
+    selected_entries.reserve(choices.size());
+    std::unordered_set<size_t> seen_entry_indices;
+    for (size_t n : choices) {
+        if (n == 0) continue;
+        if (n < 1 || n > entries->count) continue;
+        const size_t entry_index = sorted_indices[n - 1];
+        if (seen_entry_indices.insert(entry_index).second) {
+            selected_entries.push_back(&entries->entries[entry_index]);
+        }
+    }
+    if (selected_entries.empty()) {
+        selected_entries.push_back(&entries->entries[sorted_indices[0]]);
+    }
+
+    result.selected_entries = selected_entries;
+    if (!auto_mode && !no_merge && selected_entries.size() > 1) {
+        result.merged = merge_cddb_entries_for_toc(toc, selected_entries);
+        if (result.merged && result.merged->count > 0 && result.merged->entries) {
+            result.selected = &result.merged->entries[0];
+        } else {
+            if (result.merged) {
+                cdrip_release_cddbentry_list(result.merged);
+                result.merged = nullptr;
+            }
+            result.selected = selected_entries.front();
+        }
+    } else {
+        result.selected = selected_entries.front();
     }
     return result;
 }
@@ -759,6 +1121,7 @@ struct Options {
     std::optional<bool> auto_mode;
     std::string config_file;
     bool no_eject = false;
+    bool no_merge = false;
     std::vector<std::string> update_paths;
 };
 
@@ -802,7 +1165,12 @@ Options parse_args(int argc, char** argv) {
             opts.sort = true;
         } else if (arg == "-a" || arg == "--auto") {
             opts.auto_mode = true;
-        } else if (arg == "-n" || arg == "--no-eject") {
+        } else if (arg == "-nm" || arg == "--no-merge") {
+            opts.no_merge = true;
+        } else if (arg == "-ne" || arg == "--no-eject") {
+            opts.no_eject = true;
+        } else if (arg == "-n") {
+            std::cerr << "Warning: -n is deprecated; use -ne or --no-eject\n";
             opts.no_eject = true;
         } else if (arg == "-u" || arg == "--update") {
             if (i + 1 < argc) {
@@ -812,18 +1180,19 @@ Options parse_args(int argc, char** argv) {
                 std::exit(1);
             }
         } else if (arg == "-h" || arg == "--help") {
-            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-n] [-a] [-i config] [-u file|dir ...]\n";
-            std::cout << "  -d / --device: CD device path (default: auto-detect)\n";
-            std::cout << "  -f / --format: FLAC destination path format (default: \"{album}/{tracknumber:02d}_{safetitle}.flac\")\n";
-            std::cout << "  -m / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disabled any checks)\n";
-            std::cout << "  -c / --compression: FLAC compression level (default: auto (best --> 5, fast --> 1))\n";
-            std::cout << "  -w / --max-width: Cover art max width in pixels (default: 512)\n";
-            std::cout << "  -s / --sort: Sort CDDB results by album name on the prompt\n";
-            std::cout << "  -r / --repeat: Prompt for next disc after finishing\n";
-            std::cout << "  -n / --no-eject: Keep disc in the drive after ripping finishes\n";
-            std::cout << "  -a / --auto: Enable fully automatic mode (without any prompts)\n";
-            std::cout << "  -i / --input: cdrip config file path (default search: ./cdrip.conf --> ~/.cdrip.conf)\n";
-            std::cout << "  -u / --update <file|dir> [more ...]: Update existing FLAC tags from CDDB using embedded tags (other options ignored)\n";
+            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-nm] [-a] [-i config] [-u file|dir ...]\n";
+            std::cout << "  -d  / --device: CD device path (default: auto-detect)\n";
+            std::cout << "  -f  / --format: FLAC destination path format (default: \"{album}/{tracknumber:02d}_{safetitle}.flac\")\n";
+            std::cout << "  -m  / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disabled any checks)\n";
+            std::cout << "  -c  / --compression: FLAC compression level (default: auto (best --> 5, fast --> 1))\n";
+            std::cout << "  -w  / --max-width: Cover art max width in pixels (default: 512)\n";
+            std::cout << "  -s  / --sort: Sort CDDB results by album name on the prompt\n";
+            std::cout << "  -r  / --repeat: Prompt for next disc after finishing\n";
+            std::cout << "  -ne / --no-eject: Keep disc in the drive after ripping finishes\n";
+            std::cout << "  -nm / --no-merge: Disable CDDB tag merge on multi-selection\n";
+            std::cout << "  -a  / --auto: Enable fully automatic mode (without any prompts)\n";
+            std::cout << "  -i  / --input: cdrip config file path (default search: ./cdrip.conf --> ~/.cdrip.conf)\n";
+            std::cout << "  -u  / --update <file|dir> [more ...]: Update existing FLAC tags from CDDB using embedded tags (other options ignored)\n";
             std::exit(0);
         }
     }
@@ -834,7 +1203,8 @@ int run_update_mode(
     const std::vector<std::string>& target_paths,
     const CdRipCddbServerList* servers,
     bool sort,
-    bool auto_mode) {
+    bool auto_mode,
+    bool no_merge) {
 
     if (!servers || servers->count == 0) {
         std::cerr << "No CDDB servers configured.\n";
@@ -879,7 +1249,7 @@ int run_update_mode(
 
             const std::string cache_key = build_metadata_cache_key(item.toc);
             auto selection = select_cddb_entry_for_toc(
-                item.toc, servers, sort, view_string(item.path), auto_mode, /*allow_fallback=*/false, &metadata_cache);
+                item.toc, servers, sort, view_string(item.path), auto_mode, no_merge, /*allow_fallback=*/false, &metadata_cache);
             if (!selection.entries || !selection.selected) {
                 std::cout << "  Skipped: no metadata selected\n";
                 if (selection.entries) cdrip_release_cddbentry_list(selection.entries);
@@ -888,11 +1258,10 @@ int run_update_mode(
 
             ensure_entry_ready_for_toc(selection.selected, item.toc);
 
-            const char* cover_err = nullptr;
-            if (!cdrip_fetch_cover_art(selection.selected, item.toc, &cover_err)) {
-                if (cover_err) {
-                    std::cerr << "  Cover art fetch notice: " << view_string(cover_err) << "\n";
-                    cdrip_release_error(cover_err);
+            std::string cover_notice;
+            if (!ensure_cover_art_merged(selection.selected, selection.selected_entries, item.toc, cover_notice)) {
+                if (!cover_notice.empty()) {
+                    std::cerr << "  Cover art fetch notice: " << cover_notice << "\n";
                 }
             } else if (!cache_key.empty()) {
                 metadata_cache[cache_key] = EntryListPtr(
@@ -909,6 +1278,9 @@ int run_update_mode(
                 ++updated_total;
             }
             cdrip_release_cddbentry_list(selection.entries);
+            if (selection.merged) {
+                cdrip_release_cddbentry_list(selection.merged);
+            }
         }
 
         cdrip_release_taggedtoc_list(list);
@@ -954,7 +1326,7 @@ int main(int argc, char** argv) {
 
     if (!cli_opts.update_paths.empty()) {
         // Ignore other options when update mode is specified.
-        return run_update_mode(cli_opts.update_paths, servers_from_config, cfg->sort, auto_mode);
+        return run_update_mode(cli_opts.update_paths, servers_from_config, cfg->sort, auto_mode, cli_opts.no_merge);
     }
 
     const char* err = nullptr;
@@ -1135,7 +1507,7 @@ int main(int argc, char** argv) {
 
         CdRipCddbServerList* servers = servers_from_config;
 
-        auto selection = select_cddb_entry_for_toc(toc, servers, sort, std::string{}, auto_mode);
+        auto selection = select_cddb_entry_for_toc(toc, servers, sort, std::string{}, auto_mode, cli_opts.no_merge);
         const bool ignore_meta = (selection.selected == nullptr);
         if (!selection.entries) {
             std::cerr << "Failed to obtain CDDB entries\n";
@@ -1161,14 +1533,13 @@ int main(int argc, char** argv) {
 
         ensure_entry_ready_for_toc(meta, toc, !ignore_meta);
 
-        const char* cover_err = nullptr;
-        if (cdrip_fetch_cover_art(meta, toc, &cover_err)) {
+        std::string cover_notice;
+        if (ensure_cover_art_merged(meta, selection.selected_entries, toc, cover_notice)) {
             if (meta->cover_art.data && meta->cover_art.size > 0) {
                 std::cout << "\nCover art fetched from Cover Art Archive.\n";
             }
-        } else if (cover_err) {
-            std::cerr << "\nCover art fetch notice: " << view_string(cover_err) << "\n";
-            cdrip_release_error(cover_err);
+        } else if (!cover_notice.empty()) {
+            std::cerr << "\nCover art fetch notice: " << cover_notice << "\n";
         }
 
         std::cout << "Start ripping...\n\n";
@@ -1224,6 +1595,9 @@ int main(int argc, char** argv) {
 
         if (selection.entries) {
             cdrip_release_cddbentry_list(selection.entries);
+        }
+        if (selection.merged) {
+            cdrip_release_cddbentry_list(selection.merged);
         }
         if (fallback_meta) {
             // make_fallback_entry allocates outside the list; clean up manually.

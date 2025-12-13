@@ -58,7 +58,9 @@ Options:
   compression : 8 (auto)
   mode        : default (best - full integrity checks)
 
-CDDB disc id: 1403e605
+CDDB disc id: "1403e605"
+MusicBrainz disc id: "zLsp.2WaOeSl6clZ0YhGDmARjmY-"
+
 Fetcing from CDDB servers ...
 
 [1] BarlowGirl - For the Beauty of the Earth (Studio Series) (via freedb (japan))
@@ -78,7 +80,7 @@ Fetcing from CDDB servers ...
 [15] DONALDO 22 - DONALDO22 (via dbpoweramp)
 [0] (Ignore all, not use these tags)
 
-Select match [0-15] (default 1): 3
+Select match [0-15] (comma/space separated, default 1): 3
 
 Start ripping...
 
@@ -107,7 +109,7 @@ The default options are configured for easy use of cdrip.
 Of course, you can adjust them to your preferences as follows:
 
 ```bash
-cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-n] [-a] [-i config] [-u file|dir ...]
+cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-nm] [-a] [-i config] [-u file|dir ...]
 ```
 
 - `-d`, `--device`: CD device path (`/dev/cdrom` or others). If not specified, it will automatically detect available CD devices and list them.
@@ -117,21 +119,55 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px
 - `-w`, `--max-width`: Cover art max width in pixels (default: `512`)
 - `-s`, `--sort`: Sort CDDB results by album name on the prompt.
 - `-r`, `--repeat`: Prompt for next disc after finishing.
-- `-n`, `--no-eject`: Keep disc in the drive after ripping finishes.
+- `-ne`, `--no-eject`: Keep disc in the drive after ripping finishes.
+- `-nm`, `--no-merge`: Disable CDDB tag merge on multi-selection.
 - `-a`, `--auto`: Enable fully automatic mode (without any prompts).
-  It picks the first drive that already has media, chooses the top CDDB match an entry with cover art are prioritized, and loops in repeat mode without prompts.
+  It picks the first drive that already has media, chooses the first CDDB match, and loops in repeat mode without prompts.
 - `-i`, `--input`: cdrip config file path (default search: `./cdrip.conf` --> `~/.cdrip.conf`)
 - `-u`, `--update <file|dir> [more ...]`: Update existing FLAC tags from CDDB using embedded tags (other options ignored)
 
 All command-line options (except `-u` and `-i`) can override the contents of the config file specified with `-i`.
 
+On the CDDB selection prompt, you can specify multiple entry numbers separated by commas/spaces to merge tags across entries (e.g. `1,2`).
+
 TIPS: If you want to import a large number of CDs continuously with MusicBrainz tagging, you can do so by specifying the `cdrip -a -r` option.
 
 TIPS: Some hardware media players malfunction when the compression level is set to 6 or higher. Therefore, the default for Scheme CD ripper is set to 5.
 
-## Vorbis comments
+## Inserting CDDB Tags
 
-The following Vorbis comments (ID3 like tags in FLAC) are automatically inserted into FLAC file:
+You can automatically retrieve track information from CDDB servers or MusicBrainz to automatically apply track names or add Vorbis comments (similar to ID3 tags in FLAC).
+
+You can also merge information from multiple CDDB servers. Specify one or more candidates separated by commas or spaces.
+The candidate with the first specified number takes precedence, followed by subsequent ones.
+The genre tag (`genre`) is automatically merged.
+
+The following example applies candidates 3 and 12 in sequence:
+
+```bash
+Fetcing from CDDB servers ...
+
+[1] BarlowGirl - For the Beauty of the Earth (Studio Series) (via freedb (japan))
+[2] Bomani "D'mite" Armah - Read a Book Single (via freedb (japan))
+[3] Stellar Kart - Angel In Chorus (Studio Series) (via freedb (japan))
+[4] Disney - Shanna (via dbpoweramp)
+[5] Ladina - Verbotene Liebe (via dbpoweramp)
+[6] Across The Sky - Found By You [Studio Series]  (2003) (via dbpoweramp)
+[7] Bomani "D'mite" Armah - Read a Book Single (via dbpoweramp)
+[8] Cuba Libre - Sierra Madre (via dbpoweramp)
+[9] Big Daddy Weave - You're Worthy Of My Praise(Studio Series) (via dbpoweramp)
+[10] BarlowGirl - For the Beauty of the Earth (Studio Series) (via dbpoweramp)
+[11] Crossroads - Unknown (via dbpoweramp)
+[12] Stellar Kart - Angel In Chorus (Studio Series) (via dbpoweramp)
+[13] Tigertown - Wandering Eyes EP (via dbpoweramp)
+[14] Jerry Smith - Twinkle Tracks (via dbpoweramp)
+[15] DONALDO 22 - DONALDO22 (via dbpoweramp)
+[0] (Ignore all, not use these tags)
+
+Select match [0-15] (comma/space separated, default 1): 3,12
+```
+
+The following Vorbis comments are inserted:
 
 |Key|Description|Source|
 |:----|:----|:----|

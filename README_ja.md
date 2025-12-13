@@ -59,7 +59,9 @@ Options:
   compression : 8 (auto)
   mode        : default (best - full integrity checks)
 
-CDDB disc id: 1403e605
+CDDB disc id: "1403e605"
+MusicBrainz disc id: "zLsp.2WaOeSl6clZ0YhGDmARjmY-"
+
 Fetcing from CDDB servers ...
 
 [1] BarlowGirl - For the Beauty of the Earth (Studio Series) (via freedb (japan))
@@ -79,7 +81,7 @@ Fetcing from CDDB servers ...
 [15] DONALDO 22 - DONALDO22 (via dbpoweramp)
 [0] (Ignore all, not use these tags)
 
-Select match [0-15] (default 1): 3
+Select match [0-15] (comma/space separated, default 1): 3
 
 Start ripping...
 
@@ -108,7 +110,7 @@ Debian (bookworm) / Ubuntu (noble, jammy) では、[ビルド済みバイナリ�
 もちろん、以下のように好みに合わせて調整することも可能です:
 
 ```bash
-cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-n] [-a] [-i config] [-u file|dir ...]
+cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-nm] [-a] [-i config] [-u file|dir ...]
 ```
 
 - `-d`, `--device`: CDデバイスのパス（`/dev/cdrom` など）。指定しない場合、利用可能なCDデバイスを自動検出して一覧表示します。
@@ -118,21 +120,55 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px
 - `-w`, `--max-width`: カバーアートの最大幅（ピクセル、デフォルト: `512`）
 - `-s`, `--sort`: CDDB検索結果をアルバム名順に並べ替えて表示。
 - `-r`, `--repeat`: 終了後に次のCDのリッピング作業を連続して行う。
-- `-n`, `--no-eject`: リッピング終了後もCDをドライブ内に保持する。
+- `-ne`, `--no-eject`: リッピング終了後もCDをドライブ内に保持する。
+- `-nm`, `--no-merge`: CDDBタグのマージ処理を無効化する（複数指定時）。
 - `-a`, `--auto`: 完全自動モードを有効化（プロンプトなし）。
-  メディアが挿入されている最初のドライブを選択し、CDDBの一致度が高いもの（カバーアート付きエントリを優先）を選び、リピートモードではプロンプトなしでループする。
+  メディアが挿入されている最初のドライブを選択し、CDDBの先頭エントリを選び、リピートモードではプロンプトなしでループする。
 - `-i`, `--input`: cdrip設定ファイルのパス（デフォルト検索: `./cdrip.conf` --> `~/.cdrip.conf`）
 - `-u`, `--update <file|dir> [more ...]`: 埋め込みタグを使用してCDDBから既存のFLACタグを更新（他のオプションは無視）
 
 すべてのコマンドラインオプション（`-u` および `-i` を除く）は、`-i` で指定された設定ファイルの内容を上書きできます。
 
+CDDB選択プロンプトでは、カンマ/スペース区切りで複数のエントリ番号を指定することでタグをマージできます（例: `1,2`）。
+
 TIPS: MusicBrainzタグ付けで大量のCDを連続してインポートしたい場合は、`cdrip -a -r` オプションを指定することで実現できます。
 
 TIPS: いくつかのハードウェアメディアプレーヤーでは、圧縮レベルを6以上にすると誤動作を起こします。したがって、Scheme CD ripperのデフォルトは5となっています。
 
-## Vorbis comments
+## CDDBタグの挿入
 
-以下のVorbis comments（FLACにおけるID3タグのようなもの）がFLACファイルに自動的に挿入されます:
+CDDBサーバー、またはMusicBrainzから楽曲の情報を自動的に取得して、トラック名を自動的に適用したり、
+FLACのVorbis comments（FLACにおけるID3タグのようなもの）を追加したりすることができます。
+
+また、複数のCDDBサーバーから得られた情報をマージすることもできます。複数の候補から一つまたはそれ以上の候補をカンマかスペースで区切って指定してください。
+最初に指定された候補の番号が最も優先され、以降に続きます。ジャンルタグ（`genre`）は自動的に結合されます。
+
+以下の例では、3と12の候補を順に適用します:
+
+```bash
+Fetcing from CDDB servers ...
+
+[1] BarlowGirl - For the Beauty of the Earth (Studio Series) (via freedb (japan))
+[2] Bomani "D'mite" Armah - Read a Book Single (via freedb (japan))
+[3] Stellar Kart - Angel In Chorus (Studio Series) (via freedb (japan))
+[4] Disney - Shanna (via dbpoweramp)
+[5] Ladina - Verbotene Liebe (via dbpoweramp)
+[6] Across The Sky - Found By You [Studio Series]  (2003) (via dbpoweramp)
+[7] Bomani "D'mite" Armah - Read a Book Single (via dbpoweramp)
+[8] Cuba Libre - Sierra Madre (via dbpoweramp)
+[9] Big Daddy Weave - You're Worthy Of My Praise(Studio Series) (via dbpoweramp)
+[10] BarlowGirl - For the Beauty of the Earth (Studio Series) (via dbpoweramp)
+[11] Crossroads - Unknown (via dbpoweramp)
+[12] Stellar Kart - Angel In Chorus (Studio Series) (via dbpoweramp)
+[13] Tigertown - Wandering Eyes EP (via dbpoweramp)
+[14] Jerry Smith - Twinkle Tracks (via dbpoweramp)
+[15] DONALDO 22 - DONALDO22 (via dbpoweramp)
+[0] (Ignore all, not use these tags)
+
+Select match [0-15] (comma/space separated, default 1): 3,12
+```
+
+以下に挿入されるVorbis commentsを示します:
 
 |キー名|内容|情報元|
 |:----|:----|:----|
