@@ -2,6 +2,8 @@
 
 Scheme CD Ripper is a linux CLI tool that rips audio CDs to FLAC.
 
+![cdrip](./images/cdrip_120.png)
+
 [![Project Status: Active – The project has reached a stable, usable state and is being actively developed.](https://www.repostatus.org/badges/latest/active.svg)](https://www.repostatus.org/#active)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -109,7 +111,7 @@ The default options are configured for easy use of cdrip.
 Of course, you can adjust them to your preferences as follows:
 
 ```bash
-cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-nm] [-a] [-i config] [-u file|dir ...]
+cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-nm] [-a] [-na] [-i config] [-u file|dir ...]
 ```
 
 - `-d`, `--device`: CD device path (`/dev/cdrom` or others). If not specified, it will automatically detect available CD devices and list them.
@@ -123,6 +125,7 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px
 - `-nm`, `--no-merge`: Disable CDDB tag merge on multi-selection.
 - `-a`, `--auto`: Enable fully automatic mode (without any prompts).
   It picks the first drive that already has media, chooses the first CDDB match, and loops in repeat mode without prompts.
+- `-na`, `--no-aa`: Disable cover art ANSI/ASCII art output.
 - `-i`, `--input`: cdrip config file path (default search: `./cdrip.conf` --> `~/.cdrip.conf`)
 - `-u`, `--update <file|dir> [more ...]`: Update existing FLAC tags from CDDB using embedded tags (other options ignored)
 
@@ -209,6 +212,14 @@ Note: There's no need to worry. While Vorbis comments are typically written in u
 - [MusicBrainz](https://musicbrainz.org/) is a community-maintained music database that provides structured IDs, credits, genres, and release metadata.
 - CDDB servers primarily return text fields like track titles, while MusicBrainz returns precise release-level metadata and stable IDs, improving tagging accuracy.
 - In Scheme CD ripper, simply include `musicbrainz` in the `[cddb]` `servers` list to enable it; it is already included in the default server list.
+
+### Cover Art Embedding
+
+When fetching information from MusicBrainz, it additionally attempts to retrieve cover art images (only if front cover art is marked as present).
+If the player supports cover art display, the cover art image will be shown:
+
+![Cover art](./images/aa.png)
+
 - Fetching and embedding cover art [(via Cover Art Archive)](https://coverartarchive.org/) is only possible when a MusicBrainz match is used; other CDDB servers do not supply cover art.
 - Cover art is always converted to PNG format.
   This is because images provided by CAA may contain special metadata (such as ICC profiles), which can cause the hardware media player to be unable to display the image.
@@ -276,6 +287,7 @@ device=/dev/cdrom
 format={album}/{tracknumber:02d}_{safetitle}.flac
 compression=auto     # auto, 0-8
 max_width=512        # cover art max width in pixels
+aa=true              # show cover art as ANSI/ASCII art (TTY only)
 mode=best            # best / fast / default
 repeat=false
 sort=false
@@ -320,6 +332,7 @@ A special server id `musicbrainz` is not required `[cddb.musicbrainz]` section d
 - GNOME GIO
 - libsoup 3.0
 - json-glib
+- chafa (libchafa)
 - CMake and a C++17 compiler
 - dpkg-dev (for `dpkg-shlibdeps` when building packages)
 - Node.js and [screw-up](https://github.com/kekyo/screw-up) (Automated-versioning tool)
@@ -331,7 +344,7 @@ In Ubuntu 22.04/24.04:
 
 ```bash
 sudo apt-get install build-essential cmake dpkg-dev nodejs \
-  libcdio-paranoia-dev libcddb2-dev libflac++-dev libglib2.0-dev libsoup-3.0-dev libjson-glib-dev
+  libcdio-paranoia-dev libcddb2-dev libflac++-dev libglib2.0-dev libsoup-3.0-dev libjson-glib-dev libchafa-dev
 npm install -g screw-up
 
 ./build.sh

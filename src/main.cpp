@@ -23,8 +23,14 @@
 #include <map>
 #include <unordered_set>
 
+#include <chafa.h>
+#include <png.h>
+
 #include <sys/select.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
+
+#define COVER_ART_AA_WIDTH 35
 
 namespace {
 
@@ -136,6 +142,198 @@ void progress_cb(const CdRipProgressInfo* info) {
               << "\"" << track_name << "\"";
     std::cout.flush();
         if (info->percent >= 100.0) std::cout << "\n";
+}
+
+struct TerminalSize {
+    int columns{0};
+    int rows{0};
+};
+
+bool get_config_bool(
+    const char* config_path,
+    const char* group,
+    const char* key,
+    bool default_value,
+    std::string& err_out) {
+
+    err_out.clear();
+    if (!config_path || !group || !key) return default_value;
+
+    GKeyFile* key_file = g_key_file_new();
+    GError* gerr = nullptr;
+    if (!g_key_file_load_from_file(key_file, config_path, G_KEY_FILE_NONE, &gerr)) {
+        err_out = (gerr && gerr->message) ? gerr->message : "Failed to load config file";
+        if (gerr) g_error_free(gerr);
+        g_key_file_unref(key_file);
+        return default_value;
+    }
+
+    bool value = default_value;
+    if (g_key_file_has_key(key_file, group, key, nullptr)) {
+        gerr = nullptr;
+        const gboolean v = g_key_file_get_boolean(key_file, group, key, &gerr);
+        if (gerr) {
+            err_out = (gerr && gerr->message) ? gerr->message : "Failed to parse boolean value";
+            g_error_free(gerr);
+            g_key_file_unref(key_file);
+            return default_value;
+        }
+        value = v != FALSE;
+    }
+
+    g_key_file_unref(key_file);
+    return value;
+}
+
+TerminalSize get_stdout_terminal_size() {
+    TerminalSize out{};
+    struct winsize ws {};
+    if (::ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0) {
+        out.columns = static_cast<int>(ws.ws_col);
+        out.rows = static_cast<int>(ws.ws_row);
+    }
+
+    auto parse_env_int = [](const char* value) -> int {
+        if (!value || *value == '\0') return 0;
+        char* end = nullptr;
+        errno = 0;
+        const long v = std::strtol(value, &end, 10);
+        if (errno != 0 || end == value || v <= 0 || v > 10000) return 0;
+        return static_cast<int>(v);
+    };
+
+    if (out.columns <= 0) out.columns = parse_env_int(std::getenv("COLUMNS"));
+    if (out.rows <= 0) out.rows = parse_env_int(std::getenv("LINES"));
+    return out;
+}
+
+int compute_cover_art_columns_limit(int tty_columns) {
+    //const int cols = tty_columns > 0 ? tty_columns : COVER_ART_AA_WIDTH;
+    //const int eighty_percent = (cols * 80) / 100;
+    //return std::max(1, std::min(COVER_ART_AA_WIDTH, eighty_percent));
+    (void)tty_columns;
+    return COVER_ART_AA_WIDTH;
+}
+
+bool decode_png_to_rgba(
+    const uint8_t* data,
+    size_t size,
+    int& width_out,
+    int& height_out,
+    std::vector<uint8_t>& rgba_out,
+    std::string& err_out) {
+
+    width_out = 0;
+    height_out = 0;
+    rgba_out.clear();
+    err_out.clear();
+
+    if (!data || size == 0) {
+        err_out = "PNG input is empty";
+        return false;
+    }
+
+    png_image image{};
+    image.version = PNG_IMAGE_VERSION;
+
+    if (!png_image_begin_read_from_memory(&image, data, size)) {
+        err_out = image.message[0] ? image.message : "png_image_begin_read_from_memory failed";
+        png_image_free(&image);
+        return false;
+    }
+
+    image.format = PNG_FORMAT_RGBA;
+    width_out = static_cast<int>(image.width);
+    height_out = static_cast<int>(image.height);
+    if (width_out <= 0 || height_out <= 0) {
+        err_out = "Invalid PNG geometry";
+        png_image_free(&image);
+        return false;
+    }
+
+    rgba_out.resize(PNG_IMAGE_SIZE(image));
+    if (!png_image_finish_read(&image, nullptr, rgba_out.data(), 0, nullptr)) {
+        err_out = image.message[0] ? image.message : "png_image_finish_read failed";
+        png_image_free(&image);
+        rgba_out.clear();
+        width_out = 0;
+        height_out = 0;
+        return false;
+    }
+
+    png_image_free(&image);
+    return true;
+}
+
+void maybe_print_cover_art_ascii(const CdRipCoverArt& art) {
+    if (!art.data || art.size == 0) return;
+    if (::isatty(STDOUT_FILENO) == 0) return;
+
+    int img_w = 0;
+    int img_h = 0;
+    std::vector<uint8_t> rgba;
+    std::string decode_err;
+    if (!decode_png_to_rgba(art.data, art.size, img_w, img_h, rgba, decode_err)) {
+        return;
+    }
+
+    const TerminalSize tty = get_stdout_terminal_size();
+    const int max_cols = compute_cover_art_columns_limit(tty.columns);
+
+    gint canvas_cols = max_cols;
+    gint canvas_rows = -1;
+    chafa_calc_canvas_geometry(
+        img_w,
+        img_h,
+        &canvas_cols,
+        &canvas_rows,
+        0.5f,
+        TRUE,
+        FALSE);
+    if (canvas_cols <= 0) canvas_cols = 1;
+    if (canvas_rows <= 0) canvas_rows = 1;
+
+    ChafaCanvasConfig* config = chafa_canvas_config_new();
+    chafa_canvas_config_set_canvas_mode(config, CHAFA_CANVAS_MODE_TRUECOLOR);
+    chafa_canvas_config_set_dither_mode(config, CHAFA_DITHER_MODE_DIFFUSION);
+    chafa_canvas_config_set_geometry(config, canvas_cols, canvas_rows);
+
+    ChafaSymbolMap* symbols = chafa_symbol_map_new();
+    const auto tags = static_cast<ChafaSymbolTags>(CHAFA_SYMBOL_TAG_ASCII | CHAFA_SYMBOL_TAG_SPACE);
+    chafa_symbol_map_add_by_tags(symbols, tags);
+    chafa_canvas_config_set_symbol_map(config, symbols);
+    chafa_symbol_map_unref(symbols);
+
+    ChafaCanvas* canvas = chafa_canvas_new(config);
+    chafa_canvas_config_unref(config);
+    if (!canvas) return;
+
+    chafa_canvas_draw_all_pixels(
+        canvas,
+        CHAFA_PIXEL_RGBA8_UNASSOCIATED,
+        rgba.data(),
+        img_w,
+        img_h,
+        img_w * 4);
+
+    ChafaTermDb* term_db = chafa_term_db_get_default();
+    gchar** envp = g_get_environ();
+    ChafaTermInfo* term_info = chafa_term_db_detect(term_db, envp);
+    g_strfreev(envp);
+    if (!term_info) term_info = chafa_term_db_get_fallback_info(term_db);
+    if (!term_info) {
+        chafa_canvas_unref(canvas);
+        return;
+    }
+
+    GString* out = chafa_canvas_print(canvas, term_info);
+    if (out) {
+        std::cout << "\n" << out->str << "\x1b[0m\n";
+        g_string_free(out, TRUE);
+    }
+
+    chafa_term_info_unref(term_info);
+    chafa_canvas_unref(canvas);
 }
 
 CdRipCoverArt clone_cover_art(const CdRipCoverArt& src) {
@@ -600,7 +798,8 @@ bool ensure_cover_art_merged(
     CdRipCddbEntry* target,
     const std::vector<CdRipCddbEntry*>& candidates,
     const CdRipDiscToc* toc,
-    std::string& notice_out) {
+    std::string& notice_out,
+    bool allow_aa) {
 
     notice_out.clear();
     if (!target) return false;
@@ -613,12 +812,16 @@ bool ensure_cover_art_merged(
 
     for (CdRipCddbEntry* e : effective) {
         if (!e) continue;
+        const bool had_data = (e->cover_art.data && e->cover_art.size > 0);
         const char* cover_err = nullptr;
         const int ok = cdrip_fetch_cover_art(e, toc, &cover_err);
         if (ok && e->cover_art.data && e->cover_art.size > 0) {
             if (e != target) {
                 clear_cover_art(target->cover_art);
                 target->cover_art = clone_cover_art(e->cover_art);
+            }
+            if (allow_aa && !had_data) {
+                maybe_print_cover_art_ascii(target->cover_art);
             }
             if (cover_err) cdrip_release_error(cover_err);
             return true;
@@ -1122,6 +1325,7 @@ struct Options {
     std::string config_file;
     bool no_eject = false;
     bool no_merge = false;
+    bool no_aa = false;
     std::vector<std::string> update_paths;
 };
 
@@ -1165,6 +1369,8 @@ Options parse_args(int argc, char** argv) {
             opts.sort = true;
         } else if (arg == "-a" || arg == "--auto") {
             opts.auto_mode = true;
+        } else if (arg == "-na" || arg == "--no-aa") {
+            opts.no_aa = true;
         } else if (arg == "-nm" || arg == "--no-merge") {
             opts.no_merge = true;
         } else if (arg == "-ne" || arg == "--no-eject") {
@@ -1180,7 +1386,7 @@ Options parse_args(int argc, char** argv) {
                 std::exit(1);
             }
         } else if (arg == "-?" || arg == "-h" || arg == "--help") {
-            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-nm] [-a] [-i config] [-u file|dir ...]\n";
+            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-nm] [-a] [-na] [-i config] [-u file|dir ...]\n";
             std::cout << "  -d  / --device: CD device path (default: auto-detect)\n";
             std::cout << "  -f  / --format: FLAC destination path format (default: \"{album}/{tracknumber:02d}_{safetitle}.flac\")\n";
             std::cout << "  -m  / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disabled any checks)\n";
@@ -1191,6 +1397,7 @@ Options parse_args(int argc, char** argv) {
             std::cout << "  -ne / --no-eject: Keep disc in the drive after ripping finishes\n";
             std::cout << "  -nm / --no-merge: Disable CDDB tag merge on multi-selection\n";
             std::cout << "  -a  / --auto: Enable fully automatic mode (without any prompts)\n";
+            std::cout << "  -na / --no-aa: Disable cover art ANSI/ASCII art output\n";
             std::cout << "  -i  / --input: cdrip config file path (default search: ./cdrip.conf --> ~/.cdrip.conf)\n";
             std::cout << "  -u  / --update <file|dir> [more ...]: Update existing FLAC tags from CDDB using embedded tags (other options ignored)\n";
             std::exit(0);
@@ -1204,7 +1411,8 @@ int run_update_mode(
     const CdRipCddbServerList* servers,
     bool sort,
     bool auto_mode,
-    bool no_merge) {
+    bool no_merge,
+    bool allow_aa) {
 
     if (!servers || servers->count == 0) {
         std::cerr << "No CDDB servers configured.\n";
@@ -1259,7 +1467,7 @@ int run_update_mode(
             ensure_entry_ready_for_toc(selection.selected, item.toc);
 
             std::string cover_notice;
-            if (!ensure_cover_art_merged(selection.selected, selection.selected_entries, item.toc, cover_notice)) {
+            if (!ensure_cover_art_merged(selection.selected, selection.selected_entries, item.toc, cover_notice, allow_aa)) {
                 if (!cover_notice.empty()) {
                     std::cerr << "  Cover art fetch notice: " << cover_notice << "\n";
                 }
@@ -1322,11 +1530,22 @@ int main(int argc, char** argv) {
     bool eject_after = !cli_opts.no_eject;
     CdRipCddbServerList* servers_from_config = cfg->servers;
 
+    std::string aa_err;
+    bool allow_aa = true;
+    if (cfg->config_path && cfg->config_path[0]) {
+        allow_aa = get_config_bool(cfg->config_path, "cdrip", "aa", /*default_value=*/true, aa_err);
+        if (!aa_err.empty()) {
+            std::cerr << "Failed to parse cdrip.aa from \"" << view_string(cfg->config_path) << "\": " << aa_err << "\n";
+            return 1;
+        }
+    }
+    if (cli_opts.no_aa) allow_aa = false;
+
     cdrip_set_cover_art_max_width(max_width);
 
     if (!cli_opts.update_paths.empty()) {
         // Ignore other options when update mode is specified.
-        return run_update_mode(cli_opts.update_paths, servers_from_config, cfg->sort, auto_mode, cli_opts.no_merge);
+        return run_update_mode(cli_opts.update_paths, servers_from_config, cfg->sort, auto_mode, cli_opts.no_merge, allow_aa);
     }
 
     const char* err = nullptr;
@@ -1534,7 +1753,7 @@ int main(int argc, char** argv) {
         ensure_entry_ready_for_toc(meta, toc, !ignore_meta);
 
         std::string cover_notice;
-        if (ensure_cover_art_merged(meta, selection.selected_entries, toc, cover_notice)) {
+        if (ensure_cover_art_merged(meta, selection.selected_entries, toc, cover_notice, allow_aa)) {
             if (meta->cover_art.data && meta->cover_art.size > 0) {
                 std::cout << "\nCover art fetched from Cover Art Archive.\n";
             }

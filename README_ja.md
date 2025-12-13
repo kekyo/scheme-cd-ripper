@@ -2,6 +2,8 @@
 
 Scheme CD Ripperは、オーディオCDをFLAC形式にリッピングするLinux用コマンドラインツールです。
 
+![cdrip](./images/cdrip_120.png)
+
 [![Project Status: Active – The project has reached a stable, usable state and is being actively developed.](https://www.repostatus.org/badges/latest/active.svg)](https://www.repostatus.org/#active)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -110,7 +112,7 @@ Debian (bookworm) / Ubuntu (noble, jammy) では、[ビルド済みバイナリ�
 もちろん、以下のように好みに合わせて調整することも可能です:
 
 ```bash
-cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-nm] [-a] [-i config] [-u file|dir ...]
+cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-nm] [-a] [-na] [-i config] [-u file|dir ...]
 ```
 
 - `-d`, `--device`: CDデバイスのパス（`/dev/cdrom` など）。指定しない場合、利用可能なCDデバイスを自動検出して一覧表示します。
@@ -124,6 +126,7 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px
 - `-nm`, `--no-merge`: CDDBタグのマージ処理を無効化する（複数指定時）。
 - `-a`, `--auto`: 完全自動モードを有効化（プロンプトなし）。
   メディアが挿入されている最初のドライブを選択し、CDDBの先頭エントリを選び、リピートモードではプロンプトなしでループする。
+- `-na`, `--no-aa`: カバーアートのANSI/ASCIIアート表示を無効化する。
 - `-i`, `--input`: cdrip設定ファイルのパス（デフォルト検索: `./cdrip.conf` --> `~/.cdrip.conf`）
 - `-u`, `--update <file|dir> [more ...]`: 埋め込みタグを使用してCDDBから既存のFLACタグを更新（他のオプションは無視）
 
@@ -210,6 +213,14 @@ Note: 心配する必要はありません。Vorbisコメントは通常大文�
 - [MusicBrainz](https://musicbrainz.org/) は、構造化されたID、クレジット、ジャンル、リリースメタデータを提供するコミュニティ管理の音楽データベースです。
 - CDDBサーバーは主にトラックタイトルなどのテキストフィールドを返しますが、MusicBrainzは正確なリリースレベルのメタデータと安定したIDを返すため、タグ付けの精度が向上します。
 - Scheme CD ripperでは、`[cddb]`セクションの`servers`リストに`musicbrainz`を追加するだけで有効化できます。デフォルトのサーバーリストには既に含まれています。
+
+### カバーアートの埋め込み
+
+MusicBrainzから情報を取得した場合は、追加でカバーアート画像の取得を試みます（フロントカバーアートが存在するとマークされている場合のみ）。
+プレイヤーがカバーアートの表示機能を持っていれば、カバーアート画像が表示されます:
+
+![Cover art](./images/aa.png)
+
 - カバーアートの取得と埋め込み[(Cover Art Archive経由)](https://coverartarchive.org/)は、MusicBrainzのマッチングが使用された場合のみ可能です。他のCDDBサーバーはカバーアートを提供しません。
 - カバーアートは常にPNGフォーマットに再変換されます。
   これは、CAAから提供される画像フォーマットに特殊なメタデータ（ICCプロファイルなど）が含まれている場合があり、これがハードウェアメディアプレーヤーで画像を表示できないことに繋がります。
@@ -278,6 +289,7 @@ device=/dev/cdrom
 format={album}/{tracknumber:02d}_{safetitle}.flac
 compression=auto     # auto, 0-8
 max_width=512        # カバーアート最大幅(px)
+aa=true              # カバーアートをANSI/ASCIIアートで表示（TTYのみ）
 mode=best            # best / fast / default
 repeat=false
 sort=false
