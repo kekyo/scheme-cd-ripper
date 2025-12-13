@@ -18,8 +18,12 @@
 #include <string>
 #include <cstdlib>
 #include <cstring>
+#include <cerrno>
 #include <vector>
 #include <map>
+
+#include <sys/select.h>
+#include <unistd.h>
 
 namespace {
 
@@ -673,6 +677,75 @@ bool wait_for_media_removal(
     }
 }
 
+enum class MediaWaitResult {
+    Ready,
+    Quit,
+    Error,
+};
+
+MediaWaitResult wait_for_device_media_state(
+    const std::string& device,
+    bool expected_has_media,
+    const std::string& wait_message,
+    bool allow_quit) {
+
+    bool message_printed = false;
+    const bool allow_input = allow_quit && (::isatty(STDIN_FILENO) != 0);
+    while (true) {
+        CdRipDetectedDriveList* candidates = cdrip_detect_cd_drives();
+        if (!candidates || candidates->count == 0) {
+            cdrip_release_detecteddrive_list(candidates);
+            std::cerr << "No CD drives detected while waiting for media.\n";
+            return MediaWaitResult::Error;
+        }
+
+        bool has_media = false;
+        bool found = lookup_drive_status(candidates, device, has_media);
+        cdrip_release_detecteddrive_list(candidates);
+        if (!found) {
+            std::cerr << "Device " << device << " is not detected while waiting for media.\n";
+            return MediaWaitResult::Error;
+        }
+        if (has_media == expected_has_media) {
+            return MediaWaitResult::Ready;
+        }
+
+        if (!message_printed) {
+            std::cout << wait_message << "\n";
+            message_printed = true;
+        }
+
+        if (!allow_input) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            continue;
+        }
+
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(STDIN_FILENO, &readfds);
+
+        timeval tv{};
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+
+        int result = ::select(STDIN_FILENO + 1, &readfds, nullptr, nullptr, &tv);
+        if (result < 0) {
+            if (errno == EINTR) continue;
+            std::cerr << "Failed while waiting for user input.\n";
+            return MediaWaitResult::Error;
+        }
+        if (result > 0 && FD_ISSET(STDIN_FILENO, &readfds)) {
+            std::string line;
+            if (!std::getline(std::cin, line)) {
+                return MediaWaitResult::Error;
+            }
+            if (line == "q" || line == "Q") {
+                return MediaWaitResult::Quit;
+            }
+        }
+    }
+}
+
 }  // namespace
 
 struct Options {
@@ -909,42 +982,45 @@ int main(int argc, char** argv) {
             }
 
             // If user specified a device, check it first
-            if (!device.empty()) {
-                auto found_index = find_drive_index(candidates, device);
-                if (found_index) {
-                    const auto& found = candidates->drives[*found_index];
-                    if (found.has_media) {
-                        std::cout << "\nUsing device: " << view_string(found.device) << " (media: present)\n";
-                        cdrip_release_detecteddrive_list(candidates);
-                        break;
-                    }
-                    std::cout << "Media not present in " << view_string(found.device) << ". Insert disc and press Enter to re-scan.\n";
-                    std::string dummy;
-                    std::getline(std::cin, dummy);
-                    cdrip_release_detecteddrive_list(candidates);
-                    continue;
-                } else {
-                    std::cerr << "Device " << device << " is not detected. Specify device with -d <path>.\n";
-                    cdrip_release_detecteddrive_list(candidates);
-                    return 1;
+	            if (!device.empty()) {
+	                auto found_index = find_drive_index(candidates, device);
+	                if (found_index) {
+	                    const auto& found = candidates->drives[*found_index];
+	                    if (found.has_media) {
+	                        std::cout << "\nUsing device: " << view_string(found.device) << " (media: present)\n";
+	                        cdrip_release_detecteddrive_list(candidates);
+	                        break;
+	                    }
+	                    const std::string found_device = view_string(found.device);
+	                    const std::string wait_message =
+	                        "Media not present in " + found_device + ". Waiting for disc insertion...";
+	                    cdrip_release_detecteddrive_list(candidates);
+	                    auto ready = wait_for_media(device, false, wait_message);
+	                    if (!ready) return 1;
+	                    continue;
+	                } else {
+	                    std::cerr << "Device " << device << " is not detected. Specify device with -d <path>.\n";
+	                    cdrip_release_detecteddrive_list(candidates);
+	                    return 1;
                 }
             }
 
             if (device.empty() && allow_single_drive_autoselect && candidates->count == 1) {
                 const auto& only_drive = candidates->drives[0];
                 device = view_string(only_drive.device);
-                if (only_drive.has_media) {
-                    std::cout << "\nUsing device: " << device << " (media: present)\n";
-                    cdrip_release_detecteddrive_list(candidates);
-                    break;
-                }
+	                if (only_drive.has_media) {
+	                    std::cout << "\nUsing device: " << device << " (media: present)\n";
+	                    cdrip_release_detecteddrive_list(candidates);
+	                    break;
+	                }
 
-                std::cout << "Media not present in " << device << ". Insert disc and press Enter to re-scan.\n";
-                std::string dummy;
-                std::getline(std::cin, dummy);
-                cdrip_release_detecteddrive_list(candidates);
-                continue;
-            }
+	                const std::string wait_message =
+	                    "Media not present in " + device + ". Waiting for disc insertion...";
+	                cdrip_release_detecteddrive_list(candidates);
+	                auto ready = wait_for_media(device, false, wait_message);
+	                if (!ready) return 1;
+	                continue;
+	            }
 
             std::cout << "Detected CD drives:\n";
             for (size_t i = 0; i < candidates->count; ++i) {
@@ -977,15 +1053,16 @@ int main(int argc, char** argv) {
                 }
             }
 
-            const auto& selected = candidates->drives[choice];
-            if (!selected.has_media) {
-                device = view_string(selected.device);
-                std::cout << "Media not present in " << device << ". Insert disc and press Enter to re-scan.\n";
-                std::string dummy;
-                std::getline(std::cin, dummy);
-                cdrip_release_detecteddrive_list(candidates);
-                continue;
-            }
+	            const auto& selected = candidates->drives[choice];
+	            if (!selected.has_media) {
+	                device = view_string(selected.device);
+	                const std::string wait_message =
+	                    "Media not present in " + device + ". Waiting for disc insertion...";
+	                cdrip_release_detecteddrive_list(candidates);
+	                auto ready = wait_for_media(device, false, wait_message);
+	                if (!ready) return 1;
+	                continue;
+	            }
 
             device = view_string(selected.device);
             std::cout << "\nUsing device: " << device << " (media: present)\n";
@@ -1187,12 +1264,19 @@ int main(int argc, char** argv) {
         if (!repeat) return success ? 0 : 1;
 
         if (!auto_mode) {
-            std::cout << "\nInsert next disc into " << device << " and press Enter (or type 'q' to quit): ";
-            std::string next;
-            std::getline(std::cin, next);
-            if (!next.empty() && (next == "q" || next == "Q")) {
-                return success ? 0 : 1;
+            if (!eject_after) {
+                const std::string removal_message =
+                    "\nRemove disc from " + device + " (or type 'q' to quit)...";
+                auto removed = wait_for_device_media_state(device, false, removal_message, true);
+                if (removed == MediaWaitResult::Quit) return success ? 0 : 1;
+                if (removed == MediaWaitResult::Error) return 1;
             }
+
+            const std::string insert_message =
+                "\nInsert next disc into " + device + " (or type 'q' to quit)...";
+            auto inserted = wait_for_device_media_state(device, true, insert_message, true);
+            if (inserted == MediaWaitResult::Quit) return success ? 0 : 1;
+            if (inserted == MediaWaitResult::Error) return 1;
         } else {
             if (!eject_after) {
                 std::string removal_message = "Waiting for disc removal from " + device + " (auto mode)...";
