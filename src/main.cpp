@@ -1179,7 +1179,7 @@ Options parse_args(int argc, char** argv) {
                 std::cerr << "Error: -u/--update requires at least one path\n";
                 std::exit(1);
             }
-        } else if (arg == "-h" || arg == "--help") {
+        } else if (arg == "-?" || arg == "-h" || arg == "--help") {
             std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-nm] [-a] [-i config] [-u file|dir ...]\n";
             std::cout << "  -d  / --device: CD device path (default: auto-detect)\n";
             std::cout << "  -f  / --format: FLAC destination path format (default: \"{album}/{tracknumber:02d}_{safetitle}.flac\")\n";
