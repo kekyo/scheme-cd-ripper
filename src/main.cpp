@@ -121,7 +121,7 @@ void progress_cb(const CdRipProgressInfo* info) {
         ? info->wall_total_sec - info->wall_elapsed_sec
         : info->total_album_sec - info->elapsed_total_sec;
     if (remaining_total < 0) remaining_total = 0;
-    const int bar_width = 30;
+    const int bar_width = 20;
     int filled = static_cast<int>(info->percent / 100.0 * bar_width);
     if (filled > bar_width) filled = bar_width;
     std::string bar(filled, '=');
@@ -131,9 +131,9 @@ void progress_cb(const CdRipProgressInfo* info) {
     }
     std::string track_name = view_string(info->track_name);
     if (track_name.empty()) track_name = view_string(info->title);
-    std::cout << "\rTrack " << info->track_number << "/" << info->total_tracks
-              << " [ETA: " << (show_eta ? fmt_time_fn(remaining_total) : "--:--") << "]: "
-              << "\"" << track_name << "\" [" << bar << "]";
+    std::cout << "\rTrack " << std::setw(2) << info->track_number << "/" << std::setw(2) << info->total_tracks
+              << " [ETA: " << (show_eta ? fmt_time_fn(remaining_total) : "--:--") << " " << bar << "]: "
+              << "\"" << track_name << "\"";
     std::cout.flush();
         if (info->percent >= 100.0) std::cout << "\n";
 }

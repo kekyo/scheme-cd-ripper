@@ -84,11 +84,11 @@ Select match [0-15] (comma/space separated, default 1): 3
 
 Start ripping...
 
-Track 1/5 [ETA: 13:19]: "Angel In Chorus (LP Version)" [==============================]
-Track 2/5 [ETA: 09:59]: "Angel In Chorus (original key performance with background vocals)" [==============================]
-Track 3/5 [ETA: 06:39]: "Angel In Chorus (low key performance without background vocals)" [==============================]
-Track 4/5 [ETA: 03:19]: "Angel In Chorus (medium key without background vocals (original key)" [==============================]
-Track 5/5 [ETA: 00:00]: "Angel In Chorus (high key without background vocals)" [==============================]
+Track  1/ 5 [ETA: 13:19 ====================]: "Angel In Chorus (LP Version)"
+Track  2/ 5 [ETA: 09:59 ====================]: "Angel In Chorus (original key performance with background vocals)"
+Track  3/ 5 [ETA: 06:39 ====================]: "Angel In Chorus (low key performance without background vocals)"
+Track  4/ 5 [ETA: 03:19 ====================]: "Angel In Chorus (medium key without background vocals (original key)"
+Track  5/ 5 [ETA: 00:00 ====================]: "Angel In Chorus (high key without background vocals)"
 
 Done.
 ```
