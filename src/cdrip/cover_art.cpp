@@ -23,6 +23,7 @@
 #include <libsoup/soup.h>
 
 #include "internal.h"
+#include "http_retry.h"
 #include "version.h"
 
 using namespace cdrip::detail;
@@ -784,109 +785,22 @@ static bool http_get_bytes(
     std::vector<uint8_t>& body,
     std::string& content_type,
     std::string& err) {
+    HttpRetryPolicy policy{};
+    policy.timeout_sec = kCoverArtTimeoutSec;
+    policy.max_attempts = 3;
+    policy.retry_delay_ms = kCoverArtRetryDelayMs;
+    policy.max_redirects = 2;
+    policy.respect_retry_after = true;
 
-    SoupSession* session = soup_session_new();
-    if (!session) {
-        err = "Failed to create SoupSession for cover art";
-        return false;
-    }
-    std::string ua = cover_art_user_agent();
-    g_object_set(
-        session,
-        "user-agent",
-        ua.c_str(),
-        "timeout",
-        kCoverArtTimeoutSec,
-        nullptr);
-
-    bool ok = false;
-    std::string current_url = url;
-    for (int attempt = 0; attempt < 3; ++attempt) {
-        SoupMessage* msg = soup_message_new("GET", current_url.c_str());
-        if (!msg) {
-            err = "Failed to create SoupMessage for cover art";
-            break;
-        }
-        soup_message_headers_replace(
-            soup_message_get_request_headers(msg),
-            "Accept",
-            "image/*");
-
-        GError* gerr = nullptr;
-        GBytes* bytes = soup_session_send_and_read(session, msg, nullptr, &gerr);
-        const guint status = soup_message_get_status(msg);
-        if (SOUP_STATUS_IS_REDIRECTION(status)) {
-            const char* loc = soup_message_headers_get_one(
-                soup_message_get_response_headers(msg),
-                "Location");
-            if (loc && attempt < 2) {
-                current_url = loc;
-                g_clear_error(&gerr);
-                g_object_unref(msg);
-                if (bytes) g_bytes_unref(bytes);
-                continue;
-            }
-        }
-        if (status == 429 && attempt == 0) {
-            g_clear_error(&gerr);
-            g_object_unref(msg);
-            if (bytes) g_bytes_unref(bytes);
-            std::this_thread::sleep_for(std::chrono::milliseconds(kCoverArtRetryDelayMs));
-            continue;
-        }
-        if (!SOUP_STATUS_IS_SUCCESSFUL(status)) {
-            std::string resp_body;
-            if (bytes) {
-                gsize elen = 0;
-                const gchar* edata = static_cast<const gchar*>(g_bytes_get_data(bytes, &elen));
-                if (edata && elen > 0) resp_body.assign(edata, elen);
-            }
-            std::ostringstream oss;
-            oss << "Cover Art Archive request failed with status " << status;
-            if (gerr && gerr->message) {
-                oss << ": " << gerr->message;
-            }
-            if (!resp_body.empty()) {
-                oss << " (" << resp_body << ")";
-            }
-            err = oss.str();
-            g_clear_error(&gerr);
-            g_object_unref(msg);
-            if (bytes) g_bytes_unref(bytes);
-            break;
-        }
-
-        if (!bytes) {
-            err = "Cover Art Archive response body is empty";
-            g_clear_error(&gerr);
-            g_object_unref(msg);
-            break;
-        }
-
-        gsize len = 0;
-        const guint8* data = static_cast<const guint8*>(g_bytes_get_data(bytes, &len));
-        if (!data || len == 0) {
-            err = "Cover Art Archive response body is empty";
-            g_clear_error(&gerr);
-            g_bytes_unref(bytes);
-            g_object_unref(msg);
-            break;
-        }
-        body.assign(data, data + len);
-        const gchar* ct = soup_message_headers_get_one(
-            soup_message_get_response_headers(msg),
-            "Content-Type");
-        if (ct) content_type = ct;
-
-        g_clear_error(&gerr);
-        g_bytes_unref(bytes);
-        g_object_unref(msg);
-        ok = true;
-        break;
-    }
-
-    g_object_unref(session);
-    return ok;
+    return http_get_bytes_with_retry(
+        "Cover Art Archive",
+        url,
+        cover_art_user_agent(),
+        "image/*",
+        policy,
+        body,
+        content_type,
+        err);
 }
 
 }  // namespace

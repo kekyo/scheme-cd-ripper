@@ -19,6 +19,7 @@
 #include <gio/gio.h>
 
 #include "internal.h"
+#include "http_retry.h"
 #include "version.h"
 
 using namespace cdrip::detail;
@@ -229,108 +230,29 @@ static std::vector<JsonObject*> select_matching_media(
 }
 
 static bool http_get_json(const std::string& url, std::string& body, std::string& err) {
-    SoupSession* session = soup_session_new();
-    if (!session) {
-        err = "Failed to create SoupSession";
+    HttpRetryPolicy policy{};
+    policy.timeout_sec = kMusicBrainzTimeoutSec;
+    policy.max_attempts = kMusicBrainzMaxAttempts;
+    policy.retry_delay_ms = kMusicBrainzRetryDelayMs;
+    policy.max_redirects = 2;
+    policy.respect_retry_after = true;
+
+    std::vector<uint8_t> bytes;
+    std::string ct;
+    if (!http_get_bytes_with_retry(
+            "MusicBrainz",
+            url,
+            musicbrainz_user_agent(),
+            "application/json",
+            policy,
+            bytes,
+            ct,
+            err)) {
         return false;
     }
-    std::string ua = musicbrainz_user_agent();
-    g_object_set(session, "user-agent", ua.c_str(), "timeout", kMusicBrainzTimeoutSec, nullptr);
 
-    auto should_retry_error = [](guint status, const GError* gerr) {
-        if (status == 429 || status == 0) return true;
-        if (gerr && gerr->domain == G_IO_ERROR) {
-            switch (gerr->code) {
-            case G_IO_ERROR_FAILED:
-            case G_IO_ERROR_CONNECTION_CLOSED:
-            case G_IO_ERROR_TIMED_OUT:
-            case G_IO_ERROR_NOT_CONNECTED:
-                return true;
-            default:
-                break;
-            }
-        }
-        return false;
-    };
-
-    bool ok = false;
-    for (int attempt = 0; attempt < kMusicBrainzMaxAttempts; ++attempt) {
-        SoupMessage* msg = soup_message_new("GET", url.c_str());
-        if (!msg) {
-            err = "Failed to create SoupMessage";
-            break;
-        }
-        soup_message_headers_replace(
-            soup_message_get_request_headers(msg),
-            "Accept",
-            "application/json");
-
-        GError* gerr = nullptr;
-        GBytes* bytes = soup_session_send_and_read(session, msg, nullptr, &gerr);
-        const guint status = soup_message_get_status(msg);
-        const bool retry_allowed = (attempt + 1) < kMusicBrainzMaxAttempts;
-        const bool should_retry = should_retry_error(status, gerr);
-        if (!SOUP_STATUS_IS_SUCCESSFUL(status)) {
-            std::string resp_body;
-            if (bytes) {
-                gsize elen = 0;
-                const gchar* edata = static_cast<const gchar*>(g_bytes_get_data(bytes, &elen));
-                if (edata && elen > 0) resp_body.assign(edata, elen);
-            }
-            if (should_retry && retry_allowed) {
-                g_clear_error(&gerr);
-                g_object_unref(msg);
-                if (bytes) g_bytes_unref(bytes);
-                std::this_thread::sleep_for(std::chrono::milliseconds(kMusicBrainzRetryDelayMs));
-                continue;
-            }
-            std::ostringstream oss;
-            oss << "MusicBrainz request failed with status " << status;
-            if (gerr && gerr->message) {
-                oss << ": " << gerr->message;
-            }
-            if (!resp_body.empty()) {
-                oss << " (" << resp_body << ")";
-            }
-            err = oss.str();
-            g_clear_error(&gerr);
-            g_object_unref(msg);
-            if (bytes) g_bytes_unref(bytes);
-            break;
-        }
-
-        if (!bytes) {
-            err = "MusicBrainz response body is empty";
-            g_clear_error(&gerr);
-            g_object_unref(msg);
-            break;
-        }
-        gsize len = 0;
-        const gchar* data = static_cast<const gchar*>(g_bytes_get_data(bytes, &len));
-        if (!data || len == 0) {
-            if (should_retry && retry_allowed) {
-                g_clear_error(&gerr);
-                g_bytes_unref(bytes);
-                g_object_unref(msg);
-                std::this_thread::sleep_for(std::chrono::milliseconds(kMusicBrainzRetryDelayMs));
-                continue;
-            }
-            err = "MusicBrainz response body is empty";
-            g_clear_error(&gerr);
-            g_bytes_unref(bytes);
-            g_object_unref(msg);
-            break;
-        }
-        body.assign(data, len);
-        g_clear_error(&gerr);
-        g_bytes_unref(bytes);
-        g_object_unref(msg);
-        ok = true;
-        break;
-    }
-
-    g_object_unref(session);
-    return ok;
+    body.assign(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    return true;
 }
 
 static bool build_entries_from_release(
