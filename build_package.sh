@@ -222,6 +222,9 @@ create_base() {
         libglib2.0-dev
         libsoup-3.0-dev
         libjson-glib-dev
+        libjpeg-dev
+        libpng-dev
+        liblcms2-dev
         dpkg-dev
         fakeroot
         devscripts
@@ -303,6 +306,9 @@ apt-get install -y --no-install-recommends \
     libglib2.0-dev \
     libsoup-3.0-dev \
     libjson-glib-dev \
+    libjpeg-dev \
+    libpng-dev \
+    liblcms2-dev \
     dpkg-dev \
     fakeroot \
     devscripts \

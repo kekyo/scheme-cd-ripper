@@ -107,13 +107,14 @@ The default options are configured for easy use of cdrip.
 Of course, you can adjust them to your preferences as follows:
 
 ```bash
-cdrip [-d device] [-f format] [-m mode] [-c compression] [-s] [-r] [-n] [-a] [-i config] [-u file|dir ...]
+cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-n] [-a] [-i config] [-u file|dir ...]
 ```
 
 - `-d`, `--device`: CD device path (`/dev/cdrom` or others). If not specified, it will automatically detect available CD devices and list them.
 - `-f`, `--format`: FLAC destination path format. using tag names inside `{}`, tags are case-insensitive. (default: `{album}/{tracknumber:02d}_{safetitle}.flac`)
 - `-m`, `--mode`: Integrity check mode: `best` (full integrity checks, default), `fast` (disabled any checks)
 - `-c`, `--compression`: FLAC compression level (default: `auto` (best --> `5`, fast --> `1`))
+- `-w`, `--max-width`: Cover art max width in pixels (default: `512`)
 - `-s`, `--sort`: Sort CDDB results by album name on the prompt.
 - `-r`, `--repeat`: Prompt for next disc after finishing.
 - `-n`, `--no-eject`: Keep disc in the drive after ripping finishes.
@@ -173,6 +174,10 @@ Note: There's no need to worry. While Vorbis comments are typically written in u
 - CDDB servers primarily return text fields like track titles, while MusicBrainz returns precise release-level metadata and stable IDs, improving tagging accuracy.
 - In Scheme CD ripper, simply include `musicbrainz` in the `[cddb]` `servers` list to enable it; it is already included in the default server list.
 - Fetching and embedding cover art [(via Cover Art Archive)](https://coverartarchive.org/) is only possible when a MusicBrainz match is used; other CDDB servers do not supply cover art.
+- Cover art is always converted to PNG format.
+  This is because images provided by CAA may contain special metadata (such as ICC profiles), which can cause the hardware media player to be unable to display the image.
+  Since it's in PNG format, the image itself does not degrade over time
+  (though there is a form of “degradation” in the sense that the ICC profile is removed, which performs the color space conversion to sRGB).
 
 ## Filename formatting
 
@@ -234,6 +239,7 @@ Example config file:
 device=/dev/cdrom
 format={album}/{tracknumber:02d}_{safetitle}.flac
 compression=auto     # auto, 0-8
+max_width=512        # cover art max width in pixels
 mode=best            # best / fast / default
 repeat=false
 sort=false

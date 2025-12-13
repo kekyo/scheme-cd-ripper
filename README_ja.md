@@ -108,13 +108,14 @@ Debian (bookworm) / Ubuntu (noble, jammy) では、[ビルド済みバイナリ�
 もちろん、以下のように好みに合わせて調整することも可能です:
 
 ```bash
-cdrip [-d device] [-f format] [-m mode] [-c compression] [-s] [-r] [-n] [-a] [-i config] [-u file|dir ...]
+cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-n] [-a] [-i config] [-u file|dir ...]
 ```
 
 - `-d`, `--device`: CDデバイスのパス（`/dev/cdrom` など）。指定しない場合、利用可能なCDデバイスを自動検出して一覧表示します。
 - `-f`, `--format`: FLAC出力ファイルパスの形式。`{}`内のタグ名を使用し、タグは大文字小文字を区別しません（デフォルト: `{album}/{tracknumber:02d}_{safetitle}.flac`）。
 - `-m`, `--mode`: 整合性チェックモード: `best`（完全な整合性チェック。デフォルト）または `fast` (チェックを無効化)
 - `-c`, `--compression`: FLAC圧縮レベル (デフォルト: `auto` (best --> `5`, fast --> `1`))
+- `-w`, `--max-width`: カバーアートの最大幅（ピクセル、デフォルト: `512`）
 - `-s`, `--sort`: CDDB検索結果をアルバム名順に並べ替えて表示。
 - `-r`, `--repeat`: 終了後に次のCDのリッピング作業を連続して行う。
 - `-n`, `--no-eject`: リッピング終了後もCDをドライブ内に保持する。
@@ -174,6 +175,9 @@ Note: 心配する必要はありません。Vorbisコメントは通常大文�
 - CDDBサーバーは主にトラックタイトルなどのテキストフィールドを返しますが、MusicBrainzは正確なリリースレベルのメタデータと安定したIDを返すため、タグ付けの精度が向上します。
 - Scheme CD ripperでは、`[cddb]`セクションの`servers`リストに`musicbrainz`を追加するだけで有効化できます。デフォルトのサーバーリストには既に含まれています。
 - カバーアートの取得と埋め込み[(Cover Art Archive経由)](https://coverartarchive.org/)は、MusicBrainzのマッチングが使用された場合のみ可能です。他のCDDBサーバーはカバーアートを提供しません。
+- カバーアートは常にPNGフォーマットに再変換されます。
+  これは、CAAから提供される画像フォーマットに特殊なメタデータ（ICCプロファイルなど）が含まれている場合があり、これがハードウェアメディアプレーヤーで画像を表示できないことに繋がります。
+  PNGフォーマットなので、画像が老化することはありません（取り除かれるICCプロファイルでsRGBへの色空間変換が行われるので、その意味での「老化」はあります）。
 
 ## ファイル名のフォーマット
 
@@ -237,6 +241,7 @@ Scheme CD ripperは設定ファイルを参照します。INI形式に似た形�
 device=/dev/cdrom
 format={album}/{tracknumber:02d}_{safetitle}.flac
 compression=auto     # auto, 0-8
+max_width=512        # カバーアート最大幅(px)
 mode=best            # best / fast / default
 repeat=false
 sort=false

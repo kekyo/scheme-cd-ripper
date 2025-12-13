@@ -679,6 +679,7 @@ struct Options {
     std::optional<std::string> device; // empty = auto-detect
     std::optional<std::string> format;
     std::optional<int> compression_level;
+    std::optional<int> max_width;
     std::optional<CdRipRipModes> rip_mode;
     std::optional<bool> repeat;
     std::optional<bool> sort;
@@ -698,6 +699,19 @@ Options parse_args(int argc, char** argv) {
             opts.format = argv[++i];
         } else if ((arg == "-c" || arg == "--compression") && i + 1 < argc) {
             opts.compression_level = std::stoi(argv[++i]);
+        } else if ((arg == "-w" || arg == "--max-width") && i + 1 < argc) {
+            int v = 0;
+            try {
+                v = std::stoi(argv[++i]);
+            } catch (...) {
+                std::cerr << "Error: -w/--max-width requires an integer\n";
+                std::exit(1);
+            }
+            if (v <= 0) {
+                std::cerr << "Error: -w/--max-width must be > 0\n";
+                std::exit(1);
+            }
+            opts.max_width = v;
         } else if ((arg == "-m" || arg == "--mode") && i + 1 < argc) {
             std::string mode = argv[++i];
             if (mode == "fast") {
@@ -725,11 +739,12 @@ Options parse_args(int argc, char** argv) {
                 std::exit(1);
             }
         } else if (arg == "-h" || arg == "--help") {
-            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-s] [-r] [-n] [-a] [-i config] [-u file|dir ...]\n";
+            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-n] [-a] [-i config] [-u file|dir ...]\n";
             std::cout << "  -d / --device: CD device path (default: auto-detect)\n";
             std::cout << "  -f / --format: FLAC destination path format (default: \"{album}/{tracknumber:02d}_{safetitle}.flac\")\n";
             std::cout << "  -m / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disabled any checks)\n";
             std::cout << "  -c / --compression: FLAC compression level (default: auto (best --> 5, fast --> 1))\n";
+            std::cout << "  -w / --max-width: Cover art max width in pixels (default: 512)\n";
             std::cout << "  -s / --sort: Sort CDDB results by album name on the prompt\n";
             std::cout << "  -r / --repeat: Prompt for next disc after finishing\n";
             std::cout << "  -n / --no-eject: Keep disc in the drive after ripping finishes\n";
@@ -854,12 +869,15 @@ int main(int argc, char** argv) {
     std::string device = cli_opts.device.value_or(view_string(cfg->device));
     std::string format = cli_opts.format.value_or(view_string(cfg->format));
     int compression_level = cli_opts.compression_level.value_or(cfg->compression_level);
+    const int max_width = cli_opts.max_width.value_or(cfg->max_width);
     CdRipRipModes rip_mode = cli_opts.rip_mode.value_or(cfg->mode);
     bool repeat = cli_opts.repeat.value_or(cfg->repeat);
     bool sort = cli_opts.sort.value_or(cfg->sort);
     bool auto_mode = cli_opts.auto_mode.value_or(cfg->auto_mode);
     bool eject_after = !cli_opts.no_eject;
     CdRipCddbServerList* servers_from_config = cfg->servers;
+
+    cdrip_set_cover_art_max_width(max_width);
 
     if (!cli_opts.update_paths.empty()) {
         // Ignore other options when update mode is specified.

@@ -171,7 +171,7 @@ static inline FLAC__StreamMetadata* build_picture_block(
         return nullptr;
     }
     // FLAC metadata block size is limited to ~16MB; skip if image is too large.
-    constexpr FLAC__uint32 kMaxPictureBytes = 16 * 1024 * 1024;
+    constexpr FLAC__uint32 kMaxPictureBytes = 16 * 1024 * 1024 - 1;
     if (art.size > kMaxPictureBytes) {
         return nullptr;
     }
@@ -188,11 +188,53 @@ static inline FLAC__StreamMetadata* build_picture_block(
     pic->data.picture.type = art.is_front
         ? FLAC__STREAM_METADATA_PICTURE_TYPE_FRONT_COVER
         : FLAC__STREAM_METADATA_PICTURE_TYPE_OTHER;
-    // Unknown dimensions; 0 indicates "unspecified" per FLAC spec.
+
+    auto read_be32 = [](const uint8_t* p) -> FLAC__uint32 {
+        return (static_cast<FLAC__uint32>(p[0]) << 24) |
+               (static_cast<FLAC__uint32>(p[1]) << 16) |
+               (static_cast<FLAC__uint32>(p[2]) << 8) |
+               static_cast<FLAC__uint32>(p[3]);
+    };
+    auto try_parse_png_ihdr = [&](FLAC__uint32& w, FLAC__uint32& h, FLAC__uint32& depth) -> bool {
+        if (!art.data || art.size < 33) return false;
+        const uint8_t* d = reinterpret_cast<const uint8_t*>(art.data);
+        static constexpr uint8_t kPngSig[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+        if (std::memcmp(d, kPngSig, 8) != 0) return false;
+        const FLAC__uint32 ihdr_len = read_be32(d + 8);
+        if (ihdr_len < 13) return false;
+        if (std::memcmp(d + 12, "IHDR", 4) != 0) return false;
+        const FLAC__uint32 pw = read_be32(d + 16);
+        const FLAC__uint32 ph = read_be32(d + 20);
+        if (pw == 0 || ph == 0) return false;
+        const uint8_t bit_depth = d[24];
+        const uint8_t color_type = d[25];
+        FLAC__uint32 channels = 0;
+        switch (color_type) {
+            case 0: channels = 1; break;  // grayscale
+            case 2: channels = 3; break;  // rgb
+            case 3: channels = 1; break;  // palette
+            case 4: channels = 2; break;  // gray+alpha
+            case 6: channels = 4; break;  // rgba
+            default: return false;
+        }
+        if (bit_depth == 0) return false;
+        w = pw;
+        h = ph;
+        depth = channels * static_cast<FLAC__uint32>(bit_depth);
+        return true;
+    };
+
+    // Dimensions: prefer parsing PNG IHDR when available; otherwise leave unspecified.
     pic->data.picture.width = 0;
     pic->data.picture.height = 0;
     pic->data.picture.depth = 0;
     pic->data.picture.colors = 0;
+    FLAC__uint32 w = 0, h = 0, depth = 0;
+    if (try_parse_png_ihdr(w, h, depth)) {
+        pic->data.picture.width = w;
+        pic->data.picture.height = h;
+        pic->data.picture.depth = depth;
+    }
 
     if (!FLAC__metadata_object_picture_set_mime_type(
             pic,

@@ -80,6 +80,8 @@ typedef struct CdRipConfig {
     const char* format;
     /** FLAC compression (0-8, <0 => auto). */
     int compression_level;
+    /** Cover art maximum width in pixels (<=0 => default). */
+    int max_width;
     /** Rip mode. */
     CdRipRipModes mode;
     /** Repeat prompt for next disc. */
@@ -113,6 +115,13 @@ void cdrip_release_config(
     CdRipConfig* cfg);
 
 /* ------------------------------------------------------------------- */
+
+/**
+ * Set cover art max width for future downloads/conversions.
+ * @param max_width_px Max width in pixels (<=0 => default 512).
+ */
+void cdrip_set_cover_art_max_width(
+    int max_width_px);
 
 /** Detected CD drive information. */
 typedef struct CdRipDetectedDrive {
