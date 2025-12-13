@@ -131,8 +131,6 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px
 
 All command-line options (except `-u` and `-i`) can override the contents of the config file specified with `-i`.
 
-On the CDDB selection prompt, you can specify multiple entry numbers separated by commas/spaces to merge tags across entries (e.g. `1,2`).
-
 TIPS: If you want to import a large number of CDs continuously with MusicBrainz tagging, you can do so by specifying the `cdrip -a -r` option.
 
 TIPS: Some hardware media players malfunction when the compression level is set to 6 or higher. Therefore, the default for Scheme CD ripper is set to 5.
@@ -174,11 +172,11 @@ The following Vorbis comments are inserted:
 
 |Key|Description|Source|
 |:----|:----|:----|
-|`title`|Music/song/sound title|CDDB|
-|`artist`|Artist name(s)|CDDB|
-|`album`|Album name|CDDB|
-|`genre`|Genre|CDDB|
-|`date`|Date (Non-formal format)|CDDB|
+|`title`|Music/song/sound title|CDDB,MusicBrainz|
+|`artist`|Artist name(s)|CDDB,MusicBrainz|
+|`album`|Album name|CDDB,MusicBrainz|
+|`genre`|Genre|CDDB,MusicBrainz|
+|`date`|Date (Non-formal format)|CDDB,MusicBrainz|
 |`tracknumber`|Track number|internal|
 |`tracktotal`|Number of tracks per this disc|internal|
 |`albumartist`|Album artist|MusicBrainz|

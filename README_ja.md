@@ -132,8 +132,6 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px
 
 すべてのコマンドラインオプション（`-u` および `-i` を除く）は、`-i` で指定された設定ファイルの内容を上書きできます。
 
-CDDB選択プロンプトでは、カンマ/スペース区切りで複数のエントリ番号を指定することでタグをマージできます（例: `1,2`）。
-
 TIPS: MusicBrainzタグ付けで大量のCDを連続してインポートしたい場合は、`cdrip -a -r` オプションを指定することで実現できます。
 
 TIPS: いくつかのハードウェアメディアプレーヤーでは、圧縮レベルを6以上にすると誤動作を起こします。したがって、Scheme CD ripperのデフォルトは5となっています。
@@ -175,11 +173,11 @@ Select match [0-15] (comma/space separated, default 1): 3,12
 
 |キー名|内容|情報元|
 |:----|:----|:----|
-|`title`|音楽タイトル|CDDB|
-|`artist`|アーティスト名|CDDB|
-|`album`|アルバム名|CDDB|
-|`genre`|ジャンル|CDDB|
-|`date`|日付（決められていないフォーマット）|CDDB|
+|`title`|音楽タイトル|CDDB,MusicBrainz|
+|`artist`|アーティスト名|CDDB,MusicBrainz|
+|`album`|アルバム名|CDDB,MusicBrainz|
+|`genre`|ジャンル|CDDB,MusicBrainz|
+|`date`|日付（決められていないフォーマット）|CDDB,MusicBrainz|
 |`tracknumber`|トラック番号|internal|
 |`tracktotal`|CD辺りのトラック数|internal|
 |`albumartist`|アルバムアーティスト|MusicBrainz|
