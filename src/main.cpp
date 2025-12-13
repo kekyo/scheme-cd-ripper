@@ -16,6 +16,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 #include <map>
@@ -24,6 +25,17 @@ namespace {
 
 std::string view_string(const char* s) {
     return s ? std::string{s} : std::string{};
+}
+
+std::string canonicalize_device_path(const std::string& path) {
+    if (path.empty()) return {};
+    // realpath() resolves symlinks (e.g., /dev/cdrom -> /dev/sr0).
+    // If it fails (non-path style device name, permission, etc.), fall back to the original string.
+    char* resolved = ::realpath(path.c_str(), nullptr);
+    if (!resolved) return path;
+    std::string out = resolved;
+    std::free(resolved);
+    return out;
 }
 
 const char* dup_cstr(const std::string& s) {
@@ -543,13 +555,28 @@ bool lookup_drive_status(
     bool& has_media) {
 
     if (!candidates) return false;
+    const std::string target = canonicalize_device_path(device);
     for (size_t i = 0; i < candidates->count; ++i) {
-        if (view_string(candidates->drives[i].device) == device) {
+        const std::string candidate = canonicalize_device_path(view_string(candidates->drives[i].device));
+        if (candidate == target) {
             has_media = candidates->drives[i].has_media != 0;
             return true;
         }
     }
     return false;
+}
+
+std::optional<size_t> find_drive_index(
+    const CdRipDetectedDriveList* candidates,
+    const std::string& device) {
+
+    if (!candidates) return std::nullopt;
+    const std::string target = canonicalize_device_path(device);
+    for (size_t i = 0; i < candidates->count; ++i) {
+        const std::string candidate = canonicalize_device_path(view_string(candidates->drives[i].device));
+        if (candidate == target) return i;
+    }
+    return std::nullopt;
 }
 
 std::optional<std::string> wait_for_media(
@@ -595,11 +622,13 @@ std::optional<std::string> wait_for_media(
             }
         }
 
-        std::string snapshot = render_drive_list(candidates);
-        if (snapshot != last_snapshot) {
-            std::cout << "Detected CD drives:\n" << snapshot;
-            last_snapshot = snapshot;
-            message_printed = false;
+        if (allow_any_device) {
+            std::string snapshot = render_drive_list(candidates);
+            if (snapshot != last_snapshot) {
+                std::cout << "Detected CD drives:\n" << snapshot;
+                last_snapshot = snapshot;
+                message_printed = false;
+            }
         }
         if (!message_printed) {
             std::cout << wait_message << "\n";
@@ -614,7 +643,6 @@ bool wait_for_media_removal(
     const std::string& device,
     const std::string& wait_message) {
 
-    std::string last_snapshot;
     bool message_printed = false;
     while (true) {
         CdRipDetectedDriveList* candidates = cdrip_detect_cd_drives();
@@ -636,12 +664,6 @@ bool wait_for_media_removal(
             return true;
         }
 
-        std::string snapshot = render_drive_list(candidates);
-        if (snapshot != last_snapshot) {
-            std::cout << "Detected CD drives:\n" << snapshot;
-            last_snapshot = snapshot;
-            message_printed = false;
-        }
         if (!message_printed) {
             std::cout << wait_message << "\n";
             message_printed = true;
@@ -870,15 +892,9 @@ int main(int argc, char** argv) {
 
             // If user specified a device, check it first
             if (!device.empty()) {
-                size_t found_index = candidates->count;
-                for (size_t i = 0; i < candidates->count; ++i) {
-                    if (view_string(candidates->drives[i].device) == device) {
-                        found_index = i;
-                        break;
-                    }
-                }
-                if (found_index < candidates->count) {
-                    const auto& found = candidates->drives[found_index];
+                auto found_index = find_drive_index(candidates, device);
+                if (found_index) {
+                    const auto& found = candidates->drives[*found_index];
                     if (found.has_media) {
                         std::cout << "\nUsing device: " << view_string(found.device) << " (media: present)\n";
                         cdrip_release_detecteddrive_list(candidates);
@@ -887,27 +903,29 @@ int main(int argc, char** argv) {
                     std::cout << "Media not present in " << view_string(found.device) << ". Insert disc and press Enter to re-scan.\n";
                     std::string dummy;
                     std::getline(std::cin, dummy);
-                    device.clear();
                     cdrip_release_detecteddrive_list(candidates);
                     continue;
                 } else {
-                    std::cout << "Specified device not detected. Falling back to detected list.\n";
-                    device.clear();
+                    std::cerr << "Device " << device << " is not detected. Specify device with -d <path>.\n";
+                    cdrip_release_detecteddrive_list(candidates);
+                    return 1;
                 }
             }
 
             if (device.empty() && allow_single_drive_autoselect && candidates->count == 1) {
                 const auto& only_drive = candidates->drives[0];
+                device = view_string(only_drive.device);
                 if (only_drive.has_media) {
-                    device = view_string(only_drive.device);
                     std::cout << "\nUsing device: " << device << " (media: present)\n";
                     cdrip_release_detecteddrive_list(candidates);
                     break;
                 }
 
-                std::cout << "Only one CD drive detected (" << view_string(only_drive.device)
-                          << ") but media is not present. Showing selection.\n";
-                allow_single_drive_autoselect = false;
+                std::cout << "Media not present in " << device << ". Insert disc and press Enter to re-scan.\n";
+                std::string dummy;
+                std::getline(std::cin, dummy);
+                cdrip_release_detecteddrive_list(candidates);
+                continue;
             }
 
             std::cout << "Detected CD drives:\n";
@@ -943,11 +961,10 @@ int main(int argc, char** argv) {
 
             const auto& selected = candidates->drives[choice];
             if (!selected.has_media) {
-                std::cout << "Media not present in " << view_string(selected.device) << ". Insert disc and press Enter to re-scan.\n";
+                device = view_string(selected.device);
+                std::cout << "Media not present in " << device << ". Insert disc and press Enter to re-scan.\n";
                 std::string dummy;
                 std::getline(std::cin, dummy);
-                device.clear();
-                allow_single_drive_autoselect = false;
                 cdrip_release_detecteddrive_list(candidates);
                 continue;
             }
