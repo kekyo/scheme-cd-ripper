@@ -17,6 +17,10 @@ pkg_check_modules(FLACPP REQUIRED flac++)
 pkg_check_modules(GIO REQUIRED gio-2.0)
 pkg_check_modules(SOUP REQUIRED libsoup-3.0)
 pkg_check_modules(JSONGLIB REQUIRED json-glib-1.0)
+pkg_check_modules(PNG REQUIRED libpng)
+pkg_check_modules(JPEG REQUIRED libjpeg)
+pkg_check_modules(LCMS2 REQUIRED lcms2)
+pkg_check_modules(CHAFA REQUIRED chafa)
 
 set(VERSION_HEADER ${CMAKE_BINARY_DIR}/generated/version.h)
 get_filename_component(VERSION_DIR ${VERSION_HEADER} DIRECTORY)
@@ -38,6 +42,9 @@ set(COMMON_INCLUDES
     ${GIO_INCLUDE_DIRS}
     ${SOUP_INCLUDE_DIRS}
     ${JSONGLIB_INCLUDE_DIRS}
+    ${PNG_INCLUDE_DIRS}
+    ${JPEG_INCLUDE_DIRS}
+    ${LCMS2_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${VERSION_DIR}
 )
@@ -49,6 +56,9 @@ set(COMMON_LIB_DIRS
     ${GIO_LIBRARY_DIRS}
     ${SOUP_LIBRARY_DIRS}
     ${JSONGLIB_LIBRARY_DIRS}
+    ${PNG_LIBRARY_DIRS}
+    ${JPEG_LIBRARY_DIRS}
+    ${LCMS2_LIBRARY_DIRS}
 )
 
 set(COMMON_LIBS
@@ -58,6 +68,9 @@ set(COMMON_LIBS
     ${GIO_LIBRARIES}
     ${SOUP_LIBRARIES}
     ${JSONGLIB_LIBRARIES}
+    ${PNG_LIBRARIES}
+    ${JPEG_LIBRARIES}
+    ${LCMS2_LIBRARIES}
 )
 
 set(COMMON_CFLAGS
@@ -67,6 +80,9 @@ set(COMMON_CFLAGS
     ${GIO_CFLAGS_OTHER}
     ${SOUP_CFLAGS_OTHER}
     ${JSONGLIB_CFLAGS_OTHER}
+    ${PNG_CFLAGS_OTHER}
+    ${JPEG_CFLAGS_OTHER}
+    ${LCMS2_CFLAGS_OTHER}
     -Wall
     -Wextra
     -pedantic
@@ -103,8 +119,8 @@ add_dependencies(cdrip version_header)
 
 add_executable(cdrip_app src/main.cpp)
 set_target_properties(cdrip_app PROPERTIES OUTPUT_NAME cdrip)
-target_include_directories(cdrip_app PRIVATE ${COMMON_INCLUDES} ${VERSION_DIR})
-target_link_directories(cdrip_app PRIVATE ${COMMON_LIB_DIRS})
-target_compile_options(cdrip_app PRIVATE ${COMMON_CFLAGS})
-target_link_libraries(cdrip_app PRIVATE cdrip_static)
+target_include_directories(cdrip_app PRIVATE ${COMMON_INCLUDES} ${CHAFA_INCLUDE_DIRS} ${VERSION_DIR})
+target_link_directories(cdrip_app PRIVATE ${COMMON_LIB_DIRS} ${CHAFA_LIBRARY_DIRS})
+target_compile_options(cdrip_app PRIVATE ${COMMON_CFLAGS} ${CHAFA_CFLAGS_OTHER})
+target_link_libraries(cdrip_app PRIVATE cdrip_static ${CHAFA_LIBRARIES})
 add_dependencies(cdrip_app version_header)

@@ -405,7 +405,7 @@ int cdrip_rip_track(
 
     int compression_level = drive->compression_level;
     if (compression_level < 0) {
-        compression_level = (drive->mode == RIP_MODES_FAST) ? 1 : 8;
+        compression_level = (drive->mode == RIP_MODES_FAST) ? 1 : 5;
     }
 
     FLAC::Encoder::File encoder;

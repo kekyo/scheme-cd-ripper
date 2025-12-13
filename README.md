@@ -2,6 +2,8 @@
 
 Scheme CD Ripper is a linux CLI tool that rips audio CDs to FLAC.
 
+![cdrip](./images/cdrip_120.png)
+
 [![Project Status: Active – The project has reached a stable, usable state and is being actively developed.](https://www.repostatus.org/badges/latest/active.svg)](https://www.repostatus.org/#active)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -58,7 +60,9 @@ Options:
   compression : 8 (auto)
   mode        : default (best - full integrity checks)
 
-CDDB disc id: 1403e605
+CDDB disc id: "1403e605"
+MusicBrainz disc id: "zLsp.2WaOeSl6clZ0YhGDmARjmY-"
+
 Fetcing from CDDB servers ...
 
 [1] BarlowGirl - For the Beauty of the Earth (Studio Series) (via freedb (japan))
@@ -78,15 +82,15 @@ Fetcing from CDDB servers ...
 [15] DONALDO 22 - DONALDO22 (via dbpoweramp)
 [0] (Ignore all, not use these tags)
 
-Select match [0-15] (default 1): 3
+Select match [0-15] (comma/space separated, default 1): 3
 
 Start ripping...
 
-Track 1/5 [ETA: 13:19]: "Angel In Chorus (LP Version)" [==============================]
-Track 2/5 [ETA: 09:59]: "Angel In Chorus (original key performance with background vocals)" [==============================]
-Track 3/5 [ETA: 06:39]: "Angel In Chorus (low key performance without background vocals)" [==============================]
-Track 4/5 [ETA: 03:19]: "Angel In Chorus (medium key without background vocals (original key)" [==============================]
-Track 5/5 [ETA: 00:00]: "Angel In Chorus (high key without background vocals)" [==============================]
+Track  1/ 5 [ETA: 13:19 ====================]: "Angel In Chorus (LP Version)"
+Track  2/ 5 [ETA: 09:59 ====================]: "Angel In Chorus (original key performance with background vocals)"
+Track  3/ 5 [ETA: 06:39 ====================]: "Angel In Chorus (low key performance without background vocals)"
+Track  4/ 5 [ETA: 03:19 ====================]: "Angel In Chorus (medium key without background vocals (original key)"
+Track  5/ 5 [ETA: 00:00 ====================]: "Angel In Chorus (high key without background vocals)"
 
 Done.
 ```
@@ -107,28 +111,66 @@ The default options are configured for easy use of cdrip.
 Of course, you can adjust them to your preferences as follows:
 
 ```bash
-cdrip [-d device] [-f format] [-m mode] [-c compression] [-s] [-r] [-n] [-a] [-i config] [-u file|dir ...]
+cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-nm] [-a] [-na] [-i config] [-u file|dir ...]
 ```
 
 - `-d`, `--device`: CD device path (`/dev/cdrom` or others). If not specified, it will automatically detect available CD devices and list them.
 - `-f`, `--format`: FLAC destination path format. using tag names inside `{}`, tags are case-insensitive. (default: `{album}/{tracknumber:02d}_{safetitle}.flac`)
 - `-m`, `--mode`: Integrity check mode: `best` (full integrity checks, default), `fast` (disabled any checks)
-- `-c`, `--compression`: FLAC compression level (default: `auto` (best --> `8`, fast --> `1`))
+- `-c`, `--compression`: FLAC compression level (default: `auto` (best --> `5`, fast --> `1`))
+- `-w`, `--max-width`: Cover art max width in pixels (default: `512`)
 - `-s`, `--sort`: Sort CDDB results by album name on the prompt.
 - `-r`, `--repeat`: Prompt for next disc after finishing.
-- `-n`, `--no-eject`: Keep disc in the drive after ripping finishes.
+- `-ne`, `--no-eject`: Keep disc in the drive after ripping finishes.
+- `-nm`, `--no-merge`: Disable CDDB tag merge on multi-selection.
 - `-a`, `--auto`: Enable fully automatic mode (without any prompts).
-  It picks the first drive that already has media, chooses the top CDDB match an entry with cover art are prioritized, and loops in repeat mode without prompts.
+  It picks the first drive that already has media, chooses the first CDDB match, and loops in repeat mode without prompts.
+- `-na`, `--no-aa`: Disable cover art ANSI/ASCII art output.
 - `-i`, `--input`: cdrip config file path (default search: `./cdrip.conf` --> `~/.cdrip.conf`)
 - `-u`, `--update <file|dir> [more ...]`: Update existing FLAC tags from CDDB using embedded tags (other options ignored)
 
 All command-line options (except `-u` and `-i`) can override the contents of the config file specified with `-i`.
 
+On the CDDB selection prompt, you can specify multiple entry numbers separated by commas/spaces to merge tags across entries (e.g. `1,2`).
+
 TIPS: If you want to import a large number of CDs continuously with MusicBrainz tagging, you can do so by specifying the `cdrip -a -r` option.
 
-## Vorbis comments
+TIPS: Some hardware media players malfunction when the compression level is set to 6 or higher. Therefore, the default for Scheme CD ripper is set to 5.
 
-The following Vorbis comments (ID3 like tags in FLAC) are automatically inserted into FLAC file:
+## Inserting CDDB Tags
+
+You can automatically retrieve track information from CDDB servers or MusicBrainz to automatically apply track names or add Vorbis comments (similar to ID3 tags in FLAC).
+
+You can also merge information from multiple CDDB servers. Specify one or more candidates separated by commas or spaces.
+The candidate with the first specified number takes precedence, followed by subsequent ones.
+The genre tag (`genre`) is automatically merged.
+
+The following example applies candidates 3 and 12 in sequence:
+
+```bash
+Fetcing from CDDB servers ...
+
+[1] BarlowGirl - For the Beauty of the Earth (Studio Series) (via freedb (japan))
+[2] Bomani "D'mite" Armah - Read a Book Single (via freedb (japan))
+[3] Stellar Kart - Angel In Chorus (Studio Series) (via freedb (japan))
+[4] Disney - Shanna (via dbpoweramp)
+[5] Ladina - Verbotene Liebe (via dbpoweramp)
+[6] Across The Sky - Found By You [Studio Series]  (2003) (via dbpoweramp)
+[7] Bomani "D'mite" Armah - Read a Book Single (via dbpoweramp)
+[8] Cuba Libre - Sierra Madre (via dbpoweramp)
+[9] Big Daddy Weave - You're Worthy Of My Praise(Studio Series) (via dbpoweramp)
+[10] BarlowGirl - For the Beauty of the Earth (Studio Series) (via dbpoweramp)
+[11] Crossroads - Unknown (via dbpoweramp)
+[12] Stellar Kart - Angel In Chorus (Studio Series) (via dbpoweramp)
+[13] Tigertown - Wandering Eyes EP (via dbpoweramp)
+[14] Jerry Smith - Twinkle Tracks (via dbpoweramp)
+[15] DONALDO 22 - DONALDO22 (via dbpoweramp)
+[0] (Ignore all, not use these tags)
+
+Select match [0-15] (comma/space separated, default 1): 3,12
+```
+
+The following Vorbis comments are inserted:
 
 |Key|Description|Source|
 |:----|:----|:----|
@@ -170,7 +212,19 @@ Note: There's no need to worry. While Vorbis comments are typically written in u
 - [MusicBrainz](https://musicbrainz.org/) is a community-maintained music database that provides structured IDs, credits, genres, and release metadata.
 - CDDB servers primarily return text fields like track titles, while MusicBrainz returns precise release-level metadata and stable IDs, improving tagging accuracy.
 - In Scheme CD ripper, simply include `musicbrainz` in the `[cddb]` `servers` list to enable it; it is already included in the default server list.
+
+### Cover Art Embedding
+
+When fetching information from MusicBrainz, it additionally attempts to retrieve cover art images (only if front cover art is marked as present).
+If the player supports cover art display, the cover art image will be shown:
+
+![Cover art](./images/aa.png)
+
 - Fetching and embedding cover art [(via Cover Art Archive)](https://coverartarchive.org/) is only possible when a MusicBrainz match is used; other CDDB servers do not supply cover art.
+- Cover art is always converted to PNG format.
+  This is because images provided by CAA may contain special metadata (such as ICC profiles), which can cause the hardware media player to be unable to display the image.
+  Since it's in PNG format, the image itself does not degrade over time
+  (though there is a form of “degradation” in the sense that the ICC profile is removed, which performs the color space conversion to sRGB).
 
 ## Filename formatting
 
@@ -232,6 +286,8 @@ Example config file:
 device=/dev/cdrom
 format={album}/{tracknumber:02d}_{safetitle}.flac
 compression=auto     # auto, 0-8
+max_width=512        # cover art max width in pixels
+aa=true              # show cover art as ANSI/ASCII art (TTY only)
 mode=best            # best / fast / default
 repeat=false
 sort=false
@@ -276,6 +332,7 @@ A special server id `musicbrainz` is not required `[cddb.musicbrainz]` section d
 - GNOME GIO
 - libsoup 3.0
 - json-glib
+- chafa (libchafa)
 - CMake and a C++17 compiler
 - dpkg-dev (for `dpkg-shlibdeps` when building packages)
 - Node.js and [screw-up](https://github.com/kekyo/screw-up) (Automated-versioning tool)
@@ -287,7 +344,7 @@ In Ubuntu 22.04/24.04:
 
 ```bash
 sudo apt-get install build-essential cmake dpkg-dev nodejs \
-  libcdio-paranoia-dev libcddb2-dev libflac++-dev libglib2.0-dev libsoup-3.0-dev libjson-glib-dev
+  libcdio-paranoia-dev libcddb2-dev libflac++-dev libglib2.0-dev libsoup-3.0-dev libjson-glib-dev libchafa-dev
 npm install -g screw-up
 
 ./build.sh
@@ -333,6 +390,12 @@ Batch build for all predefined combos:
 ## Note
 
 In this software, "CDDB" does not refer to the terminology of a specific product, but rather to "the CD metadata database."
+
+## Discussions and Pull Requests
+
+For discussions, please refer to the [GitHub Discussions page](https://github.com/kekyo/scheme-cd-ripper/discussions). We have currently stopped issue-based discussions.
+
+Pull requests are welcome! Please submit them as diffs against the `develop` branch and squashed changes before send.
 
 ## License
 

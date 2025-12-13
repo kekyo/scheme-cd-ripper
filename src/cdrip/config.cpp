@@ -95,6 +95,7 @@ static CdRipConfig* make_default_config() {
     cfg->device = nullptr;
     cfg->format = make_cstr_copy("{album}/{tracknumber:02d}_{safetitle}.flac");
     cfg->compression_level = -1;
+    cfg->max_width = 512;
     cfg->mode = RIP_MODES_DEFAULT;
     cfg->repeat = false;
     cfg->sort = false;
@@ -211,6 +212,18 @@ CdRipConfig* cdrip_load_config(
         } else if (gerr) {
             return fail_gerror(gerr, "Failed to parse compression");
         }
+    }
+
+    if (g_key_file_has_key(key_file, "cdrip", "max_width", nullptr)) {
+        GError* gerr = nullptr;
+        const gint v = g_key_file_get_integer(key_file, "cdrip", "max_width", &gerr);
+        if (gerr) {
+            return fail_gerror(gerr, "Failed to parse max_width");
+        }
+        if (v <= 0) {
+            return fail("Invalid max_width value");
+        }
+        cfg->max_width = static_cast<int>(v);
     }
 
     if (g_key_file_has_key(key_file, "cdrip", "mode", nullptr)) {

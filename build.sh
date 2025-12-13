@@ -62,7 +62,7 @@ Section: libs
 Priority: optional
 Architecture: ${ARCH}
 Maintainer: cd-ripper
-Depends: libcdio-paranoia-dev, libcddb2-dev, libflac++-dev, libglib2.0-dev, libsoup-3.0-dev, libjson-glib-dev
+Depends: libcdio-paranoia-dev, libcddb2-dev, libflac++-dev, libglib2.0-dev, libsoup-3.0-dev, libjson-glib-dev, libjpeg-dev, libpng-dev, liblcms2-dev
 Description: C++ CD ripping library (dev package)
 EOF
 
