@@ -22,16 +22,17 @@ char* cdrip_current_timestamp_iso() {
     using namespace std::chrono;
     const auto now = system_clock::now();
     const std::time_t t = system_clock::to_time_t(now);
-    const std::tm local_tm = *std::localtime(&t);
+    std::tm local_tm{};
+    localtime_r(&t, &local_tm);
     int offset_minutes = 0;
-#if defined(__unix__) || defined(__APPLE__)
     long gmtoff = 0;
 #if defined(__GLIBC__) || defined(__APPLE__)
     gmtoff = local_tm.tm_gmtoff;
 #endif
     if (gmtoff == 0) {
         // Fallback: compute offset as difference between local and UTC interpreted as local
-        std::tm utc_tm = *std::gmtime(&t);
+        std::tm utc_tm{};
+        gmtime_r(&t, &utc_tm);
         std::tm local_copy = local_tm;
         std::time_t local_as_time = std::mktime(&local_copy);
         std::time_t utc_as_local = std::mktime(&utc_tm);
@@ -39,7 +40,6 @@ char* cdrip_current_timestamp_iso() {
             std::difftime(local_as_time, utc_as_local));
     }
     offset_minutes = static_cast<int>(gmtoff / 60);
-#endif
     const int offset_hours = offset_minutes / 60;
     const int offset_min = std::abs(offset_minutes % 60);
 
