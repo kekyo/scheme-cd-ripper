@@ -103,36 +103,61 @@ CdRipDiscToc* cdrip_build_disc_toc(
         return nullptr;
     }
     CdRipDiscToc* toc = new CdRipDiscToc{};
-    const int track_count = cdda_tracks(drive->drive);
-    if (track_count <= 0) {
+    const int raw_track_count = cdda_tracks(drive->drive);
+    if (raw_track_count <= 0) {
         set_error(error, "No tracks found on disc");
         delete toc;
         return nullptr;
     }
-    toc->tracks_count = static_cast<size_t>(track_count);
-    toc->tracks = new CdRipTrackInfo[toc->tracks_count]{};
-    for (int i = 1; i <= track_count; ++i) {
-        CdRipTrackInfo info;
-        info.number = i;
+
+    // Filter TOC to audio tracks only.
+    // Mixed-mode / CD Extra discs may have a data track that confuses both
+    // MusicBrainz (Invalid TOC) and CDDB if included.
+    std::vector<CdRipTrackInfo> audio_tracks;
+    audio_tracks.reserve(static_cast<size_t>(raw_track_count));
+    long max_audio_end = -1;
+    for (int i = 1; i <= raw_track_count; ++i) {
+        CdRipTrackInfo info{};
         info.start = cdda_track_firstsector(drive->drive, i);
         info.end = cdda_track_lastsector(drive->drive, i);
         info.is_audio = cdda_track_audiop(drive->drive, i);
-        toc->tracks[static_cast<size_t>(i - 1)] = info;
+        if (!info.is_audio) {
+            continue;
+        }
+        info.number = static_cast<int>(audio_tracks.size()) + 1;
+        audio_tracks.push_back(info);
+        if (info.end > max_audio_end) max_audio_end = info.end;
     }
+    if (audio_tracks.empty()) {
+        set_error(error, "No audio tracks found on disc");
+        delete toc;
+        return nullptr;
+    }
+
     const long last_sector = cdda_disc_lastsector(drive->drive);
     if (last_sector < 0) {
         set_error(error, "Failed to read disc last sector");
-        cdrip_release_disctoc(toc);
+        delete toc;
         return nullptr;
     }
-    toc->leadout_sector = last_sector + 1;
+    long leadout_sector = last_sector + 1;
+    if (max_audio_end >= 0 && leadout_sector < (max_audio_end + 1)) {
+        leadout_sector = max_audio_end + 1;
+    }
+    toc->leadout_sector = leadout_sector;
     toc->length_seconds = static_cast<int>(
-        (last_sector + 1) / CDIO_CD_FRAMES_PER_SEC);
+        toc->leadout_sector / CDIO_CD_FRAMES_PER_SEC);
+
+    toc->tracks_count = audio_tracks.size();
+    toc->tracks = new CdRipTrackInfo[toc->tracks_count]{};
+    for (size_t i = 0; i < toc->tracks_count; ++i) {
+        toc->tracks[i] = audio_tracks[i];
+    }
 
     cddb_disc_t* disc = cddb_disc_new();
     if (disc) {
-        for (int i = 1; i <= track_count; ++i) {
-            const long offset = cdda_track_firstsector(drive->drive, i);
+        for (size_t i = 0; i < toc->tracks_count; ++i) {
+            const long offset = toc->tracks[i].start;
             cddb_track_t* track = cddb_track_new();
             cddb_track_set_frame_offset(track, static_cast<int>(offset));
             cddb_disc_add_track(disc, track);
