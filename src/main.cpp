@@ -849,7 +849,6 @@ CddbSelection select_cddb_entry_for_toc(
     bool sort,
     const std::string& context_label = std::string{},
     bool auto_mode = false,
-    bool no_merge = false,
     bool allow_fallback = true,
     EntryListCache* metadata_cache = nullptr) {
 
@@ -1042,10 +1041,6 @@ CddbSelection select_cddb_entry_for_toc(
                 std::cerr << "Error: 0 must be selected alone.\n";
                 continue;
             }
-            if (no_merge && unique_nums.size() > 1) {
-                std::cerr << "Error: multiple selections require merge; omit -nm/--no-merge.\n";
-                continue;
-            }
 
             choices.clear();
             choices.reserve(unique_nums.size());
@@ -1079,7 +1074,7 @@ CddbSelection select_cddb_entry_for_toc(
     }
 
     result.selected_entries = selected_entries;
-    if (!auto_mode && !no_merge && selected_entries.size() > 1) {
+    if (!auto_mode && selected_entries.size() > 1) {
         result.merged = merge_cddb_entries_for_toc(toc, selected_entries);
         if (result.merged && result.merged->count > 0 && result.merged->entries) {
             result.selected = &result.merged->entries[0];
@@ -1324,7 +1319,6 @@ struct Options {
     std::optional<bool> auto_mode;
     std::string config_file;
     bool no_eject = false;
-    bool no_merge = false;
     bool no_aa = false;
     std::vector<std::string> update_paths;
 };
@@ -1371,8 +1365,6 @@ Options parse_args(int argc, char** argv) {
             opts.auto_mode = true;
         } else if (arg == "-na" || arg == "--no-aa") {
             opts.no_aa = true;
-        } else if (arg == "-nm" || arg == "--no-merge") {
-            opts.no_merge = true;
         } else if (arg == "-ne" || arg == "--no-eject") {
             opts.no_eject = true;
         } else if (arg == "-n") {
@@ -1386,7 +1378,7 @@ Options parse_args(int argc, char** argv) {
                 std::exit(1);
             }
         } else if (arg == "-?" || arg == "-h" || arg == "--help") {
-            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-nm] [-a] [-na] [-i config] [-u file|dir ...]\n";
+            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-a] [-na] [-i config] [-u file|dir ...]\n";
             std::cout << "  -d  / --device: CD device path (default: auto-detect)\n";
             std::cout << "  -f  / --format: FLAC destination path format (default: \"{album}/{tracknumber:02d}_{safetitle}.flac\")\n";
             std::cout << "  -m  / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disabled any checks)\n";
@@ -1395,7 +1387,6 @@ Options parse_args(int argc, char** argv) {
             std::cout << "  -s  / --sort: Sort CDDB results by album name on the prompt\n";
             std::cout << "  -r  / --repeat: Prompt for next disc after finishing\n";
             std::cout << "  -ne / --no-eject: Keep disc in the drive after ripping finishes\n";
-            std::cout << "  -nm / --no-merge: Disable CDDB tag merge on multi-selection\n";
             std::cout << "  -a  / --auto: Enable fully automatic mode (without any prompts)\n";
             std::cout << "  -na / --no-aa: Disable cover art ANSI/ASCII art output\n";
             std::cout << "  -i  / --input: cdrip config file path (default search: ./cdrip.conf --> ~/.cdrip.conf)\n";
@@ -1411,7 +1402,6 @@ int run_update_mode(
     const CdRipCddbServerList* servers,
     bool sort,
     bool auto_mode,
-    bool no_merge,
     bool allow_aa) {
 
     if (!servers || servers->count == 0) {
@@ -1457,7 +1447,7 @@ int run_update_mode(
 
             const std::string cache_key = build_metadata_cache_key(item.toc);
             auto selection = select_cddb_entry_for_toc(
-                item.toc, servers, sort, view_string(item.path), auto_mode, no_merge, /*allow_fallback=*/false, &metadata_cache);
+                item.toc, servers, sort, view_string(item.path), auto_mode, /*allow_fallback=*/false, &metadata_cache);
             if (!selection.entries || !selection.selected) {
                 std::cout << "  Skipped: no metadata selected\n";
                 if (selection.entries) cdrip_release_cddbentry_list(selection.entries);
@@ -1545,7 +1535,7 @@ int main(int argc, char** argv) {
 
     if (!cli_opts.update_paths.empty()) {
         // Ignore other options when update mode is specified.
-        return run_update_mode(cli_opts.update_paths, servers_from_config, cfg->sort, auto_mode, cli_opts.no_merge, allow_aa);
+        return run_update_mode(cli_opts.update_paths, servers_from_config, cfg->sort, auto_mode, allow_aa);
     }
 
     const char* err = nullptr;
@@ -1726,7 +1716,7 @@ int main(int argc, char** argv) {
 
         CdRipCddbServerList* servers = servers_from_config;
 
-        auto selection = select_cddb_entry_for_toc(toc, servers, sort, std::string{}, auto_mode, cli_opts.no_merge);
+        auto selection = select_cddb_entry_for_toc(toc, servers, sort, std::string{}, auto_mode);
         const bool ignore_meta = (selection.selected == nullptr);
         if (!selection.entries) {
             std::cerr << "Failed to obtain CDDB entries\n";

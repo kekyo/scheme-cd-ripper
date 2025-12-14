@@ -112,7 +112,7 @@ Debian (bookworm) / Ubuntu (noble, jammy) では、[ビルド済みバイナリ�
 もちろん、以下のように好みに合わせて調整することも可能です:
 
 ```bash
-cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-nm] [-a] [-na] [-i config] [-u file|dir ...]
+cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-a] [-na] [-i config] [-u file|dir ...]
 ```
 
 - `-d`, `--device`: CDデバイスのパス（`/dev/cdrom` など）。指定しない場合、利用可能なCDデバイスを自動検出して一覧表示します。
@@ -123,7 +123,6 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px
 - `-s`, `--sort`: CDDB検索結果をアルバム名順に並べ替えて表示。
 - `-r`, `--repeat`: 終了後に次のCDのリッピング作業を連続して行う。
 - `-ne`, `--no-eject`: リッピング終了後もCDをドライブ内に保持する。
-- `-nm`, `--no-merge`: CDDBタグのマージ処理を無効化する（複数指定時）。
 - `-a`, `--auto`: 完全自動モードを有効化（プロンプトなし）。
   メディアが挿入されている最初のドライブを選択し、CDDBの先頭エントリを選び、リピートモードではプロンプトなしでループする。
 - `-na`, `--no-aa`: カバーアートのANSI/ASCIIアート表示を無効化する。

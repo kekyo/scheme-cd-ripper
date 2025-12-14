@@ -111,7 +111,7 @@ The default options are configured for easy use of cdrip.
 Of course, you can adjust them to your preferences as follows:
 
 ```bash
-cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-nm] [-a] [-na] [-i config] [-u file|dir ...]
+cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-a] [-na] [-i config] [-u file|dir ...]
 ```
 
 - `-d`, `--device`: CD device path (`/dev/cdrom` or others). If not specified, it will automatically detect available CD devices and list them.
@@ -122,7 +122,6 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px
 - `-s`, `--sort`: Sort CDDB results by album name on the prompt.
 - `-r`, `--repeat`: Prompt for next disc after finishing.
 - `-ne`, `--no-eject`: Keep disc in the drive after ripping finishes.
-- `-nm`, `--no-merge`: Disable CDDB tag merge on multi-selection.
 - `-a`, `--auto`: Enable fully automatic mode (without any prompts).
   It picks the first drive that already has media, chooses the first CDDB match, and loops in repeat mode without prompts.
 - `-na`, `--no-aa`: Disable cover art ANSI/ASCII art output.
