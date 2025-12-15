@@ -149,6 +149,64 @@ struct TerminalSize {
     int rows{0};
 };
 
+std::string strip_inline_comment_value(
+    const std::string& raw) {
+
+    auto trim_ws_local = [](const std::string& s) {
+        const size_t start = s.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos) return std::string{};
+        const size_t end = s.find_last_not_of(" \t\r\n");
+        return s.substr(start, end - start + 1);
+    };
+
+    bool in_single = false;
+    bool in_double = false;
+    bool escaped = false;
+    for (size_t i = 0; i < raw.size(); ++i) {
+        const char ch = raw[i];
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (ch == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (ch == '\'' && !in_double) {
+            in_single = !in_single;
+            continue;
+        }
+        if (ch == '"' && !in_single) {
+            in_double = !in_double;
+            continue;
+        }
+        if (!in_single && !in_double && (ch == '#' || ch == ';')) {
+            if (i == 0 || std::isspace(static_cast<unsigned char>(raw[i - 1]))) {
+                return trim_ws_local(raw.substr(0, i));
+            }
+        }
+    }
+    return trim_ws_local(raw);
+}
+
+bool parse_bool_value(
+    const std::string& raw,
+    bool& out) {
+
+    std::string value = strip_inline_comment_value(raw);
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    if (value == "true" || value == "1") {
+        out = true;
+        return true;
+    }
+    if (value == "false" || value == "0") {
+        out = false;
+        return true;
+    }
+    return false;
+}
+
 bool get_config_bool(
     const char* config_path,
     const char* group,
@@ -171,14 +229,22 @@ bool get_config_bool(
     bool value = default_value;
     if (g_key_file_has_key(key_file, group, key, nullptr)) {
         gerr = nullptr;
-        const gboolean v = g_key_file_get_boolean(key_file, group, key, &gerr);
-        if (gerr) {
+        char* raw = g_key_file_get_string(key_file, group, key, &gerr);
+        if (!raw) {
             err_out = (gerr && gerr->message) ? gerr->message : "Failed to parse boolean value";
-            g_error_free(gerr);
+            if (gerr) g_error_free(gerr);
             g_key_file_unref(key_file);
             return default_value;
         }
-        value = v != FALSE;
+        bool parsed = false;
+        const std::string cleaned = raw;
+        g_free(raw);
+        if (!parse_bool_value(cleaned, parsed)) {
+            err_out = "Failed to parse boolean value";
+            g_key_file_unref(key_file);
+            return default_value;
+        }
+        value = parsed;
     }
 
     g_key_file_unref(key_file);

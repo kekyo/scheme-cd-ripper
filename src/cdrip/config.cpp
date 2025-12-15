@@ -70,6 +70,73 @@ static std::vector<std::string> split_list(
     return result;
 }
 
+static std::string strip_inline_comment_value(
+    const std::string& raw) {
+
+    bool in_single = false;
+    bool in_double = false;
+    bool escaped = false;
+    for (size_t i = 0; i < raw.size(); ++i) {
+        const char ch = raw[i];
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (ch == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (ch == '\'' && !in_double) {
+            in_single = !in_single;
+            continue;
+        }
+        if (ch == '"' && !in_single) {
+            in_double = !in_double;
+            continue;
+        }
+        if (!in_single && !in_double && (ch == '#' || ch == ';')) {
+            if (i == 0 || std::isspace(static_cast<unsigned char>(raw[i - 1]))) {
+                return trim(raw.substr(0, i));
+            }
+        }
+    }
+    return trim(raw);
+}
+
+static bool parse_bool_value(
+    const std::string& raw,
+    bool& out) {
+
+    const std::string value = to_lower(trim(raw));
+    if (value == "true" || value == "1") {
+        out = true;
+        return true;
+    }
+    if (value == "false" || value == "0") {
+        out = false;
+        return true;
+    }
+    return false;
+}
+
+static bool parse_int_strict_value(
+    const std::string& raw,
+    int& out) {
+
+    const std::string value = trim(raw);
+    if (value.empty()) return false;
+
+    size_t idx = 0;
+    try {
+        const int v = std::stoi(value, &idx);
+        if (idx != value.size()) return false;
+        out = v;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 static void release_cddb_servers(
     std::vector<CdRipCddbServer>& servers) {
 
@@ -173,7 +240,7 @@ CdRipConfig* cdrip_load_config(
         GError* gerr = nullptr;
         char* value = g_key_file_get_string(key_file, "cdrip", "device", &gerr);
         if (value) {
-            const std::string device = trim(value);
+            const std::string device = strip_inline_comment_value(value);
             g_free(value);
             if (!device.empty()) replace_cstr(cfg->device, device);
         } else if (gerr) {
@@ -185,7 +252,7 @@ CdRipConfig* cdrip_load_config(
         GError* gerr = nullptr;
         char* value = g_key_file_get_string(key_file, "cdrip", "format", &gerr);
         if (value) {
-            const std::string fmt = trim(value);
+            const std::string fmt = strip_inline_comment_value(value);
             g_free(value);
             if (!fmt.empty()) replace_cstr(cfg->format, fmt);
         } else if (gerr) {
@@ -197,7 +264,7 @@ CdRipConfig* cdrip_load_config(
         GError* gerr = nullptr;
         char* value = g_key_file_get_string(key_file, "cdrip", "compression", &gerr);
         if (value) {
-            const std::string v = trim(value);
+            const std::string v = strip_inline_comment_value(value);
             g_free(value);
             const std::string upper = to_lower(v);
             if (upper == "auto") {
@@ -216,21 +283,26 @@ CdRipConfig* cdrip_load_config(
 
     if (g_key_file_has_key(key_file, "cdrip", "max_width", nullptr)) {
         GError* gerr = nullptr;
-        const gint v = g_key_file_get_integer(key_file, "cdrip", "max_width", &gerr);
-        if (gerr) {
+        char* value = g_key_file_get_string(key_file, "cdrip", "max_width", &gerr);
+        if (value) {
+            int parsed = 0;
+            const std::string v = strip_inline_comment_value(value);
+            g_free(value);
+            if (!parse_int_strict_value(v, parsed) || parsed <= 0) {
+                return fail("Invalid max_width value");
+            }
+            cfg->max_width = parsed;
+        } else if (gerr) {
             return fail_gerror(gerr, "Failed to parse max_width");
         }
-        if (v <= 0) {
-            return fail("Invalid max_width value");
-        }
-        cfg->max_width = static_cast<int>(v);
     }
 
     if (g_key_file_has_key(key_file, "cdrip", "mode", nullptr)) {
         GError* gerr = nullptr;
         char* value = g_key_file_get_string(key_file, "cdrip", "mode", &gerr);
         if (value) {
-            cfg->mode = parse_mode(value);
+            const std::string v = strip_inline_comment_value(value);
+            cfg->mode = parse_mode(v);
             g_free(value);
         } else if (gerr) {
             return fail_gerror(gerr, "Failed to parse mode");
@@ -239,31 +311,49 @@ CdRipConfig* cdrip_load_config(
 
     if (g_key_file_has_key(key_file, "cdrip", "repeat", nullptr)) {
         GError* gerr = nullptr;
-        const gboolean v = g_key_file_get_boolean(key_file, "cdrip", "repeat", &gerr);
-        if (gerr) {
+        char* value = g_key_file_get_string(key_file, "cdrip", "repeat", &gerr);
+        if (value) {
+            bool parsed = false;
+            const std::string v = strip_inline_comment_value(value);
+            g_free(value);
+            if (!parse_bool_value(v, parsed)) {
+                return fail("Invalid repeat value");
+            }
+            cfg->repeat = parsed;
+        } else if (gerr) {
             return fail_gerror(gerr, "Failed to parse repeat");
-        } else {
-            cfg->repeat = v != FALSE;
         }
     }
 
     if (g_key_file_has_key(key_file, "cdrip", "sort", nullptr)) {
         GError* gerr = nullptr;
-        const gboolean v = g_key_file_get_boolean(key_file, "cdrip", "sort", &gerr);
-        if (gerr) {
+        char* value = g_key_file_get_string(key_file, "cdrip", "sort", &gerr);
+        if (value) {
+            bool parsed = false;
+            const std::string v = strip_inline_comment_value(value);
+            g_free(value);
+            if (!parse_bool_value(v, parsed)) {
+                return fail("Invalid sort value");
+            }
+            cfg->sort = parsed;
+        } else if (gerr) {
             return fail_gerror(gerr, "Failed to parse sort");
-        } else {
-            cfg->sort = v != FALSE;
         }
     }
 
     if (g_key_file_has_key(key_file, "cdrip", "auto", nullptr)) {
         GError* gerr = nullptr;
-        const gboolean v = g_key_file_get_boolean(key_file, "cdrip", "auto", &gerr);
-        if (gerr) {
+        char* value = g_key_file_get_string(key_file, "cdrip", "auto", &gerr);
+        if (value) {
+            bool parsed = false;
+            const std::string v = strip_inline_comment_value(value);
+            g_free(value);
+            if (!parse_bool_value(v, parsed)) {
+                return fail("Invalid auto value");
+            }
+            cfg->auto_mode = parsed;
+        } else if (gerr) {
             return fail_gerror(gerr, "Failed to parse auto");
-        } else {
-            cfg->auto_mode = v != FALSE;
         }
     }
 
@@ -273,7 +363,7 @@ CdRipConfig* cdrip_load_config(
         GError* gerr = nullptr;
         char* value = g_key_file_get_string(key_file, "cddb", "servers", &gerr);
         if (value) {
-            server_ids = split_list(value);
+            server_ids = split_list(strip_inline_comment_value(value));
             g_free(value);
         } else if (gerr) {
             return fail_gerror(gerr, "Failed to parse servers");
@@ -298,11 +388,20 @@ CdRipConfig* cdrip_load_config(
         }
 
         gerr = nullptr;
-        const int port = g_key_file_get_integer(key_file, group.c_str(), "port", &gerr);
-        if (gerr) {
-            g_error_free(gerr);
+        char* port_value = g_key_file_get_string(key_file, group.c_str(), "port", &gerr);
+        if (!port_value) {
+            if (gerr) g_error_free(gerr);
             g_free(host);
             continue;
+        }
+        int port = 0;
+        {
+            const std::string v = strip_inline_comment_value(port_value);
+            g_free(port_value);
+            if (!parse_int_strict_value(v, port)) {
+                g_free(host);
+                continue;
+            }
         }
 
         gerr = nullptr;
@@ -315,14 +414,14 @@ CdRipConfig* cdrip_load_config(
 
         gerr = nullptr;
         char* label_value = g_key_file_get_string(key_file, group.c_str(), "label", &gerr);
-        const std::string label = label_value ? std::string{label_value} : id;
+        const std::string label = label_value ? strip_inline_comment_value(label_value) : id;
         if (gerr) g_error_free(gerr);
 
         CdRipCddbServer s = make_cddb_server(
-            trim(host),
+            strip_inline_comment_value(host),
             port,
-            trim(path_value),
-            trim(label));
+            strip_inline_comment_value(path_value),
+            strip_inline_comment_value(label));
 
         g_free(host);
         g_free(path_value);

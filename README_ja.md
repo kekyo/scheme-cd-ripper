@@ -284,8 +284,8 @@ Scheme CD ripperは設定ファイルを参照します。INI形式に似た形�
 [cdrip]
 device=/dev/cdrom
 format={album}/{tracknumber:02d}_{safetitle}.flac
-compression=auto     # auto, 0-8
-max_width=512        # カバーアート最大幅(px)
+compression=auto     # auto または 0-8
+max_width=512        # カバーアート最大幅(px、1以上)
 aa=true              # カバーアートをANSI/ASCIIアートで表示（TTYのみ）
 mode=best            # best / fast / default
 repeat=false
@@ -293,7 +293,7 @@ sort=false
 auto=false
 
 [cddb]
-servers=musicbrainz,freedb_japan,gnudb,dbpoweramp   # Comma separated labels
+servers=musicbrainz,freedb_japan,gnudb,dbpoweramp   # カンマ区切りのラベル
 
 [cddb.gnudb]
 label=gnudb

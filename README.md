@@ -282,8 +282,8 @@ Example config file:
 [cdrip]
 device=/dev/cdrom
 format={album}/{tracknumber:02d}_{safetitle}.flac
-compression=auto     # auto, 0-8
-max_width=512        # cover art max width in pixels
+compression=auto     # auto or 0-8
+max_width=512        # cover art max width in pixels (> 0)
 aa=true              # show cover art as ANSI/ASCII art (TTY only)
 mode=best            # best / fast / default
 repeat=false
