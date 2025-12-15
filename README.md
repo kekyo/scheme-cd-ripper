@@ -111,7 +111,7 @@ The default options are configured for easy use of cdrip.
 Of course, you can adjust them to your preferences as follows:
 
 ```bash
-cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-nm] [-a] [-na] [-i config] [-u file|dir ...]
+cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-r] [-ne] [-a] [-ss|-sf] [-na] [-i config] [-u file|dir ...]
 ```
 
 - `-d`, `--device`: CD device path (`/dev/cdrom` or others). If not specified, it will automatically detect available CD devices and list them.
@@ -120,11 +120,13 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px
 - `-c`, `--compression`: FLAC compression level (default: `auto` (best --> `5`, fast --> `1`))
 - `-w`, `--max-width`: Cover art max width in pixels (default: `512`)
 - `-s`, `--sort`: Sort CDDB results by album name on the prompt.
+- `-ft`, `--filter-title`: Filter CDDB candidates by title using case-insensitive regex (UTF-8)
 - `-r`, `--repeat`: Prompt for next disc after finishing.
 - `-ne`, `--no-eject`: Keep disc in the drive after ripping finishes.
-- `-nm`, `--no-merge`: Disable CDDB tag merge on multi-selection.
 - `-a`, `--auto`: Enable fully automatic mode (without any prompts).
   It picks the first drive that already has media, chooses the first CDDB match, and loops in repeat mode without prompts.
+- `-ss`, `--speed-slow`: Request 1x drive read speed when ripping starts (default).
+- `-sf`, `--speed-fast`: Request maximum drive read speed when ripping starts.
 - `-na`, `--no-aa`: Disable cover art ANSI/ASCII art output.
 - `-i`, `--input`: cdrip config file path (default search: `./cdrip.conf` --> `~/.cdrip.conf`)
 - `-u`, `--update <file|dir> [more ...]`: Update existing FLAC tags from CDDB using embedded tags (other options ignored)
@@ -283,12 +285,14 @@ Example config file:
 [cdrip]
 device=/dev/cdrom
 format={album}/{tracknumber:02d}_{safetitle}.flac
-compression=auto     # auto, 0-8
-max_width=512        # cover art max width in pixels
+compression=auto     # auto or 0-8
+max_width=512        # cover art max width in pixels (> 0)
+speed=slow           # slow or fast (default: slow)
 aa=true              # show cover art as ANSI/ASCII art (TTY only)
 mode=best            # best / fast / default
 repeat=false
 sort=false
+filter_title=         # Filter CDDB candidates by title using regex (empty = no filter, ignore casing)
 auto=false
 
 [cddb]

@@ -32,6 +32,7 @@ struct CdRip {
     std::string device;
     std::string format;
     int compression_level{-1};
+    bool speed_fast{false};
 };
 
 /* ------------------------------------------------------------------- */

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <future>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -644,6 +645,146 @@ static bool fetch_musicbrainz_entries(
 /* ------------------------------------------------------------------- */
 /* Exported API functions */
 
+namespace {
+
+struct ServerFetchResult {
+    std::vector<CdRipCddbEntry> entries;
+    std::string error;
+};
+
+static ServerFetchResult fetch_entries_from_musicbrainz(
+    const CdRipDiscToc* toc) {
+
+    ServerFetchResult out;
+    fetch_musicbrainz_entries(toc, out.entries, out.error);
+    return out;
+}
+
+static ServerFetchResult fetch_entries_from_cddb_server(
+    const CdRipDiscToc* toc,
+    const CdRipCddbServer& server,
+    const std::string& toc_discid) {
+
+    ServerFetchResult out;
+    const std::string server_label = to_string_or_empty(server.label);
+    const std::string server_name = to_string_or_empty(server.name);
+    const std::string server_path = to_string_or_empty(server.path);
+
+    cddb_conn_t* conn = cddb_new();
+    if (!conn) {
+        out.error = "Failed to create CDDB connection for " + server_label;
+        return out;
+    }
+    cddb_set_server_name(conn, server_name.c_str());
+    cddb_set_server_port(conn, server.port);
+    cddb_set_http_path_query(conn, server_path.c_str());
+    cddb_http_enable(conn);
+
+    cddb_disc_t* disc = cddb_disc_new();
+    if (!disc) {
+        out.error = "Failed to create CDDB disc object";
+        cddb_destroy(conn);
+        return out;
+    }
+    for (size_t ti = 0; ti < toc->tracks_count; ++ti) {
+        const auto& t = toc->tracks[ti];
+        cddb_track_t* track = cddb_track_new();
+        cddb_track_set_frame_offset(track, static_cast<int>(t.start));
+        cddb_disc_add_track(disc, track);
+    }
+    cddb_disc_set_length(disc, toc->length_seconds);
+    cddb_disc_set_discid(
+        disc,
+        static_cast<unsigned int>(
+            std::strtoul(toc_discid.c_str(), nullptr, 16)));
+
+    const int matches = cddb_query(conn, disc);
+    if (matches <= 0) {
+        cddb_disc_destroy(disc);
+        cddb_destroy(conn);
+        return out;
+    }
+
+    std::ostringstream url_builder;
+    url_builder << "http://" << server_name;
+    if (server.port != 80 && server.port != 443) {
+        url_builder << ":" << server.port;
+    }
+    url_builder << server_path;
+    const std::string url = url_builder.str();
+
+    int index = 0;
+    do {
+        cddb_disc_t* entry_disc = cddb_disc_clone(disc);
+        if (!entry_disc) continue;
+        cddb_read(conn, entry_disc);
+
+        CdRipCddbEntry entry{};
+        entry.cddb_discid = make_cstr_copy(toc_discid);
+        entry.source_label = make_cstr_copy(server_label);
+        entry.source_url = make_cstr_copy(url);
+        char* ts = cdrip_current_timestamp_iso();
+        entry.fetched_at = make_cstr_copy(ts);
+        cdrip_release_timestamp(ts);
+        std::vector<CdRipTagKV> album_tags;
+        std::vector<std::vector<CdRipTagKV>> track_tags;
+        auto add_album = [&](const std::string& key, const std::string& val) {
+            album_tags.push_back(make_kv(key, val));
+        };
+
+        add_album("ARTIST", cddb_disc_get_artist(entry_disc) ? cddb_disc_get_artist(entry_disc) : "");
+        add_album("ALBUM", cddb_disc_get_title(entry_disc) ? cddb_disc_get_title(entry_disc) : "");
+        add_album("GENRE", cddb_disc_get_genre(entry_disc) ? cddb_disc_get_genre(entry_disc) : "");
+        const int year = cddb_disc_get_year(entry_disc);
+        if (year > 0) add_album("DATE", std::to_string(year));
+
+        const int meta_tracks = cddb_disc_get_track_count(entry_disc);
+        track_tags.resize(static_cast<size_t>(meta_tracks));
+        for (int i = 0; i < meta_tracks; ++i) {
+            cddb_track_t* t = cddb_disc_get_track(entry_disc, i); // 0-based
+            std::string title = t && cddb_track_get_title(t)
+                ? cddb_track_get_title(t) : "";
+            if (title.empty()) {
+                std::ostringstream oss;
+                oss << "Track " << (i + 1);
+                title = oss.str();
+            }
+            track_tags[static_cast<size_t>(i)].push_back(make_kv("TITLE", title));
+        }
+
+        if (!album_tags.empty()) {
+            entry.album_tags_count = album_tags.size();
+            entry.album_tags = new CdRipTagKV[entry.album_tags_count]{};
+            for (size_t i = 0; i < album_tags.size(); ++i)
+                entry.album_tags[i] = album_tags[i];
+        }
+        entry.tracks_count = track_tags.size();
+        if (entry.tracks_count > 0) {
+            entry.tracks = new CdRipTrackTags[entry.tracks_count]{};
+            for (size_t ti = 0; ti < track_tags.size(); ++ti) {
+                const auto& vec = track_tags[ti];
+                if (!vec.empty()) {
+                    entry.tracks[ti].tags_count = vec.size();
+                    entry.tracks[ti].tags = new CdRipTagKV[vec.size()]{};
+                    for (size_t k = 0; k < vec.size(); ++k) {
+                        entry.tracks[ti].tags[k] = vec[k];
+                    }
+                }
+            }
+        }
+
+        out.entries.push_back(entry);
+        cddb_disc_destroy(entry_disc);
+        ++index;
+    } while (index < matches && cddb_query_next(conn, disc) == 1);
+
+    cddb_disc_destroy(disc);
+    cddb_destroy(conn);
+    return out;
+}
+
+}  // namespace
+
 extern "C" {
 
 CdRipCddbEntryList* cdrip_fetch_cddb_entries(
@@ -665,135 +806,39 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
 
     std::string toc_discid = to_string_or_empty(toc->cddb_discid);
 
+    std::vector<std::future<ServerFetchResult>> futures;
+    futures.reserve(servers->count);
     for (size_t si = 0; si < servers->count; ++si) {
-        const auto& server = servers->servers[si];
-        const std::string server_label = to_string_or_empty(server.label);
-        const std::string server_name = to_string_or_empty(server.name);
-        const std::string server_path = to_string_or_empty(server.path);
-
-        if (to_lower(server_label) == kMusicBrainzLabel) {
-            std::string mb_err;
-            std::vector<CdRipCddbEntry> mb_entries;
-            if (fetch_musicbrainz_entries(toc, mb_entries, mb_err)) {
-                results.insert(results.end(), mb_entries.begin(), mb_entries.end());
-            } else if (!mb_err.empty()) {
-                set_error(error, mb_err);
+        const CdRipCddbServer server = servers->servers[si];
+        futures.push_back(std::async(std::launch::async, [toc, server, toc_discid]() -> ServerFetchResult {
+            const std::string server_label = to_string_or_empty(server.label);
+            if (to_lower(server_label) == kMusicBrainzLabel) {
+                return fetch_entries_from_musicbrainz(toc);
             }
-            continue;
+            return fetch_entries_from_cddb_server(toc, server, toc_discid);
+        }));
+    }
+
+    std::vector<ServerFetchResult> per_server;
+    per_server.reserve(futures.size());
+    for (auto& fut : futures) {
+        try {
+            per_server.push_back(fut.get());
+        } catch (const std::exception& ex) {
+            ServerFetchResult r;
+            r.error = std::string{"CDDB fetch failed: "} + ex.what();
+            per_server.push_back(std::move(r));
+        } catch (...) {
+            ServerFetchResult r;
+            r.error = "CDDB fetch failed: unknown error";
+            per_server.push_back(std::move(r));
         }
+    }
 
-        cddb_conn_t* conn = cddb_new();
-        if (!conn) {
-            set_error(error,
-                "Failed to create CDDB connection for "
-                + server_label);
-            continue;
-        }
-        cddb_set_server_name(conn, server_name.c_str());
-        cddb_set_server_port(conn, server.port);
-        cddb_set_http_path_query(conn, server_path.c_str());
-        cddb_http_enable(conn);
-
-        cddb_disc_t* disc = cddb_disc_new();
-        if (!disc) {
-            set_error(error, "Failed to create CDDB disc object");
-            cddb_destroy(conn);
-            continue;
-        }
-        for (size_t ti = 0; ti < toc->tracks_count; ++ti) {
-            const auto& t = toc->tracks[ti];
-            cddb_track_t* track = cddb_track_new();
-            cddb_track_set_frame_offset(track, static_cast<int>(t.start));
-            cddb_disc_add_track(disc, track);
-        }
-        cddb_disc_set_length(disc, toc->length_seconds);
-        cddb_disc_set_discid(
-            disc,
-            static_cast<unsigned int>(
-                std::strtoul(toc_discid.c_str(), nullptr, 16)));
-
-        const int matches = cddb_query(conn, disc);
-        if (matches <= 0) {
-            cddb_disc_destroy(disc);
-            cddb_destroy(conn);
-            continue;
-        }
-
-        std::ostringstream url_builder;
-        url_builder << "http://" << server_name;
-        if (server.port != 80 && server.port != 443) {
-            url_builder << ":" << server.port;
-        }
-        url_builder << server_path;
-        const std::string url = url_builder.str();
-
-        int index = 0;
-        do {
-            cddb_disc_t* entry_disc = cddb_disc_clone(disc);
-            if (!entry_disc) continue;
-            cddb_read(conn, entry_disc);
-
-            CdRipCddbEntry entry{};
-            entry.cddb_discid = make_cstr_copy(toc_discid);
-            entry.source_label = make_cstr_copy(server_label);
-            entry.source_url = make_cstr_copy(url);
-            char* ts = cdrip_current_timestamp_iso();
-            entry.fetched_at = make_cstr_copy(ts);
-            cdrip_release_timestamp(ts);
-            std::vector<CdRipTagKV> album_tags;
-            std::vector<std::vector<CdRipTagKV>> track_tags;
-            auto add_album = [&](const std::string& key, const std::string& val) {
-                album_tags.push_back(make_kv(key, val));
-            };
-
-            add_album("ARTIST", cddb_disc_get_artist(entry_disc) ? cddb_disc_get_artist(entry_disc) : "");
-            add_album("ALBUM", cddb_disc_get_title(entry_disc) ? cddb_disc_get_title(entry_disc) : "");
-            add_album("GENRE", cddb_disc_get_genre(entry_disc) ? cddb_disc_get_genre(entry_disc) : "");
-            const int year = cddb_disc_get_year(entry_disc);
-            if (year > 0) add_album("DATE", std::to_string(year));
-
-            const int meta_tracks = cddb_disc_get_track_count(entry_disc);
-            track_tags.resize(static_cast<size_t>(meta_tracks));
-            for (int i = 0; i < meta_tracks; ++i) {
-                cddb_track_t* t = cddb_disc_get_track(entry_disc, i); // 0-based
-                std::string title = t && cddb_track_get_title(t)
-                    ? cddb_track_get_title(t) : "";
-                if (title.empty()) {
-                    std::ostringstream oss;
-                    oss << "Track " << (i + 1);
-                    title = oss.str();
-                }
-                track_tags[static_cast<size_t>(i)].push_back(make_kv("TITLE", title));
-            }
-
-            if (!album_tags.empty()) {
-                entry.album_tags_count = album_tags.size();
-                entry.album_tags = new CdRipTagKV[entry.album_tags_count]{};
-                for (size_t i = 0; i < album_tags.size(); ++i)
-                    entry.album_tags[i] = album_tags[i];
-            }
-            entry.tracks_count = track_tags.size();
-            if (entry.tracks_count > 0) {
-                entry.tracks = new CdRipTrackTags[entry.tracks_count]{};
-                for (size_t ti = 0; ti < track_tags.size(); ++ti) {
-                    const auto& vec = track_tags[ti];
-                    if (!vec.empty()) {
-                        entry.tracks[ti].tags_count = vec.size();
-                        entry.tracks[ti].tags = new CdRipTagKV[vec.size()]{};
-                        for (size_t k = 0; k < vec.size(); ++k) {
-                            entry.tracks[ti].tags[k] = vec[k];
-                        }
-                    }
-                }
-            }
-
-            results.push_back(std::move(entry));
-            cddb_disc_destroy(entry_disc);
-            ++index;
-        } while (index < matches && cddb_query_next(conn, disc) == 1);
-
-        cddb_disc_destroy(disc);
-        cddb_destroy(conn);
+    // Preserve the original server order when merging results and choosing the first error.
+    for (const auto& r : per_server) {
+        if (!r.error.empty()) set_error(error, r.error);
+        results.insert(results.end(), r.entries.begin(), r.entries.end());
     }
 
     if (!results.empty()) {

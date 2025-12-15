@@ -23,6 +23,8 @@
 #include <map>
 #include <unordered_set>
 
+#include <glib.h>
+
 #include <chafa.h>
 #include <png.h>
 
@@ -149,6 +151,64 @@ struct TerminalSize {
     int rows{0};
 };
 
+std::string strip_inline_comment_value(
+    const std::string& raw) {
+
+    auto trim_ws_local = [](const std::string& s) {
+        const size_t start = s.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos) return std::string{};
+        const size_t end = s.find_last_not_of(" \t\r\n");
+        return s.substr(start, end - start + 1);
+    };
+
+    bool in_single = false;
+    bool in_double = false;
+    bool escaped = false;
+    for (size_t i = 0; i < raw.size(); ++i) {
+        const char ch = raw[i];
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (ch == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (ch == '\'' && !in_double) {
+            in_single = !in_single;
+            continue;
+        }
+        if (ch == '"' && !in_single) {
+            in_double = !in_double;
+            continue;
+        }
+        if (!in_single && !in_double && (ch == '#' || ch == ';')) {
+            if (i == 0 || std::isspace(static_cast<unsigned char>(raw[i - 1]))) {
+                return trim_ws_local(raw.substr(0, i));
+            }
+        }
+    }
+    return trim_ws_local(raw);
+}
+
+bool parse_bool_value(
+    const std::string& raw,
+    bool& out) {
+
+    std::string value = strip_inline_comment_value(raw);
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    if (value == "true" || value == "1") {
+        out = true;
+        return true;
+    }
+    if (value == "false" || value == "0") {
+        out = false;
+        return true;
+    }
+    return false;
+}
+
 bool get_config_bool(
     const char* config_path,
     const char* group,
@@ -171,14 +231,59 @@ bool get_config_bool(
     bool value = default_value;
     if (g_key_file_has_key(key_file, group, key, nullptr)) {
         gerr = nullptr;
-        const gboolean v = g_key_file_get_boolean(key_file, group, key, &gerr);
-        if (gerr) {
+        char* raw = g_key_file_get_string(key_file, group, key, &gerr);
+        if (!raw) {
             err_out = (gerr && gerr->message) ? gerr->message : "Failed to parse boolean value";
-            g_error_free(gerr);
+            if (gerr) g_error_free(gerr);
             g_key_file_unref(key_file);
             return default_value;
         }
-        value = v != FALSE;
+        bool parsed = false;
+        const std::string cleaned = raw;
+        g_free(raw);
+        if (!parse_bool_value(cleaned, parsed)) {
+            err_out = "Failed to parse boolean value";
+            g_key_file_unref(key_file);
+            return default_value;
+        }
+        value = parsed;
+    }
+
+    g_key_file_unref(key_file);
+    return value;
+}
+
+std::string get_config_string(
+    const char* config_path,
+    const char* group,
+    const char* key,
+    const char* default_value,
+    std::string& err_out) {
+
+    err_out.clear();
+    if (!config_path || !group || !key) return default_value ? std::string{default_value} : std::string{};
+
+    GKeyFile* key_file = g_key_file_new();
+    GError* gerr = nullptr;
+    if (!g_key_file_load_from_file(key_file, config_path, G_KEY_FILE_NONE, &gerr)) {
+        err_out = (gerr && gerr->message) ? gerr->message : "Failed to load config file";
+        if (gerr) g_error_free(gerr);
+        g_key_file_unref(key_file);
+        return default_value ? std::string{default_value} : std::string{};
+    }
+
+    std::string value = default_value ? std::string{default_value} : std::string{};
+    if (g_key_file_has_key(key_file, group, key, nullptr)) {
+        gerr = nullptr;
+        char* raw = g_key_file_get_string(key_file, group, key, &gerr);
+        if (!raw) {
+            err_out = (gerr && gerr->message) ? gerr->message : "Failed to parse string value";
+            if (gerr) g_error_free(gerr);
+            g_key_file_unref(key_file);
+            return default_value ? std::string{default_value} : std::string{};
+        }
+        value = strip_inline_comment_value(raw);
+        g_free(raw);
     }
 
     g_key_file_unref(key_file);
@@ -849,9 +954,9 @@ CddbSelection select_cddb_entry_for_toc(
     bool sort,
     const std::string& context_label = std::string{},
     bool auto_mode = false,
-    bool no_merge = false,
     bool allow_fallback = true,
-    EntryListCache* metadata_cache = nullptr) {
+    EntryListCache* metadata_cache = nullptr,
+    const GRegex* title_filter = nullptr) {
 
     CddbSelection result{};
     if (!toc || !servers) return result;
@@ -905,16 +1010,46 @@ CddbSelection select_cddb_entry_for_toc(
         fetch_err = nullptr;
     }
 
-    const bool had_initial_matches = entries && entries->count > 0;
-    if ((!entries || entries->count == 0) && !allow_fallback) {
-        std::cerr << "No CDDB matches found across configured servers; skipping metadata selection\n";
+    const size_t fetched_count = entries ? entries->count : 0;
+
+    std::vector<size_t> sorted_indices;
+    sorted_indices.reserve(fetched_count);
+
+    if (entries && entries->count > 0) {
+        for (size_t i = 0; i < entries->count; ++i) {
+            const auto& e = entries->entries[i];
+            const std::string title = get_album_tag(&e, "ALBUM");
+            if (!title_filter || g_regex_match(title_filter, title.c_str(), static_cast<GRegexMatchFlags>(0), nullptr)) {
+                sorted_indices.push_back(i);
+            }
+        }
+    }
+
+    const bool had_candidates = !sorted_indices.empty();
+    if (title_filter && fetched_count > 0) {
+        const char* pattern = g_regex_get_pattern(title_filter);
+        std::cout << "Title filter: \"" << view_string(pattern) << "\" --> " << sorted_indices.size()
+                  << "/" << fetched_count << " candidate(s)\n";
+    }
+
+    if (!had_candidates && !allow_fallback) {
+        if (title_filter && fetched_count > 0) {
+            std::cerr << "No CDDB matches matched the title filter; skipping metadata selection\n";
+        } else {
+            std::cerr << "No CDDB matches found across configured servers; skipping metadata selection\n";
+        }
         result.entries = entries;
         result.selected = nullptr;
         result.ignored = true;
         return result;
     }
-    if (!entries || entries->count == 0) {
-        std::cerr << "No CDDB matches found across configured servers; using fallback metadata\n";
+    const bool had_candidates_before_fallback = had_candidates;
+    if (!had_candidates) {
+        if (title_filter && fetched_count > 0) {
+            std::cerr << "No CDDB matches matched the title filter; using fallback metadata\n";
+        } else {
+            std::cerr << "No CDDB matches found across configured servers; using fallback metadata\n";
+        }
         cdrip_release_cddbentry_list(entries);
         entries = new CdRipCddbEntryList{};
         entries->count = 1;
@@ -924,12 +1059,9 @@ CddbSelection select_cddb_entry_for_toc(
             entries->entries[0] = *fallback;
             delete fallback;  // ownership transferred to entries->entries
         }
+        sorted_indices.assign(1, 0);
     }
 
-    std::vector<size_t> sorted_indices(entries->count);
-    for (size_t i = 0; i < entries->count; ++i) {
-        sorted_indices[i] = i;
-    }
     if (sort) {
         auto normalize_lower = [](const std::string& s) {
             std::string lowered = s;
@@ -972,7 +1104,7 @@ CddbSelection select_cddb_entry_for_toc(
 
     std::vector<size_t> choices;
     if (auto_mode) {
-        if (!had_initial_matches) {
+        if (!had_candidates_before_fallback) {
             choices = {0};
             std::cout << "\nAuto mode: no CDDB candidates; proceeding without selection.\n";
         } else {
@@ -983,7 +1115,7 @@ CddbSelection select_cddb_entry_for_toc(
         }
     } else {
         while (true) {
-            std::cout << "\nSelect match [0-" << entries->count
+            std::cout << "\nSelect match [0-" << sorted_indices.size()
                       << "] (comma/space separated, default 1): ";
             std::string choice_line;
             if (!std::getline(std::cin, choice_line)) {
@@ -1029,21 +1161,17 @@ CddbSelection select_cddb_entry_for_toc(
                     has_zero = true;
                     continue;
                 }
-                if (n < 0 || static_cast<size_t>(n) > entries->count) {
+                if (n < 0 || static_cast<size_t>(n) > sorted_indices.size()) {
                     range_ok = false;
                     break;
                 }
             }
             if (!range_ok) {
-                std::cerr << "Invalid selection range. Valid: 0-" << entries->count << "\n";
+                std::cerr << "Invalid selection range. Valid: 0-" << sorted_indices.size() << "\n";
                 continue;
             }
             if (has_zero && unique_nums.size() > 1) {
                 std::cerr << "Error: 0 must be selected alone.\n";
-                continue;
-            }
-            if (no_merge && unique_nums.size() > 1) {
-                std::cerr << "Error: multiple selections require merge; omit -nm/--no-merge.\n";
                 continue;
             }
 
@@ -1068,7 +1196,7 @@ CddbSelection select_cddb_entry_for_toc(
     std::unordered_set<size_t> seen_entry_indices;
     for (size_t n : choices) {
         if (n == 0) continue;
-        if (n < 1 || n > entries->count) continue;
+        if (n < 1 || n > sorted_indices.size()) continue;
         const size_t entry_index = sorted_indices[n - 1];
         if (seen_entry_indices.insert(entry_index).second) {
             selected_entries.push_back(&entries->entries[entry_index]);
@@ -1079,7 +1207,7 @@ CddbSelection select_cddb_entry_for_toc(
     }
 
     result.selected_entries = selected_entries;
-    if (!auto_mode && !no_merge && selected_entries.size() > 1) {
+    if (!auto_mode && selected_entries.size() > 1) {
         result.merged = merge_cddb_entries_for_toc(toc, selected_entries);
         if (result.merged && result.merged->count > 0 && result.merged->entries) {
             result.selected = &result.merged->entries[0];
@@ -1321,10 +1449,11 @@ struct Options {
     std::optional<CdRipRipModes> rip_mode;
     std::optional<bool> repeat;
     std::optional<bool> sort;
+    std::optional<std::string> filter_title;
     std::optional<bool> auto_mode;
+    std::optional<bool> speed_fast;
     std::string config_file;
     bool no_eject = false;
-    bool no_merge = false;
     bool no_aa = false;
     std::vector<std::string> update_paths;
 };
@@ -1367,12 +1496,16 @@ Options parse_args(int argc, char** argv) {
             opts.repeat = true;
         } else if (arg == "-s" || arg == "--sort") {
             opts.sort = true;
+        } else if ((arg == "-ft" || arg == "--filter-title") && i + 1 < argc) {
+            opts.filter_title = argv[++i];
         } else if (arg == "-a" || arg == "--auto") {
             opts.auto_mode = true;
+        } else if (arg == "-ss" || arg == "--speed-slow") {
+            opts.speed_fast = false;
+        } else if (arg == "-sf" || arg == "--speed-fast") {
+            opts.speed_fast = true;
         } else if (arg == "-na" || arg == "--no-aa") {
             opts.no_aa = true;
-        } else if (arg == "-nm" || arg == "--no-merge") {
-            opts.no_merge = true;
         } else if (arg == "-ne" || arg == "--no-eject") {
             opts.no_eject = true;
         } else if (arg == "-n") {
@@ -1386,17 +1519,19 @@ Options parse_args(int argc, char** argv) {
                 std::exit(1);
             }
         } else if (arg == "-?" || arg == "-h" || arg == "--help") {
-            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-nm] [-a] [-na] [-i config] [-u file|dir ...]\n";
+            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-r] [-ne] [-a] [-ss|-sf] [-na] [-i config] [-u file|dir ...]\n";
             std::cout << "  -d  / --device: CD device path (default: auto-detect)\n";
             std::cout << "  -f  / --format: FLAC destination path format (default: \"{album}/{tracknumber:02d}_{safetitle}.flac\")\n";
             std::cout << "  -m  / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disabled any checks)\n";
             std::cout << "  -c  / --compression: FLAC compression level (default: auto (best --> 5, fast --> 1))\n";
             std::cout << "  -w  / --max-width: Cover art max width in pixels (default: 512)\n";
             std::cout << "  -s  / --sort: Sort CDDB results by album name on the prompt\n";
+            std::cout << "  -ft / --filter-title: Filter CDDB candidates by title using case-insensitive regex (UTF-8)\n";
             std::cout << "  -r  / --repeat: Prompt for next disc after finishing\n";
             std::cout << "  -ne / --no-eject: Keep disc in the drive after ripping finishes\n";
-            std::cout << "  -nm / --no-merge: Disable CDDB tag merge on multi-selection\n";
             std::cout << "  -a  / --auto: Enable fully automatic mode (without any prompts)\n";
+            std::cout << "  -ss / --speed-slow: Request 1x drive read speed when ripping starts (default)\n";
+            std::cout << "  -sf / --speed-fast: Request maximum drive read speed when ripping starts\n";
             std::cout << "  -na / --no-aa: Disable cover art ANSI/ASCII art output\n";
             std::cout << "  -i  / --input: cdrip config file path (default search: ./cdrip.conf --> ~/.cdrip.conf)\n";
             std::cout << "  -u  / --update <file|dir> [more ...]: Update existing FLAC tags from CDDB using embedded tags (other options ignored)\n";
@@ -1411,8 +1546,8 @@ int run_update_mode(
     const CdRipCddbServerList* servers,
     bool sort,
     bool auto_mode,
-    bool no_merge,
-    bool allow_aa) {
+    bool allow_aa,
+    const GRegex* title_filter) {
 
     if (!servers || servers->count == 0) {
         std::cerr << "No CDDB servers configured.\n";
@@ -1457,7 +1592,7 @@ int run_update_mode(
 
             const std::string cache_key = build_metadata_cache_key(item.toc);
             auto selection = select_cddb_entry_for_toc(
-                item.toc, servers, sort, view_string(item.path), auto_mode, no_merge, /*allow_fallback=*/false, &metadata_cache);
+                item.toc, servers, sort, view_string(item.path), auto_mode, /*allow_fallback=*/false, &metadata_cache, title_filter);
             if (!selection.entries || !selection.selected) {
                 std::cout << "  Skipped: no metadata selected\n";
                 if (selection.entries) cdrip_release_cddbentry_list(selection.entries);
@@ -1530,6 +1665,26 @@ int main(int argc, char** argv) {
     bool eject_after = !cli_opts.no_eject;
     CdRipCddbServerList* servers_from_config = cfg->servers;
 
+    std::string filter_title = trim_ws(cli_opts.filter_title.value_or(view_string(cfg->filter_title)));
+    using RegexPtr = std::unique_ptr<GRegex, decltype(&g_regex_unref)>;
+    RegexPtr title_filter(nullptr, &g_regex_unref);
+    if (!filter_title.empty()) {
+        GError* gerr = nullptr;
+        GRegex* re = g_regex_new(
+            filter_title.c_str(),
+            static_cast<GRegexCompileFlags>(G_REGEX_CASELESS | G_REGEX_OPTIMIZE),
+            static_cast<GRegexMatchFlags>(0),
+            &gerr);
+        if (!re) {
+            const bool from_cli = cli_opts.filter_title.has_value();
+            std::cerr << "Invalid " << (from_cli ? "-ft/--filter-title" : "cdrip.filter_title")
+                      << " regex: " << (gerr && gerr->message ? gerr->message : "unknown error") << "\n";
+            if (gerr) g_error_free(gerr);
+            return 1;
+        }
+        title_filter.reset(re);
+    }
+
     std::string aa_err;
     bool allow_aa = true;
     if (cfg->config_path && cfg->config_path[0]) {
@@ -1541,11 +1696,32 @@ int main(int argc, char** argv) {
     }
     if (cli_opts.no_aa) allow_aa = false;
 
+    std::string speed_err;
+    bool speed_fast = false;
+    if (cfg->config_path && cfg->config_path[0]) {
+        std::string speed_value = get_config_string(cfg->config_path, "cdrip", "speed", "slow", speed_err);
+        if (!speed_err.empty()) {
+            std::cerr << "Failed to parse cdrip.speed from \"" << view_string(cfg->config_path) << "\": " << speed_err << "\n";
+            return 1;
+        }
+        std::transform(speed_value.begin(), speed_value.end(), speed_value.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        if (speed_value == "fast") {
+            speed_fast = true;
+        } else if (speed_value == "slow") {
+            speed_fast = false;
+        } else {
+            std::cerr << "Invalid cdrip.speed in \"" << view_string(cfg->config_path) << "\": " << speed_value << "\n";
+            return 1;
+        }
+    }
+    if (cli_opts.speed_fast.has_value()) speed_fast = *cli_opts.speed_fast;
+
     cdrip_set_cover_art_max_width(max_width);
 
     if (!cli_opts.update_paths.empty()) {
         // Ignore other options when update mode is specified.
-        return run_update_mode(cli_opts.update_paths, servers_from_config, cfg->sort, auto_mode, cli_opts.no_merge, allow_aa);
+        return run_update_mode(cli_opts.update_paths, servers_from_config, cfg->sort, auto_mode, allow_aa, title_filter.get());
     }
 
     const char* err = nullptr;
@@ -1663,7 +1839,7 @@ int main(int argc, char** argv) {
     }
 
     err = nullptr;
-    CdRipSettings settings{format.c_str(), compression_level, rip_mode};
+    CdRipSettings settings{format.c_str(), compression_level, rip_mode, speed_fast};
     auto drive = cdrip_open(device.c_str(), &settings, &err);
     if (!drive) {
         std::string err_msg = view_string(err);
@@ -1698,6 +1874,7 @@ int main(int argc, char** argv) {
             break;
     }
     std::cout << "\n";
+    std::cout << "  speed       : " << (speed_fast ? "fast (max)" : "slow (1x)") << "\n";
     std::cout << "  auto        : " << (auto_mode ? "enabled" : "disabled");
     std::cout << "\n\n";
 
@@ -1726,7 +1903,7 @@ int main(int argc, char** argv) {
 
         CdRipCddbServerList* servers = servers_from_config;
 
-        auto selection = select_cddb_entry_for_toc(toc, servers, sort, std::string{}, auto_mode, cli_opts.no_merge);
+        auto selection = select_cddb_entry_for_toc(toc, servers, sort, std::string{}, auto_mode, /*allow_fallback=*/true, /*metadata_cache=*/nullptr, title_filter.get());
         const bool ignore_meta = (selection.selected == nullptr);
         if (!selection.entries) {
             std::cerr << "Failed to obtain CDDB entries\n";
