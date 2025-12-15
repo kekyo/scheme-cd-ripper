@@ -111,7 +111,7 @@ The default options are configured for easy use of cdrip.
 Of course, you can adjust them to your preferences as follows:
 
 ```bash
-cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-a] [-ss|-sf] [-na] [-i config] [-u file|dir ...]
+cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-r] [-ne] [-a] [-ss|-sf] [-na] [-i config] [-u file|dir ...]
 ```
 
 - `-d`, `--device`: CD device path (`/dev/cdrom` or others). If not specified, it will automatically detect available CD devices and list them.
@@ -120,6 +120,7 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px
 - `-c`, `--compression`: FLAC compression level (default: `auto` (best --> `5`, fast --> `1`))
 - `-w`, `--max-width`: Cover art max width in pixels (default: `512`)
 - `-s`, `--sort`: Sort CDDB results by album name on the prompt.
+- `-ft`, `--filter-title`: Filter CDDB candidates by title using case-insensitive regex (UTF-8)
 - `-r`, `--repeat`: Prompt for next disc after finishing.
 - `-ne`, `--no-eject`: Keep disc in the drive after ripping finishes.
 - `-a`, `--auto`: Enable fully automatic mode (without any prompts).
@@ -291,6 +292,7 @@ aa=true              # show cover art as ANSI/ASCII art (TTY only)
 mode=best            # best / fast / default
 repeat=false
 sort=false
+filter_title=         # Filter CDDB candidates by title using regex (empty = no filter, ignore casing)
 auto=false
 
 [cddb]

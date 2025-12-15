@@ -166,6 +166,7 @@ static CdRipConfig* make_default_config() {
     cfg->mode = RIP_MODES_DEFAULT;
     cfg->repeat = false;
     cfg->sort = false;
+    cfg->filter_title = nullptr;
     cfg->auto_mode = false;
     cfg->servers = make_builtin_servers();
     cfg->config_path = nullptr;
@@ -341,6 +342,23 @@ CdRipConfig* cdrip_load_config(
         }
     }
 
+    if (g_key_file_has_key(key_file, "cdrip", "filter_title", nullptr)) {
+        GError* gerr = nullptr;
+        char* value = g_key_file_get_string(key_file, "cdrip", "filter_title", &gerr);
+        if (value) {
+            const std::string v = strip_inline_comment_value(value);
+            g_free(value);
+            if (!v.empty()) {
+                replace_cstr(cfg->filter_title, v);
+            } else {
+                release_cstr(cfg->filter_title);
+                cfg->filter_title = nullptr;
+            }
+        } else if (gerr) {
+            return fail_gerror(gerr, "Failed to parse filter_title");
+        }
+    }
+
     if (g_key_file_has_key(key_file, "cdrip", "auto", nullptr)) {
         GError* gerr = nullptr;
         char* value = g_key_file_get_string(key_file, "cdrip", "auto", &gerr);
@@ -467,6 +485,7 @@ void cdrip_release_config(
     if (!cfg) return;
     release_cstr(cfg->device);
     release_cstr(cfg->format);
+    release_cstr(cfg->filter_title);
     release_cstr(cfg->config_path);
     if (cfg->servers) {
         for (size_t i = 0; i < cfg->servers->count; ++i) {

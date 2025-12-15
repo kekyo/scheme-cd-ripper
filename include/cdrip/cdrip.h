@@ -88,6 +88,8 @@ typedef struct CdRipConfig {
     bool repeat;
     /** Sort CDDB results by album. */
     bool sort;
+    /** Case-insensitive regex filter applied to entry title (nullable => no filter). */
+    const char* filter_title;
     /** Auto mode (non-interactive drive/CDDB selection). */
     bool auto_mode;
     /** CDDB server list (owned). */

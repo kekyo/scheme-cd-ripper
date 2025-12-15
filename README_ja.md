@@ -112,7 +112,7 @@ Debian (bookworm) / Ubuntu (noble, jammy) では、[ビルド済みバイナリ�
 もちろん、以下のように好みに合わせて調整することも可能です:
 
 ```bash
-cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-a] [-ss|-sf] [-na] [-i config] [-u file|dir ...]
+cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-r] [-ne] [-a] [-ss|-sf] [-na] [-i config] [-u file|dir ...]
 ```
 
 - `-d`, `--device`: CDデバイスのパス（`/dev/cdrom` など）。指定しない場合、利用可能なCDデバイスを自動検出して一覧表示します。
@@ -121,6 +121,7 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px
 - `-c`, `--compression`: FLAC圧縮レベル (デフォルト: `auto` (best --> `5`, fast --> `1`))
 - `-w`, `--max-width`: カバーアートの最大幅（ピクセル、デフォルト: `512`）
 - `-s`, `--sort`: CDDB検索結果をアルバム名順に並べ替えて表示。
+- `-ft`, `--filter-title`: CDDB候補のタイトルを正規表現でフィルタ（大文字小文字無視、UTF-8）
 - `-r`, `--repeat`: 終了後に次のCDのリッピング作業を連続して行う。
 - `-ne`, `--no-eject`: リッピング終了後もCDをドライブ内に保持する。
 - `-a`, `--auto`: 完全自動モードを有効化（プロンプトなし）。
@@ -293,6 +294,7 @@ aa=true              # カバーアートをANSI/ASCIIアートで表示（TTY�
 mode=best            # best / fast / default
 repeat=false
 sort=false
+filter_title=         # CDDB候補のタイトルを正規表現でフィルタ（未指定/空=フィルタなし、大文字小文字無視）
 auto=false
 
 [cddb]
