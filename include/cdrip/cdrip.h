@@ -161,6 +161,8 @@ typedef struct CdRipSettings {
     int compression_level;
     /** Rip mode. */
     CdRipRipModes mode;
+    /** Drive speed selection (false: slow, true: fast). */
+    bool speed_fast;
 } CdRipSettings;
 
 /** Opaque handle for Scheme CD ripper. */
@@ -179,12 +181,12 @@ CdRip* cdrip_open(
     const char** error /* nullable */);
 /**
  * Close Scheme CD Ripper and optionally eject the disc.
- * @param d Ripper handle.
+ * @param cdrip Ripper handle.
  * @param will_eject True to eject the disc.
  * @param error Optional error string out-parameter.
  */
 void cdrip_close(
-    CdRip* d,
+    CdRip* cdrip,
     bool will_eject,
     const char** error /* nullable */);
 
@@ -420,7 +422,7 @@ typedef void (*CdRipProgressCallback)(const CdRipProgressInfo*);
 
 /**
  * Rip a single track to FLAC.
- * @param drive Ripper handle.
+ * @param cdrip Ripper handle.
  * @param track Track info to rip.
  * @param meta CDDB metadata for the album.
  * @param toc Disc TOC information (for CDDB tags).
@@ -433,7 +435,7 @@ typedef void (*CdRipProgressCallback)(const CdRipProgressInfo*);
  * @return Non-zero on success, zero on failure.
  */
 int cdrip_rip_track(
-    CdRip* drive,
+    CdRip* cdrip,
     const CdRipTrackInfo* track,
     const CdRipCddbEntry* meta,
     const CdRipDiscToc* toc,

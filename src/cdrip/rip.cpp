@@ -197,7 +197,7 @@ static const std::string replace_chars = ".:;|/\\^";
 extern "C" {
 
 int cdrip_rip_track(
-    CdRip* drive,
+    CdRip* rip,
     const CdRipTrackInfo* track,
     const CdRipCddbEntry* meta,
     const CdRipDiscToc* toc,
@@ -209,7 +209,7 @@ int cdrip_rip_track(
     double wall_start_sec) {
 
     clear_error(error);
-    if (!drive) return 0;
+    if (!rip) return 0;
     if (!track || !meta || !toc) {
         set_error(error, "Invalid arguments to cdrip_rip_track");
         return 0;
@@ -343,7 +343,7 @@ int cdrip_rip_track(
     }
     path_tags["SAFETITLE"] = safe_title;
 
-    const std::string fmt = !drive->format.empty() ? drive->format : "";
+    const std::string fmt = !rip->format.empty() ? rip->format : "";
     const std::string outfile = format_filename(fmt, path_tags);
     const bool uri_output = is_uri(outfile);
 
@@ -403,10 +403,14 @@ int cdrip_rip_track(
         return 0;
     }
 
-    int compression_level = drive->compression_level;
+    int compression_level = rip->compression_level;
     if (compression_level < 0) {
-        compression_level = (drive->mode == RIP_MODES_FAST) ? 1 : 5;
+        compression_level = (rip->mode == RIP_MODES_FAST) ? 1 : 5;
     }
+
+    // Request rip speed (1 => 1x, 0 => rip maximum).
+    // Ignore errors; not all drives support it.
+    cdda_speed_set(rip->drive, rip->speed_fast ? 0 : 1);
 
     FLAC::Encoder::File encoder;
     encoder.set_verify(false);
@@ -490,7 +494,7 @@ int cdrip_rip_track(
         }
     };
 
-    paranoia_seek(drive->paranoia, track->start, SEEK_SET);
+    paranoia_seek(rip->paranoia, track->start, SEEK_SET);
 
     constexpr int kChunkSectors = 128;
     std::vector<FLAC__int32> left(kChunkSectors * kSamplesPerSector);
@@ -509,7 +513,7 @@ int cdrip_rip_track(
         int read_sectors = 0;
 
         for (int c = 0; c < chunk; ++c) {
-            int16_t* buffer = paranoia_read(drive->paranoia, nullptr);
+            int16_t* buffer = paranoia_read(rip->paranoia, nullptr);
             if (!buffer) {
                 set_error(error,
                     "Read error on track " + std::to_string(track->number));

@@ -251,6 +251,43 @@ bool get_config_bool(
     return value;
 }
 
+std::string get_config_string(
+    const char* config_path,
+    const char* group,
+    const char* key,
+    const char* default_value,
+    std::string& err_out) {
+
+    err_out.clear();
+    if (!config_path || !group || !key) return default_value ? std::string{default_value} : std::string{};
+
+    GKeyFile* key_file = g_key_file_new();
+    GError* gerr = nullptr;
+    if (!g_key_file_load_from_file(key_file, config_path, G_KEY_FILE_NONE, &gerr)) {
+        err_out = (gerr && gerr->message) ? gerr->message : "Failed to load config file";
+        if (gerr) g_error_free(gerr);
+        g_key_file_unref(key_file);
+        return default_value ? std::string{default_value} : std::string{};
+    }
+
+    std::string value = default_value ? std::string{default_value} : std::string{};
+    if (g_key_file_has_key(key_file, group, key, nullptr)) {
+        gerr = nullptr;
+        char* raw = g_key_file_get_string(key_file, group, key, &gerr);
+        if (!raw) {
+            err_out = (gerr && gerr->message) ? gerr->message : "Failed to parse string value";
+            if (gerr) g_error_free(gerr);
+            g_key_file_unref(key_file);
+            return default_value ? std::string{default_value} : std::string{};
+        }
+        value = strip_inline_comment_value(raw);
+        g_free(raw);
+    }
+
+    g_key_file_unref(key_file);
+    return value;
+}
+
 TerminalSize get_stdout_terminal_size() {
     TerminalSize out{};
     struct winsize ws {};
@@ -1383,6 +1420,7 @@ struct Options {
     std::optional<bool> repeat;
     std::optional<bool> sort;
     std::optional<bool> auto_mode;
+    std::optional<bool> speed_fast;
     std::string config_file;
     bool no_eject = false;
     bool no_aa = false;
@@ -1429,6 +1467,10 @@ Options parse_args(int argc, char** argv) {
             opts.sort = true;
         } else if (arg == "-a" || arg == "--auto") {
             opts.auto_mode = true;
+        } else if (arg == "-ss" || arg == "--speed-slow") {
+            opts.speed_fast = false;
+        } else if (arg == "-sf" || arg == "--speed-fast") {
+            opts.speed_fast = true;
         } else if (arg == "-na" || arg == "--no-aa") {
             opts.no_aa = true;
         } else if (arg == "-ne" || arg == "--no-eject") {
@@ -1444,7 +1486,7 @@ Options parse_args(int argc, char** argv) {
                 std::exit(1);
             }
         } else if (arg == "-?" || arg == "-h" || arg == "--help") {
-            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-a] [-na] [-i config] [-u file|dir ...]\n";
+            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-r] [-ne] [-a] [-ss|-sf] [-na] [-i config] [-u file|dir ...]\n";
             std::cout << "  -d  / --device: CD device path (default: auto-detect)\n";
             std::cout << "  -f  / --format: FLAC destination path format (default: \"{album}/{tracknumber:02d}_{safetitle}.flac\")\n";
             std::cout << "  -m  / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disabled any checks)\n";
@@ -1454,6 +1496,8 @@ Options parse_args(int argc, char** argv) {
             std::cout << "  -r  / --repeat: Prompt for next disc after finishing\n";
             std::cout << "  -ne / --no-eject: Keep disc in the drive after ripping finishes\n";
             std::cout << "  -a  / --auto: Enable fully automatic mode (without any prompts)\n";
+            std::cout << "  -ss / --speed-slow: Request 1x drive read speed when ripping starts (default)\n";
+            std::cout << "  -sf / --speed-fast: Request maximum drive read speed when ripping starts\n";
             std::cout << "  -na / --no-aa: Disable cover art ANSI/ASCII art output\n";
             std::cout << "  -i  / --input: cdrip config file path (default search: ./cdrip.conf --> ~/.cdrip.conf)\n";
             std::cout << "  -u  / --update <file|dir> [more ...]: Update existing FLAC tags from CDDB using embedded tags (other options ignored)\n";
@@ -1597,6 +1641,27 @@ int main(int argc, char** argv) {
     }
     if (cli_opts.no_aa) allow_aa = false;
 
+    std::string speed_err;
+    bool speed_fast = false;
+    if (cfg->config_path && cfg->config_path[0]) {
+        std::string speed_value = get_config_string(cfg->config_path, "cdrip", "speed", "slow", speed_err);
+        if (!speed_err.empty()) {
+            std::cerr << "Failed to parse cdrip.speed from \"" << view_string(cfg->config_path) << "\": " << speed_err << "\n";
+            return 1;
+        }
+        std::transform(speed_value.begin(), speed_value.end(), speed_value.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        if (speed_value == "fast") {
+            speed_fast = true;
+        } else if (speed_value == "slow") {
+            speed_fast = false;
+        } else {
+            std::cerr << "Invalid cdrip.speed in \"" << view_string(cfg->config_path) << "\": " << speed_value << "\n";
+            return 1;
+        }
+    }
+    if (cli_opts.speed_fast.has_value()) speed_fast = *cli_opts.speed_fast;
+
     cdrip_set_cover_art_max_width(max_width);
 
     if (!cli_opts.update_paths.empty()) {
@@ -1719,7 +1784,7 @@ int main(int argc, char** argv) {
     }
 
     err = nullptr;
-    CdRipSettings settings{format.c_str(), compression_level, rip_mode};
+    CdRipSettings settings{format.c_str(), compression_level, rip_mode, speed_fast};
     auto drive = cdrip_open(device.c_str(), &settings, &err);
     if (!drive) {
         std::string err_msg = view_string(err);
@@ -1754,6 +1819,7 @@ int main(int argc, char** argv) {
             break;
     }
     std::cout << "\n";
+    std::cout << "  speed       : " << (speed_fast ? "fast (max)" : "slow (1x)") << "\n";
     std::cout << "  auto        : " << (auto_mode ? "enabled" : "disabled");
     std::cout << "\n\n";
 

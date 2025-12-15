@@ -25,6 +25,7 @@ CdRip* cdrip_open(
     clear_error(error);
     const std::string device_str = to_string_or_empty(device);
     CdRipRipModes mode = settings ? settings->mode : RIP_MODES_DEFAULT;
+    const bool speed_fast = settings ? settings->speed_fast : false;
     const std::string format = settings && settings->format
         ? settings->format : std::string{};
     const int compression_level = settings ? settings->compression_level : -1;
@@ -38,6 +39,9 @@ CdRip* cdrip_open(
         cdda_close(raw);
         return nullptr;
     }
+    // Request rip speed (1 => 1x, 0 => rip maximum).
+    // Ignore errors; not all drives support it.
+    cdda_speed_set(raw, speed_fast ? 0 : 1);
     cdrom_paranoia* p = paranoia_init(raw);
     if (!p) {
         set_error(error, "Failed to initialise cd-paranoia");
@@ -59,27 +63,27 @@ CdRip* cdrip_open(
             break;
     }
     paranoia_modeset(p, flags);
-    return new CdRip{raw, p, effective_mode, device_str, format, compression_level};
+    return new CdRip{raw, p, effective_mode, device_str, format, compression_level, speed_fast};
 }
 
 void cdrip_close(
-    CdRip* d,
+    CdRip* cdrip,
     bool will_eject,
     const char** error) {
 
     clear_error(error);
-    if (!d) {
+    if (!cdrip) {
         set_error(error, "Drive handle is null");
         return;
     }
-    const std::string device = d->device;
-    if (d->paranoia) {
-        paranoia_free(d->paranoia);
-        d->paranoia = nullptr;
+    const std::string device = cdrip->device;
+    if (cdrip->paranoia) {
+        paranoia_free(cdrip->paranoia);
+        cdrip->paranoia = nullptr;
     }
-    if (d->drive) {
-        cdda_close(d->drive);
-        d->drive = nullptr;
+    if (cdrip->drive) {
+        cdda_close(cdrip->drive);
+        cdrip->drive = nullptr;
     }
     if (will_eject && !device.empty()) {
         driver_return_code_t rc = cdio_eject_media_drive(device.c_str());
@@ -87,7 +91,7 @@ void cdrip_close(
             set_error(error, "Failed to eject disc from " + device);
         }
     }
-    delete d;
+    delete cdrip;
 }
 
 };
