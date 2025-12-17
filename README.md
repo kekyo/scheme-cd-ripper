@@ -23,7 +23,7 @@ This workflow is designed for processing large numbers of CDs continuously, for 
 
 - Encode and save audio tracks as FLAC while performing music stream integrity checks (with `cd-paranoia`).
 - Reads the disc TOC, queries multiple CDDB servers and MusicBrainz. Merges all matches, and prompts you to pick a candidate.
-- Inserts Vorbis comments (ID3 like tags in FLAC format) automatically. Furthermore, if a cover art image exists, it can be automatically embedded.
+- Inserts Vorbis comments (ID3 like tags in FLAC format) automatically. Furthermore, if a cover art image exists at Discogs/CAA, it can be automatically embedded.
 - File names and directories can be automated using your specified format with tags.
 - And since it uses GNOME GIO (GVfs) for file output, you can output directly to a NAS or similar device using a URL.
 - Supports continuous mode for efficient operation of multiple CDs.
@@ -57,8 +57,10 @@ Attempting to determine drive endianness from data........
 Options:
   device      : "/dev/cdrom"
   format      : "{album}/{tracknumber:02d}_{safetitle}.flac"
-  compression : 8 (auto)
-  mode        : default (best - full integrity checks)
+  compression : 5 (auto)
+  mode        : best (full integrity checks)
+  speed       : slow (1x)
+  auto        : disabled
 
 CDDB disc id: "1403e605"
 MusicBrainz disc id: "zLsp.2WaOeSl6clZ0YhGDmARjmY-"
@@ -111,7 +113,7 @@ The default options are configured for easy use of cdrip.
 Of course, you can adjust them to your preferences as follows:
 
 ```bash
-cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-r] [-ne] [-a] [-ss|-sf] [-na] [-i config] [-u file|dir ...]
+cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex] [-r] [-ne] [-a] [-ss|-sf] [-dc no|always|fallback] [-na] [-i config] [-u file|dir ...]
 ```
 
 - `-d`, `--device`: CD device path (`/dev/cdrom` or others). If not specified, it will automatically detect available CD devices and list them.
@@ -127,6 +129,7 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px
   It picks the first drive that already has media, chooses the first CDDB match, and loops in repeat mode without prompts.
 - `-ss`, `--speed-slow`: Request 1x drive read speed when ripping starts (default).
 - `-sf`, `--speed-fast`: Request maximum drive read speed when ripping starts.
+- `-dc`, `--discogs`: Discogs cover art preference: `no`, `always` (default), `fallback`.
 - `-na`, `--no-aa`: Disable cover art ANSI/ASCII art output.
 - `-i`, `--input`: cdrip config file path (default search: `./cdrip.conf` --> `~/.cdrip.conf`)
 - `-u`, `--update <file|dir> [more ...]`: Update existing FLAC tags from CDDB using embedded tags (other options ignored)
@@ -202,6 +205,7 @@ The following Vorbis comments are inserted:
 |`musicbrainz_recordingid`|Recording MBID|MusicBrainz|
 |`musicbrainz_discid`|MusicBrainz disc ID (Partial use, will remove when fetch succeed)|internal|
 |`musicbrainz_leadout`|MusicBrainz CD leadout time (Partial use, will remove when fetch succeed)|internal|
+|`discogs_release`|Discogs release ID (numeric)|MusicBrainz|
 
 When obtaining information from CDDB or MusicBrainz, not all of this tag information may be available.
 
@@ -215,12 +219,14 @@ Note: There's no need to worry. While Vorbis comments are typically written in u
 
 ### Cover Art Embedding
 
-When fetching information from MusicBrainz, it additionally attempts to retrieve cover art images (only if front cover art is marked as present).
+When fetching information from MusicBrainz, it additionally attempts to retrieve cover art images.
 If the player supports cover art display, the cover art image will be shown:
 
 ![Cover art](./images/aa.png)
 
-- Fetching and embedding cover art [(via Cover Art Archive)](https://coverartarchive.org/) is only possible when a MusicBrainz match is used; other CDDB servers do not supply cover art.
+- Fetching and embedding cover art is only possible when a MusicBrainz match is used; other CDDB servers do not supply cover art.
+- You can choose the preference order with `-dc`/`--discogs`: `always` (default: Discogs first, then CAA), `fallback` (CAA first, then Discogs), `no` (do not use Discogs).
+- Discogs cover art is only attempted when MusicBrainz release provides `discogs_release` tag.
 - Cover art is always converted to PNG format.
   This is because images provided by CAA may contain special metadata (such as ICC profiles), which can cause the hardware media player to be unable to display the image.
   Since it's in PNG format, the image itself does not degrade over time
@@ -240,7 +246,7 @@ In addition to Vorbis comment keys, the following dedicated keys can also be use
 
 |Key|Description|
 |:----|:----|
-|`safetitle`|Truncate at newline, trim trailing and replace unsafe characters|
+|`safetitle`|Truncate `title` tag at newline, trim trailing and replace unsafe characters|
 
 Note: These are not stored in the FLAC file and can only be used in the filename format.
 
@@ -289,6 +295,7 @@ compression=auto     # auto or 0-8
 max_width=512        # cover art max width in pixels (> 0)
 speed=slow           # slow or fast (default: slow)
 aa=true              # show cover art as ANSI/ASCII art (TTY only)
+discogs=always       # no / always / fallback (cover art preference order, default: always)
 mode=best            # best / fast / default
 repeat=false
 sort=false

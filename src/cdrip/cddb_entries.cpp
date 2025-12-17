@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cstdlib>
 #include <future>
 #include <sstream>
@@ -56,9 +57,9 @@ constexpr int kMusicBrainzMaxAttempts = 3;
 static const char* kMusicBrainzLabel = "musicbrainz";
 // Includes kept minimal but must contain genres/tags so we can populate GENRE.
 // DiscID lookup: cover-art-archive is invalid here; fetch cover art in a later release lookup.
-static const char* kMusicBrainzInc = "recordings+artists+release-groups+genres+tags";
+static const char* kMusicBrainzInc = "recordings+artists+release-groups+genres+tags+url-rels";
 // Note: cover-art-archive is not a valid inc for release lookup; cover art is fetched separately.
-static const char* kMusicBrainzReleaseInc = "recordings+artists+artist-credits+media+labels+release-groups+genres+tags";
+static const char* kMusicBrainzReleaseInc = "recordings+artists+artist-credits+media+labels+release-groups+genres+tags+url-rels";
 
 static std::string musicbrainz_user_agent() {
     std::string ua = "SchemeCDRipper/";
@@ -98,6 +99,39 @@ static bool get_bool_member(JsonObject* obj, const char* name, bool fallback = f
     if (!obj || !name) return fallback;
     if (!json_object_has_member(obj, name)) return fallback;
     return json_object_get_boolean_member(obj, name);
+}
+
+static std::string extract_discogs_release_id_from_url(const std::string& url) {
+    if (url.empty()) return {};
+    const std::string lower = to_lower(url);
+    static constexpr const char* kMarker = "/release/";
+    const size_t pos = lower.find(kMarker);
+    if (pos == std::string::npos) return {};
+    size_t i = pos + std::string{kMarker}.size();
+    const size_t start = i;
+    while (i < url.size() && std::isdigit(static_cast<unsigned char>(url[i]))) {
+        ++i;
+    }
+    if (i == start) return {};
+    return url.substr(start, i - start);
+}
+
+static std::string extract_discogs_release_id(JsonObject* release_obj) {
+    if (!release_obj) return {};
+    JsonArray* relations = get_array_member(release_obj, "relations");
+    if (!relations) return {};
+    const guint len = json_array_get_length(relations);
+    for (guint i = 0; i < len; ++i) {
+        JsonObject* rel = json_array_get_object_element(relations, i);
+        if (!rel) continue;
+        const std::string type = to_lower(get_string_member(rel, "type"));
+        if (type != "discogs") continue;
+        JsonObject* url_obj = get_object_member(rel, "url");
+        const std::string resource = get_string_member(url_obj, "resource");
+        const std::string id = extract_discogs_release_id_from_url(resource);
+        if (!id.empty()) return id;
+    }
+    return {};
 }
 
 static std::string join_artist_credit(JsonArray* ac) {
@@ -423,6 +457,7 @@ static bool build_entries_from_release(
     const int medium_total = get_int_member(release_obj, "medium-count", -1);
     JsonObject* release_group = get_object_member(release_obj, "release-group");
     const std::string release_group_id = get_string_member(release_group, "id");
+    const std::string discogs_release_id = extract_discogs_release_id(release_obj);
     std::vector<std::string> genres;
     collect_genres(release_obj, genres);
     collect_genres(release_group, genres);
@@ -454,6 +489,7 @@ static bool build_entries_from_release(
         append_tag(album_tags, "MUSICBRAINZ_RELEASE", release_id);
         append_tag(album_tags, "MUSICBRAINZ_MEDIUM", medium_id);
         append_tag(album_tags, "MUSICBRAINZ_RELEASEGROUPID", release_group_id);
+        append_tag(album_tags, "DISCOGS_RELEASE", discogs_release_id);
         if (track_total > 0) append_tag(album_tags, "TRACKTOTAL", std::to_string(track_total));
         if (disc_number > 0) append_tag(album_tags, "DISCNUMBER", std::to_string(disc_number));
         if (medium_total > 0) append_tag(album_tags, "DISCTOTAL", std::to_string(medium_total));

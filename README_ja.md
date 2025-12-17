@@ -24,7 +24,7 @@ Scheme CD Ripperは、オーディオCDをFLAC形式でリッピングするLinu
 
 - 音楽ストリームの完全性チェック（`cd-paranoia`を使用）を実行しながら、オーディオトラックをFLAC形式でエンコード・保存します。
 - ディスクのTOCを読み取り、複数のCDDBサーバーとMusicBrainzに照会します。一致した情報をすべて統合し、候補を選択することができます。
-- Vorbisコメント（FLAC形式のID3タグに相当）を自動挿入。さらにカバーアート画像が存在する場合、自動埋め込みが可能。
+- Vorbis comments（FLAC形式のID3タグに相当）を自動挿入。さらにDiscogsやCAAにカバーアート画像が存在する場合、自動埋め込みが可能。
 - 指定したタグによる書式でファイル名とディレクトリを自動生成。
 - ファイル出力にGNOME GIO（GVfs）を使用するため、URL経由でNASなどのデバイスへ直接出力可能。
 - 複数CDの効率的な処理のための連続モードをサポート。
@@ -58,8 +58,10 @@ Attempting to determine drive endianness from data........
 Options:
   device      : "/dev/cdrom"
   format      : "{album}/{tracknumber:02d}_{safetitle}.flac"
-  compression : 8 (auto)
-  mode        : default (best - full integrity checks)
+  compression : 5 (auto)
+  mode        : best (full integrity checks)
+  speed       : slow (1x)
+  auto        : disabled
 
 CDDB disc id: "1403e605"
 MusicBrainz disc id: "zLsp.2WaOeSl6clZ0YhGDmARjmY-"
@@ -112,7 +114,7 @@ Debian (bookworm) / Ubuntu (noble, jammy) では、[ビルド済みバイナリ�
 もちろん、以下のように好みに合わせて調整することも可能です:
 
 ```bash
-cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-r] [-ne] [-a] [-ss|-sf] [-na] [-i config] [-u file|dir ...]
+cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex] [-r] [-ne] [-a] [-ss|-sf] [-dc no|always|fallback] [-na] [-i config] [-u file|dir ...]
 ```
 
 - `-d`, `--device`: CDデバイスのパス（`/dev/cdrom` など）。指定しない場合、利用可能なCDデバイスを自動検出して一覧表示します。
@@ -128,6 +130,7 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px
   メディアが挿入されている最初のドライブを選択し、CDDBの先頭エントリを選び、リピートモードではプロンプトなしでループする。
 - `-ss`, `--speed-slow`: リッピング開始時にドライブの読込速度を等速(1x)へ要求する（デフォルト）。
 - `-sf`, `--speed-fast`: リッピング開始時にドライブの読込速度を最大へ要求する。
+- `-dc`, `--discogs`: Discogsのカバーアートの使用方法（`no`,`always`,`fallback`、デフォルト: `always`）。
 - `-na`, `--no-aa`: カバーアートのANSI/ASCIIアート表示を無効化する。
 - `-i`, `--input`: cdrip設定ファイルのパス（デフォルト検索: `./cdrip.conf` --> `~/.cdrip.conf`）
 - `-u`, `--update <file|dir> [more ...]`: 埋め込みタグを使用してCDDBから既存のFLACタグを更新（他のオプションは無視）
@@ -203,6 +206,7 @@ Select match [0-15] (comma/space separated, default 1): 3,12
 |`musicbrainz_recordingid`|レコーディングMBID|MusicBrainz|
 |`musicbrainz_discid`|MusicBrainzディスクID（MusicBrainzからの情報取得に成功したら削除）|internal|
 |`musicbrainz_leadout`|MusicBrainz CDリードアウト時間（MusicBrainzからの情報取得に成功したら削除）|internal|
+|`discogs_release`|DiscogsリリースID（数値）|MusicBrainz|
 
 CDDBやMusicBrainzから情報を得る場合、これらのすべてのタグ情報が得られるとは限りません。
 
@@ -216,12 +220,14 @@ Note: 心配する必要はありません。Vorbisコメントは通常大文�
 
 ### カバーアートの埋め込み
 
-MusicBrainzから情報を取得した場合は、追加でカバーアート画像の取得を試みます（フロントカバーアートが存在するとマークされている場合のみ）。
+MusicBrainzから情報を取得した場合は、追加でカバーアート画像の取得を試みます。
 プレイヤーがカバーアートの表示機能を持っていれば、カバーアート画像が表示されます:
 
 ![Cover art](./images/aa.png)
 
-- カバーアートの取得と埋め込み[(Cover Art Archive経由)](https://coverartarchive.org/)は、MusicBrainzのマッチングが使用された場合のみ可能です。他のCDDBサーバーはカバーアートを提供しません。
+- カバーアートの取得と埋め込みは、MusicBrainzのマッチングが使用された場合のみ可能です。他のCDDBサーバーはカバーアートを提供しません。
+- `-dc`/`--discogs` で優先順を指定できます: `always`（デフォルト: Discogsを優先し失敗時にCAA）、`fallback`（CAA優先で失敗時にDiscogs）、`no`（Discogsを使用しない）。
+- Discogsのカバーアートは、MusicBrainz release から `discogs_release` タグが取得できた場合のみ試行します。
 - カバーアートは常にPNGフォーマットに再変換されます。
   これは、CAAから提供される画像フォーマットに特殊なメタデータ（ICCプロファイルなど）が含まれている場合があり、これがハードウェアメディアプレーヤーで画像を表示できないことに繋がります。
   PNGフォーマットなので、画像が老化することはありません（取り除かれるICCプロファイルでsRGBへの色空間変換が行われるので、その意味での「老化」はあります）。
@@ -242,7 +248,7 @@ Vorbis commentsキーに加えて、以下の専用キーもファイル名フ�
 
 |キー名|内容|
 |:----|:----|
-|`safetitle`|改行で切り詰め、末尾の空白を削除し、安全でない文字を置換する|
+|`safetitle`|`title`タグを改行で切り詰め、末尾の空白を削除し、安全でない文字を置換する|
 
 Note: これらはFLACファイルには保存されず、ファイル名形式でのみ使用できます。
 
@@ -291,6 +297,7 @@ compression=auto     # auto または 0-8
 max_width=512        # カバーアート最大幅(px、1以上)
 speed=slow           # slow または fast（デフォルト: slow）
 aa=true              # カバーアートをANSI/ASCIIアートで表示（TTYのみ）
+discogs=always       # no / always / fallback（カバーアートの優先順。デフォルト: always）
 mode=best            # best / fast / default
 repeat=false
 sort=false

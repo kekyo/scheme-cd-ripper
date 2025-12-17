@@ -681,6 +681,68 @@ std::string trim_ws(const std::string& s) {
     return s.substr(start, end - start + 1);
 }
 
+enum class DiscogsMode {
+    No,
+    Always,
+    Fallback,
+};
+
+bool parse_discogs_mode(
+    const std::string& raw,
+    DiscogsMode& out) {
+
+    std::string value = to_lower_ascii(trim_ws(raw));
+    if (value.empty()) value = "always";
+    if (value == "no") {
+        out = DiscogsMode::No;
+        return true;
+    }
+    if (value == "always") {
+        out = DiscogsMode::Always;
+        return true;
+    }
+    if (value == "fallback") {
+        out = DiscogsMode::Fallback;
+        return true;
+    }
+    return false;
+}
+
+const char* discogs_mode_label(DiscogsMode mode) {
+    switch (mode) {
+        case DiscogsMode::No: return "no";
+        case DiscogsMode::Always: return "always";
+        case DiscogsMode::Fallback: return "fallback";
+    }
+    return "unknown";
+}
+
+bool servers_include_musicbrainz(
+    const CdRipCddbServerList* servers) {
+
+    if (!servers || !servers->servers || servers->count == 0) return false;
+    for (size_t i = 0; i < servers->count; ++i) {
+        const std::string label = to_lower_ascii(view_string(servers->servers[i].label));
+        if (label == "musicbrainz") return true;
+    }
+    return false;
+}
+
+enum class CoverArtFetchSource {
+    None,
+    CoverArtArchive,
+    Discogs,
+};
+
+const char* cover_art_source_label(CoverArtFetchSource src) {
+    switch (src) {
+        case CoverArtFetchSource::None: return "none";
+        case CoverArtFetchSource::CoverArtArchive: return "Cover Art Archive";
+        case CoverArtFetchSource::Discogs: return "Discogs";
+    }
+    return "unknown";
+}
+
 bool is_multi_value_tag_key(const std::string& key_upper) {
     // Tags that may contain multiple values separated by ',' or ';'.
     // e.g. GENRE: "foo; bar" / ISRC: "AAA; BBB"
@@ -903,41 +965,59 @@ bool ensure_cover_art_merged(
     CdRipCddbEntry* target,
     const std::vector<CdRipCddbEntry*>& candidates,
     const CdRipDiscToc* toc,
+    DiscogsMode discogs_mode,
+    CoverArtFetchSource& source_out,
     std::string& notice_out,
     bool allow_aa) {
 
     notice_out.clear();
+    source_out = CoverArtFetchSource::None;
     if (!target) return false;
-    if (target->cover_art.data && target->cover_art.size > 0) {
-        return true;
-    }
+    const bool target_has_cover = (target->cover_art.data && target->cover_art.size > 0);
+    if (target_has_cover && discogs_mode != DiscogsMode::Always) return true;
 
     const std::vector<CdRipCddbEntry*> effective =
         !candidates.empty() ? candidates : std::vector<CdRipCddbEntry*>{target};
 
-    for (CdRipCddbEntry* e : effective) {
-        if (!e) continue;
-        const bool had_data = (e->cover_art.data && e->cover_art.size > 0);
-        const char* cover_err = nullptr;
-        const int ok = cdrip_fetch_cover_art(e, toc, &cover_err);
-        if (ok && e->cover_art.data && e->cover_art.size > 0) {
-            if (e != target) {
-                clear_cover_art(target->cover_art);
-                target->cover_art = clone_cover_art(e->cover_art);
+    auto try_phase = [&](auto fetch_fn, CoverArtFetchSource phase_source) -> bool {
+        for (CdRipCddbEntry* e : effective) {
+            if (!e) continue;
+            const bool had_data = (e->cover_art.data && e->cover_art.size > 0);
+            const char* cover_err = nullptr;
+            const int ok = fetch_fn(e, toc, &cover_err);
+            if (ok && e->cover_art.data && e->cover_art.size > 0) {
+                if (e != target) {
+                    clear_cover_art(target->cover_art);
+                    target->cover_art = clone_cover_art(e->cover_art);
+                }
+                if (allow_aa && !had_data) {
+                    maybe_print_cover_art_ascii(target->cover_art);
+                }
+                if (!had_data) {
+                    source_out = phase_source;
+                }
+                if (cover_err) cdrip_release_error(cover_err);
+                return true;
             }
-            if (allow_aa && !had_data) {
-                maybe_print_cover_art_ascii(target->cover_art);
+            if (cover_err) {
+                notice_out = view_string(cover_err);
+                cdrip_release_error(cover_err);
             }
-            if (cover_err) cdrip_release_error(cover_err);
-            return true;
         }
-        if (cover_err) {
-            notice_out = view_string(cover_err);
-            cdrip_release_error(cover_err);
-        }
-    }
+        return false;
+    };
 
-    return false;
+    if (discogs_mode == DiscogsMode::Always) {
+        if (try_phase(&cdrip_fetch_discogs_cover_art, CoverArtFetchSource::Discogs)) return true;
+        // Keep any existing cover art if Discogs did not succeed.
+        if (target_has_cover) return true;
+        return try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive);
+    }
+    if (discogs_mode == DiscogsMode::Fallback) {
+        if (try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive)) return true;
+        return try_phase(&cdrip_fetch_discogs_cover_art, CoverArtFetchSource::Discogs);
+    }
+    return try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive);
 }
 
 struct CddbSelection {
@@ -1452,6 +1532,7 @@ struct Options {
     std::optional<std::string> filter_title;
     std::optional<bool> auto_mode;
     std::optional<bool> speed_fast;
+    std::optional<std::string> discogs;
     std::string config_file;
     bool no_eject = false;
     bool no_aa = false;
@@ -1504,6 +1585,8 @@ Options parse_args(int argc, char** argv) {
             opts.speed_fast = false;
         } else if (arg == "-sf" || arg == "--speed-fast") {
             opts.speed_fast = true;
+        } else if ((arg == "-dc" || arg == "--discogs") && i + 1 < argc) {
+            opts.discogs = argv[++i];
         } else if (arg == "-na" || arg == "--no-aa") {
             opts.no_aa = true;
         } else if (arg == "-ne" || arg == "--no-eject") {
@@ -1519,7 +1602,7 @@ Options parse_args(int argc, char** argv) {
                 std::exit(1);
             }
         } else if (arg == "-?" || arg == "-h" || arg == "--help") {
-            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-r] [-ne] [-a] [-ss|-sf] [-na] [-i config] [-u file|dir ...]\n";
+            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-r] [-ne] [-a] [-ss|-sf] [-dc no|always|fallback] [-na] [-i config] [-u file|dir ...]\n";
             std::cout << "  -d  / --device: CD device path (default: auto-detect)\n";
             std::cout << "  -f  / --format: FLAC destination path format (default: \"{album}/{tracknumber:02d}_{safetitle}.flac\")\n";
             std::cout << "  -m  / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disabled any checks)\n";
@@ -1532,6 +1615,7 @@ Options parse_args(int argc, char** argv) {
             std::cout << "  -a  / --auto: Enable fully automatic mode (without any prompts)\n";
             std::cout << "  -ss / --speed-slow: Request 1x drive read speed when ripping starts (default)\n";
             std::cout << "  -sf / --speed-fast: Request maximum drive read speed when ripping starts\n";
+            std::cout << "  -dc / --discogs: Cover art preference for Discogs: no, always (default), fallback\n";
             std::cout << "  -na / --no-aa: Disable cover art ANSI/ASCII art output\n";
             std::cout << "  -i  / --input: cdrip config file path (default search: ./cdrip.conf --> ~/.cdrip.conf)\n";
             std::cout << "  -u  / --update <file|dir> [more ...]: Update existing FLAC tags from CDDB using embedded tags (other options ignored)\n";
@@ -1546,6 +1630,7 @@ int run_update_mode(
     const CdRipCddbServerList* servers,
     bool sort,
     bool auto_mode,
+    DiscogsMode discogs_mode,
     bool allow_aa,
     const GRegex* title_filter) {
 
@@ -1602,7 +1687,8 @@ int run_update_mode(
             ensure_entry_ready_for_toc(selection.selected, item.toc);
 
             std::string cover_notice;
-            if (!ensure_cover_art_merged(selection.selected, selection.selected_entries, item.toc, cover_notice, allow_aa)) {
+            CoverArtFetchSource cover_source{};
+            if (!ensure_cover_art_merged(selection.selected, selection.selected_entries, item.toc, discogs_mode, cover_source, cover_notice, allow_aa)) {
                 if (!cover_notice.empty()) {
                     std::cerr << "  Cover art fetch notice: " << cover_notice << "\n";
                 }
@@ -1717,11 +1803,36 @@ int main(int argc, char** argv) {
     }
     if (cli_opts.speed_fast.has_value()) speed_fast = *cli_opts.speed_fast;
 
+    std::string discogs_err;
+    std::string discogs_value = "always";
+    if (cfg->config_path && cfg->config_path[0]) {
+        discogs_value = get_config_string(cfg->config_path, "cdrip", "discogs", "always", discogs_err);
+        if (!discogs_err.empty()) {
+            std::cerr << "Failed to parse cdrip.discogs from \"" << view_string(cfg->config_path) << "\": " << discogs_err << "\n";
+            return 1;
+        }
+    }
+    if (cli_opts.discogs.has_value()) discogs_value = *cli_opts.discogs;
+
+    DiscogsMode discogs_mode = DiscogsMode::Always;
+    if (!parse_discogs_mode(discogs_value, discogs_mode)) {
+        const bool from_cli = cli_opts.discogs.has_value();
+        std::cerr << "Invalid " << (from_cli ? "-dc/--discogs" : "cdrip.discogs")
+                  << " value: " << discogs_value << " (expected: no|always|fallback)\n";
+        return 1;
+    }
+    if ((discogs_mode == DiscogsMode::Always || discogs_mode == DiscogsMode::Fallback) &&
+        !servers_include_musicbrainz(servers_from_config)) {
+        std::cerr << "Warning: Discogs is enabled (" << discogs_mode_label(discogs_mode)
+                  << ") but MusicBrainz is not configured in [cddb].servers; disabling Discogs access.\n";
+        discogs_mode = DiscogsMode::No;
+    }
+
     cdrip_set_cover_art_max_width(max_width);
 
     if (!cli_opts.update_paths.empty()) {
         // Ignore other options when update mode is specified.
-        return run_update_mode(cli_opts.update_paths, servers_from_config, cfg->sort, auto_mode, allow_aa, title_filter.get());
+        return run_update_mode(cli_opts.update_paths, servers_from_config, cfg->sort, auto_mode, discogs_mode, allow_aa, title_filter.get());
     }
 
     const char* err = nullptr;
@@ -1930,9 +2041,10 @@ int main(int argc, char** argv) {
         ensure_entry_ready_for_toc(meta, toc, !ignore_meta);
 
         std::string cover_notice;
-        if (ensure_cover_art_merged(meta, selection.selected_entries, toc, cover_notice, allow_aa)) {
-            if (meta->cover_art.data && meta->cover_art.size > 0) {
-                std::cout << "\nCover art fetched from Cover Art Archive.\n";
+        CoverArtFetchSource cover_source{};
+        if (ensure_cover_art_merged(meta, selection.selected_entries, toc, discogs_mode, cover_source, cover_notice, allow_aa)) {
+            if (meta->cover_art.data && meta->cover_art.size > 0 && cover_source != CoverArtFetchSource::None) {
+                std::cout << "\nCover art fetched from " << cover_art_source_label(cover_source) << ".\n";
             }
         } else if (!cover_notice.empty()) {
             std::cerr << "\nCover art fetch notice: " << cover_notice << "\n";
