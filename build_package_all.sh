@@ -42,6 +42,10 @@ COMBINATIONS=(
     "debian bookworm arm64"
     "debian bookworm i386"
     "debian bookworm armhf"
+    "debian trixie amd64"
+    "debian trixie arm64"
+    "debian trixie i386"
+    "debian trixie armhf"
 )
 
 for combo in "${COMBINATIONS[@]}"; do

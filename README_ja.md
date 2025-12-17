@@ -102,7 +102,7 @@ Done.
 
 ## インストール
 
-Debian (bookworm) / Ubuntu (noble, jammy) では、[ビルド済みバイナリがここにあります](https://github.com/kekyo/scheme-cd-ripper/releases)。
+Debian (trixie, bookworm) / Ubuntu (noble, jammy) では、[ビルド済みバイナリがここにあります](https://github.com/kekyo/scheme-cd-ripper/releases)。
 パッケージは環境ごとに2種類 (`cdrip.deb`, `libcdrip-dev.deb`) がありますが、`cdrip`コマンドを使うだけなら前者のみインストールすればOKです。
 後者はこの機能を使いたい場合の、C言語向けAPIライブラリです。
 

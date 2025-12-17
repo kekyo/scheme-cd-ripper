@@ -101,7 +101,7 @@ Done.
 
 ## Installation
 
-For Debian (bookworm) / Ubuntu (noble, jammy), [prebuilt binaries are available here](https://github.com/kekyo/scheme-cd-ripper/releases).
+For Debian (trixie, bookworm) / Ubuntu (noble, jammy), [prebuilt binaries are available here](https://github.com/kekyo/scheme-cd-ripper/releases).
 There are two packages available (`cdrip.deb`, `libcdrip-dev.deb`), but if you only need to use `cdrip` command, installing just the first one is sufficient.
 The second one is an API library for C language when you want to use this feature.
 
@@ -335,6 +335,8 @@ A special server id `musicbrainz` is not required `[cddb.musicbrainz]` section d
 
 ### Dependencies
 
+`build.sh`:
+
 - libcdio-paranoia
 - libcddb
 - libFLAC++
@@ -343,8 +345,11 @@ A special server id `musicbrainz` is not required `[cddb.musicbrainz]` section d
 - json-glib
 - chafa (libchafa)
 - CMake and a C++17 compiler
-- dpkg-dev (for `dpkg-shlibdeps` when building packages)
 - Node.js and [screw-up](https://github.com/kekyo/screw-up) (Automated-versioning tool)
+
+`build-package.sh`:
+
+- dpkg-dev (for `dpkg-shlibdeps` when building packages)
 - cowbuilder (deb package building)
 
 ### Build
@@ -389,7 +394,7 @@ Batch build for all predefined combos:
 
 ```bash
 # ubuntu noble/jammy × amd64/i386/armhf/arm64
-# debian bookworm × amd64/i386/armhf/arm64
+# debian trixie/bookworm × amd64/i386/armhf/arm64
 ./build_package_all.sh            # reuse existing bases
 ./build_package_all.sh --refresh-base  # rebuild bases then build all
 ```
