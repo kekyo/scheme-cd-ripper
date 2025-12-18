@@ -322,6 +322,18 @@ int cdrip_fetch_cover_art(
     const CdRipDiscToc* toc /* nullable */,
     const char** error /* nullable */);
 /**
+ * Fetch front cover art from Discogs using DISCOGS_RELEASE tag (Discogs release ID).
+ * On success, stores image bytes and MIME type into the entry's cover_art field.
+ * @param entry Target CDDB entry (must come from MusicBrainz and contain DISCOGS_RELEASE).
+ * @param toc Disc TOC (reserved for future use, nullable).
+ * @param error Optional error string out-parameter.
+ * @return Non-zero on success (image obtained), zero on failure or not applicable.
+ */
+int cdrip_fetch_discogs_cover_art(
+    CdRipCddbEntry* entry,
+    const CdRipDiscToc* toc /* nullable */,
+    const char** error /* nullable */);
+/**
  * Release CDDB entry list.
  * @param p Entry list pointer (nullable).
  */

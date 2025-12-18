@@ -20,6 +20,7 @@
 #include <png.h>
 
 #include <glib.h>
+#include <json-glib/json-glib.h>
 #include <libsoup/soup.h>
 
 #include "internal.h"
@@ -803,6 +804,91 @@ static bool http_get_bytes(
         err);
 }
 
+static bool http_get_discogs_json(
+    const std::string& url,
+    std::string& body,
+    std::string& err) {
+
+    HttpRetryPolicy policy{};
+    policy.timeout_sec = kCoverArtTimeoutSec;
+    policy.max_attempts = 3;
+    policy.retry_delay_ms = kCoverArtRetryDelayMs;
+    policy.max_redirects = 2;
+    policy.respect_retry_after = true;
+
+    std::vector<uint8_t> bytes;
+    std::string ct;
+    if (!http_get_bytes_with_retry(
+            "Discogs",
+            url,
+            cover_art_user_agent(),
+            "application/json",
+            policy,
+            bytes,
+            ct,
+            err)) {
+        return false;
+    }
+
+    body.assign(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    return true;
+}
+
+static std::string json_get_string_member(JsonObject* obj, const char* name) {
+    if (!obj || !name) return {};
+    if (!json_object_has_member(obj, name)) return {};
+    const gchar* value = json_object_get_string_member(obj, name);
+    return value ? std::string{value} : std::string{};
+}
+
+static JsonArray* json_get_array_member(JsonObject* obj, const char* name) {
+    if (!obj || !name) return nullptr;
+    if (!json_object_has_member(obj, name)) return nullptr;
+    return json_object_get_array_member(obj, name);
+}
+
+static std::string select_discogs_image_url(JsonObject* release_obj) {
+    JsonArray* images = json_get_array_member(release_obj, "images");
+    if (!images) return {};
+    const guint len = json_array_get_length(images);
+    std::string first_any;
+    for (guint i = 0; i < len; ++i) {
+        JsonObject* img = json_array_get_object_element(images, i);
+        if (!img) continue;
+        std::string uri = json_get_string_member(img, "uri");
+        if (uri.empty()) uri = json_get_string_member(img, "resource_url");
+        if (uri.empty()) continue;
+        if (first_any.empty()) first_any = uri;
+        const std::string type = to_lower(json_get_string_member(img, "type"));
+        if (type == "primary") return uri;
+    }
+    return first_any;
+}
+
+static bool http_get_discogs_image_bytes(
+    const std::string& url,
+    std::vector<uint8_t>& body,
+    std::string& content_type,
+    std::string& err) {
+
+    HttpRetryPolicy policy{};
+    policy.timeout_sec = kCoverArtTimeoutSec;
+    policy.max_attempts = 3;
+    policy.retry_delay_ms = kCoverArtRetryDelayMs;
+    policy.max_redirects = 2;
+    policy.respect_retry_after = true;
+
+    return http_get_bytes_with_retry(
+        "Discogs",
+        url,
+        cover_art_user_agent(),
+        "image/*",
+        policy,
+        body,
+        content_type,
+        err);
+}
+
 }  // namespace
 
 extern "C" {
@@ -885,6 +971,100 @@ int cdrip_fetch_cover_art(
     if (!normalize_image_to_png(data, max_width_px, normalized, norm_err)) {
         set_error(error, "Failed to normalize cover art image: " + norm_err);
         return 0;
+    }
+
+    content_type = "image/png";
+    entry->cover_art.size = normalized.size();
+    entry->cover_art.data = new uint8_t[entry->cover_art.size];
+    std::copy(normalized.begin(), normalized.end(), const_cast<uint8_t*>(entry->cover_art.data));
+    entry->cover_art.mime_type = make_cstr_copy(content_type);
+    entry->cover_art.is_front = 1;
+    entry->cover_art.available = 1;
+    return 1;
+}
+
+int cdrip_fetch_discogs_cover_art(
+    CdRipCddbEntry* entry,
+    const CdRipDiscToc* toc,
+    const char** error) {
+
+    (void)toc;
+    clear_error(error);
+    if (!entry) {
+        set_error(error, "Invalid entry for Discogs cover art fetch");
+        return 0;
+    }
+
+    const std::string source_label = to_lower(to_string_or_empty(entry->source_label));
+    if (source_label != "musicbrainz") {
+        return 0;
+    }
+
+    std::string release_id = trim(album_tag(entry, "DISCOGS_RELEASE"));
+    if (release_id.empty()) {
+        return 0;
+    }
+    for (unsigned char ch : release_id) {
+        if (!std::isdigit(ch)) {
+            set_error(error, "Invalid DISCOGS_RELEASE tag value");
+            return 0;
+        }
+    }
+
+    const std::string api_url = "https://api.discogs.com/releases/" + release_id;
+    std::string body;
+    std::string err_msg;
+    if (!http_get_discogs_json(api_url, body, err_msg)) {
+        if (!err_msg.empty()) set_error(error, err_msg);
+        return 0;
+    }
+
+    JsonParser* parser = json_parser_new();
+    GError* gerr = nullptr;
+    if (!json_parser_load_from_data(parser, body.c_str(), body.size(), &gerr)) {
+        std::string msg = (gerr && gerr->message) ? std::string{gerr->message} : "Discogs response parse error";
+        if (gerr) g_error_free(gerr);
+        g_object_unref(parser);
+        set_error(error, msg);
+        return 0;
+    }
+    JsonNode* root = json_parser_get_root(parser);
+    if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
+        g_object_unref(parser);
+        set_error(error, "Discogs response is not a JSON object");
+        return 0;
+    }
+    JsonObject* root_obj = json_node_get_object(root);
+    const std::string image_url = select_discogs_image_url(root_obj);
+    g_object_unref(parser);
+    if (image_url.empty()) {
+        set_error(error, "Discogs release has no images");
+        return 0;
+    }
+
+    std::vector<uint8_t> data;
+    std::string content_type;
+    if (!http_get_discogs_image_bytes(image_url, data, content_type, err_msg)) {
+        if (!err_msg.empty()) set_error(error, err_msg);
+        return 0;
+    }
+
+    std::vector<uint8_t> normalized;
+    std::string norm_err;
+    const int max_width_px = g_cover_art_max_width.load(std::memory_order_relaxed);
+    if (!normalize_image_to_png(data, max_width_px, normalized, norm_err)) {
+        set_error(error, "Failed to normalize cover art image: " + norm_err);
+        return 0;
+    }
+
+    if (entry->cover_art.data) {
+        delete[] entry->cover_art.data;
+        entry->cover_art.data = nullptr;
+    }
+    entry->cover_art.size = 0;
+    if (entry->cover_art.mime_type) {
+        delete[] entry->cover_art.mime_type;
+        entry->cover_art.mime_type = nullptr;
     }
 
     content_type = "image/png";

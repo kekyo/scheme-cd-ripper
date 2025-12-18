@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cstdlib>
 #include <future>
 #include <sstream>
@@ -56,9 +57,9 @@ constexpr int kMusicBrainzMaxAttempts = 3;
 static const char* kMusicBrainzLabel = "musicbrainz";
 // Includes kept minimal but must contain genres/tags so we can populate GENRE.
 // DiscID lookup: cover-art-archive is invalid here; fetch cover art in a later release lookup.
-static const char* kMusicBrainzInc = "recordings+artists+release-groups+genres+tags";
+static const char* kMusicBrainzInc = "recordings+artists+release-groups+genres+tags+url-rels";
 // Note: cover-art-archive is not a valid inc for release lookup; cover art is fetched separately.
-static const char* kMusicBrainzReleaseInc = "recordings+artists+artist-credits+media+labels+release-groups+genres+tags";
+static const char* kMusicBrainzReleaseInc = "recordings+artists+artist-credits+media+discids+labels+release-groups+genres+tags+url-rels";
 
 static std::string musicbrainz_user_agent() {
     std::string ua = "SchemeCDRipper/";
@@ -98,6 +99,39 @@ static bool get_bool_member(JsonObject* obj, const char* name, bool fallback = f
     if (!obj || !name) return fallback;
     if (!json_object_has_member(obj, name)) return fallback;
     return json_object_get_boolean_member(obj, name);
+}
+
+static std::string extract_discogs_release_id_from_url(const std::string& url) {
+    if (url.empty()) return {};
+    const std::string lower = to_lower(url);
+    static constexpr const char* kMarker = "/release/";
+    const size_t pos = lower.find(kMarker);
+    if (pos == std::string::npos) return {};
+    size_t i = pos + std::string{kMarker}.size();
+    const size_t start = i;
+    while (i < url.size() && std::isdigit(static_cast<unsigned char>(url[i]))) {
+        ++i;
+    }
+    if (i == start) return {};
+    return url.substr(start, i - start);
+}
+
+static std::string extract_discogs_release_id(JsonObject* release_obj) {
+    if (!release_obj) return {};
+    JsonArray* relations = get_array_member(release_obj, "relations");
+    if (!relations) return {};
+    const guint len = json_array_get_length(relations);
+    for (guint i = 0; i < len; ++i) {
+        JsonObject* rel = json_array_get_object_element(relations, i);
+        if (!rel) continue;
+        const std::string type = to_lower(get_string_member(rel, "type"));
+        if (type != "discogs") continue;
+        JsonObject* url_obj = get_object_member(rel, "url");
+        const std::string resource = get_string_member(url_obj, "resource");
+        const std::string id = extract_discogs_release_id_from_url(resource);
+        if (!id.empty()) return id;
+    }
+    return {};
 }
 
 static std::string join_artist_credit(JsonArray* ac) {
@@ -209,6 +243,28 @@ static std::vector<JsonObject*> select_matching_media(
     std::vector<JsonObject*> same_tracks;
     if (!media_array) return matches;
     const guint len = json_array_get_length(media_array);
+
+    if (!discid.empty()) {
+        std::vector<JsonObject*> discid_matches;
+        for (guint i = 0; i < len; ++i) {
+            JsonObject* medium = json_array_get_object_element(media_array, i);
+            if (!medium) continue;
+            JsonArray* discs = get_array_member(medium, "discs");
+            if (!discs) continue;
+            const guint discs_len = json_array_get_length(discs);
+            for (guint di = 0; di < discs_len; ++di) {
+                JsonObject* disc = json_array_get_object_element(discs, di);
+                if (!disc) continue;
+                const std::string did = get_string_member(disc, "id");
+                if (!did.empty() && did == discid) {
+                    discid_matches.push_back(medium);
+                    break;
+                }
+            }
+        }
+        if (!discid_matches.empty()) return discid_matches;
+    }
+
     for (guint i = 0; i < len; ++i) {
         JsonObject* medium = json_array_get_object_element(media_array, i);
         if (!medium) continue;
@@ -420,9 +476,10 @@ static bool build_entries_from_release(
     const std::string release_country = get_string_member(release_obj, "country");
     const std::string barcode = get_string_member(release_obj, "barcode");
     const std::string status = get_string_member(release_obj, "status");
-    const int medium_total = get_int_member(release_obj, "medium-count", -1);
+    const int medium_total = static_cast<int>(json_array_get_length(media_array));
     JsonObject* release_group = get_object_member(release_obj, "release-group");
     const std::string release_group_id = get_string_member(release_group, "id");
+    const std::string discogs_release_id = extract_discogs_release_id(release_obj);
     std::vector<std::string> genres;
     collect_genres(release_obj, genres);
     collect_genres(release_group, genres);
@@ -438,6 +495,7 @@ static bool build_entries_from_release(
         std::vector<std::vector<CdRipTagKV>> track_tags(toc->tracks_count);
 
         const std::string medium_id = get_string_member(medium_obj, "id");
+        const std::string medium_title = get_string_member(medium_obj, "title");
         const std::string medium_format = get_string_member(medium_obj, "format");
         const int track_total = get_int_member(medium_obj, "track-count", -1);
         const int disc_number = get_int_member(medium_obj, "position", -1);
@@ -453,7 +511,9 @@ static bool build_entries_from_release(
         append_tag(album_tags, "MEDIA", medium_format);
         append_tag(album_tags, "MUSICBRAINZ_RELEASE", release_id);
         append_tag(album_tags, "MUSICBRAINZ_MEDIUM", medium_id);
+        append_tag(album_tags, "MUSICBRAINZ_MEDIUMTITLE", medium_title);
         append_tag(album_tags, "MUSICBRAINZ_RELEASEGROUPID", release_group_id);
+        append_tag(album_tags, "DISCOGS_RELEASE", discogs_release_id);
         if (track_total > 0) append_tag(album_tags, "TRACKTOTAL", std::to_string(track_total));
         if (disc_number > 0) append_tag(album_tags, "DISCNUMBER", std::to_string(disc_number));
         if (medium_total > 0) append_tag(album_tags, "DISCTOTAL", std::to_string(medium_total));

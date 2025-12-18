@@ -391,6 +391,7 @@ int cdrip_update_flac_with_cddb_entry(
             std::string key = to_upper(to_string_or_empty(kvs[i].key));
             std::string val = to_string_or_empty(kvs[i].value);
             if (!key.empty() && !val.empty()) {
+                if (key == "MUSICBRAINZ_MEDIUMTITLE") continue;
                 tags[key] = val;
             }
         }
