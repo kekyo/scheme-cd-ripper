@@ -59,7 +59,7 @@ static const char* kMusicBrainzLabel = "musicbrainz";
 // DiscID lookup: cover-art-archive is invalid here; fetch cover art in a later release lookup.
 static const char* kMusicBrainzInc = "recordings+artists+release-groups+genres+tags+url-rels";
 // Note: cover-art-archive is not a valid inc for release lookup; cover art is fetched separately.
-static const char* kMusicBrainzReleaseInc = "recordings+artists+artist-credits+media+labels+release-groups+genres+tags+url-rels";
+static const char* kMusicBrainzReleaseInc = "recordings+artists+artist-credits+media+discids+labels+release-groups+genres+tags+url-rels";
 
 static std::string musicbrainz_user_agent() {
     std::string ua = "SchemeCDRipper/";
@@ -243,6 +243,28 @@ static std::vector<JsonObject*> select_matching_media(
     std::vector<JsonObject*> same_tracks;
     if (!media_array) return matches;
     const guint len = json_array_get_length(media_array);
+
+    if (!discid.empty()) {
+        std::vector<JsonObject*> discid_matches;
+        for (guint i = 0; i < len; ++i) {
+            JsonObject* medium = json_array_get_object_element(media_array, i);
+            if (!medium) continue;
+            JsonArray* discs = get_array_member(medium, "discs");
+            if (!discs) continue;
+            const guint discs_len = json_array_get_length(discs);
+            for (guint di = 0; di < discs_len; ++di) {
+                JsonObject* disc = json_array_get_object_element(discs, di);
+                if (!disc) continue;
+                const std::string did = get_string_member(disc, "id");
+                if (!did.empty() && did == discid) {
+                    discid_matches.push_back(medium);
+                    break;
+                }
+            }
+        }
+        if (!discid_matches.empty()) return discid_matches;
+    }
+
     for (guint i = 0; i < len; ++i) {
         JsonObject* medium = json_array_get_object_element(media_array, i);
         if (!medium) continue;
