@@ -40,6 +40,8 @@ std::string view_string(const char* s) {
     return s ? std::string{s} : std::string{};
 }
 
+std::string trim_ws(const std::string& s);
+
 std::string canonicalize_device_path(const std::string& path) {
     if (path.empty()) return {};
     // realpath() resolves symlinks (e.g., /dev/cdrom -> /dev/sr0).
@@ -87,6 +89,32 @@ std::string get_album_tag(
         if (ku == key_upper) return v;
     }
     return {};
+}
+
+std::string get_album_media_tag(
+    const CdRipCddbEntry* entry) {
+
+    const std::string album = trim_ws(get_album_tag(entry, "ALBUM"));
+
+    int disctotal = 0;
+    try {
+        const std::string raw = trim_ws(get_album_tag(entry, "DISCTOTAL"));
+        if (!raw.empty()) disctotal = std::stoi(raw);
+    } catch (...) {
+        disctotal = 0;
+    }
+    if (disctotal <= 1) return album;
+
+    const std::string medium_title = trim_ws(get_album_tag(entry, "MUSICBRAINZ_MEDIUMTITLE"));
+    if (!medium_title.empty()) {
+        if (album.empty()) return medium_title;
+        return album + " " + medium_title;
+    }
+
+    const std::string discnumber = trim_ws(get_album_tag(entry, "DISCNUMBER"));
+    if (discnumber.empty()) return album;
+    if (album.empty()) return "CD" + discnumber;
+    return album + " CD" + discnumber;
 }
 
 [[maybe_unused]] std::string get_track_tag(
@@ -1098,7 +1126,7 @@ CddbSelection select_cddb_entry_for_toc(
     if (entries && entries->count > 0) {
         for (size_t i = 0; i < entries->count; ++i) {
             const auto& e = entries->entries[i];
-            const std::string title = get_album_tag(&e, "ALBUM");
+            const std::string title = get_album_media_tag(&e);
             if (!title_filter || g_regex_match(title_filter, title.c_str(), static_cast<GRegexMatchFlags>(0), nullptr)) {
                 sorted_indices.push_back(i);
             }
@@ -1153,8 +1181,8 @@ CddbSelection select_cddb_entry_for_toc(
         std::sort(sorted_indices.begin(), sorted_indices.end(), [&](size_t lhs, size_t rhs) {
             const auto& l = entries->entries[lhs];
             const auto& r = entries->entries[rhs];
-            std::string la = normalize_lower(get_album_tag(&l, "ALBUM"));
-            std::string ra = normalize_lower(get_album_tag(&r, "ALBUM"));
+            std::string la = normalize_lower(get_album_media_tag(&l));
+            std::string ra = normalize_lower(get_album_media_tag(&r));
             if (la == ra) {
                 return normalize_lower(get_album_tag(&l, "ARTIST")) < normalize_lower(get_album_tag(&r, "ARTIST"));
             }
@@ -1177,7 +1205,7 @@ CddbSelection select_cddb_entry_for_toc(
         if (has_cover) {
             source_display += " with cover art";
         }
-        std::cout << "[" << (i + 1) << "] " << get_album_tag(&e, "ARTIST") << " - " << get_album_tag(&e, "ALBUM")
+        std::cout << "[" << (i + 1) << "] " << get_album_tag(&e, "ARTIST") << " - " << get_album_media_tag(&e)
                   << " (via " << source_display << ")\n";
     }
     std::cout << "[0] (Ignore all, not use these tags)\n";
@@ -1191,7 +1219,7 @@ CddbSelection select_cddb_entry_for_toc(
             choices = {1};  // Always use the first entry (no merge).
             const auto& chosen = entries->entries[sorted_indices[0]];
             std::cout << "\nAuto mode: selected \"" << get_album_tag(&chosen, "ARTIST") << " - "
-                      << get_album_tag(&chosen, "ALBUM") << "\".\n";
+                      << get_album_media_tag(&chosen) << "\".\n";
         }
     } else {
         while (true) {
@@ -1604,7 +1632,7 @@ Options parse_args(int argc, char** argv) {
         } else if (arg == "-?" || arg == "-h" || arg == "--help") {
             std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-r] [-ne] [-a] [-ss|-sf] [-dc no|always|fallback] [-na] [-i config] [-u file|dir ...]\n";
             std::cout << "  -d  / --device: CD device path (default: auto-detect)\n";
-            std::cout << "  -f  / --format: FLAC destination path format (default: \"{album}/{tracknumber:02d}_{safetitle}.flac\")\n";
+            std::cout << "  -f  / --format: FLAC destination path format (default: \"{albummedia}/{tracknumber:02d}_{safetitle}.flac\")\n";
             std::cout << "  -m  / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disabled any checks)\n";
             std::cout << "  -c  / --compression: FLAC compression level (default: auto (best --> 5, fast --> 1))\n";
             std::cout << "  -w  / --max-width: Cover art max width in pixels (default: 512)\n";

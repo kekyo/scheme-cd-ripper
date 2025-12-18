@@ -56,7 +56,7 @@ Attempting to determine drive endianness from data........
 
 Options:
   device      : "/dev/cdrom"
-  format      : "{album}/{tracknumber:02d}_{safetitle}.flac"
+  format      : "{albummedia}/{tracknumber:02d}_{safetitle}.flac"
   compression : 5 (auto)
   mode        : best (full integrity checks)
   speed       : slow (1x)
@@ -117,7 +117,7 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex
 ```
 
 - `-d`, `--device`: CD device path (`/dev/cdrom` or others). If not specified, it will automatically detect available CD devices and list them.
-- `-f`, `--format`: FLAC destination path format. using tag names inside `{}`, tags are case-insensitive. (default: `{album}/{tracknumber:02d}_{safetitle}.flac`)
+- `-f`, `--format`: FLAC destination path format. using tag names inside `{}`, tags are case-insensitive. (default: `{albummedia}/{tracknumber:02d}_{safetitle}.flac`)
 - `-m`, `--mode`: Integrity check mode: `best` (full integrity checks, default), `fast` (disabled any checks)
 - `-c`, `--compression`: FLAC compression level (default: `auto` (best --> `5`, fast --> `1`))
 - `-w`, `--max-width`: Cover art max width in pixels (default: `512`)
@@ -238,7 +238,7 @@ The filename format is a template for any path, including directory names, that 
 
 For example:
 
-- `"{album}/{tracknumber:02d}_{safetitle}.flac"`: This is the default definition and should be appropriate in most cases. It creates subdirectories named after the album and places FLAC files within them, each named with the track number and track title.
+- `"{albummedia}/{tracknumber:02d}_{safetitle}.flac"`: This is the default definition and should be appropriate in most cases. It separates multi-disc releases into disc-specific directories.
 - `"store/to/{safetitle}.flac"`: Of course, you can also add a base path and always store it within that.
 - `"smb://nas.yourhome.localdomain/smbshare/music/{safetitle}.flac"`: Scheme CD ripper supports GNOME GIO, so you can also specify a URL to save directly to a remote host (Required GVfs configuration.)
 
@@ -247,6 +247,7 @@ In addition to Vorbis comment keys, the following dedicated keys can also be use
 |Key|Description|
 |:----|:----|
 |`safetitle`|Truncate `title` tag at newline, trim trailing and replace unsafe characters|
+|`albummedia`|If `disctotal` > 1, `{album} {medium title}` or `{album} CD{discnumber}`; otherwise same as `album`|
 
 Note: These are not stored in the FLAC file and can only be used in the filename format.
 
@@ -290,7 +291,7 @@ Example config file:
 ```ini
 [cdrip]
 device=/dev/cdrom
-format={album}/{tracknumber:02d}_{safetitle}.flac
+format={albummedia}/{tracknumber:02d}_{safetitle}.flac
 compression=auto     # auto or 0-8
 max_width=512        # cover art max width in pixels (> 0)
 speed=slow           # slow or fast (default: slow)

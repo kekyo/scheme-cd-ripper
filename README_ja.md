@@ -57,7 +57,7 @@ Attempting to determine drive endianness from data........
 
 Options:
   device      : "/dev/cdrom"
-  format      : "{album}/{tracknumber:02d}_{safetitle}.flac"
+  format      : "{albummedia}/{tracknumber:02d}_{safetitle}.flac"
   compression : 5 (auto)
   mode        : best (full integrity checks)
   speed       : slow (1x)
@@ -118,7 +118,7 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex
 ```
 
 - `-d`, `--device`: CDデバイスのパス（`/dev/cdrom` など）。指定しない場合、利用可能なCDデバイスを自動検出して一覧表示します。
-- `-f`, `--format`: FLAC出力ファイルパスの形式。`{}`内のタグ名を使用し、タグは大文字小文字を区別しません（デフォルト: `{album}/{tracknumber:02d}_{safetitle}.flac`）。
+- `-f`, `--format`: FLAC出力ファイルパスの形式。`{}`内のタグ名を使用し、タグは大文字小文字を区別しません（デフォルト: `{albummedia}/{tracknumber:02d}_{safetitle}.flac`）。
 - `-m`, `--mode`: 整合性チェックモード: `best`（完全な整合性チェック。デフォルト）または `fast` (チェックを無効化)
 - `-c`, `--compression`: FLAC圧縮レベル (デフォルト: `auto` (best --> `5`, fast --> `1`))
 - `-w`, `--max-width`: カバーアートの最大幅（ピクセル、デフォルト: `512`）
@@ -238,8 +238,7 @@ MusicBrainzから情報を取得した場合は、追加でカバーアート画
 
 例えば:
 
-- `"{album}/{tracknumber:02d}_{safetitle}.flac"`: これがデフォルトの設定であり、ほとんどの場合に適切です。
-  アルバム名でサブディレクトリを作成し、その中にトラック番号とトラックタイトルで命名されたFLACファイルを配置します。
+- `"{albummedia}/{tracknumber:02d}_{safetitle}.flac"`: これがデフォルトの設定であり、ほとんどの場合に適切です。複数CDのリリースはCD別のディレクトリに分割されます。
 - `"store/to/{safetitle}.flac"`: もちろん、ベースパスを追加して常にその中に保存することも可能です。
 - `"smb://nas.yourhome.localdomain/smbshare/music/{safetitle}.flac"`: Scheme CD ripperはGNOME GIOをサポートしているため、
   リモートホストへの直接保存用URLを指定することも可能です（GVfsの設定が必要です）。
@@ -249,6 +248,7 @@ Vorbis commentsキーに加えて、以下の専用キーもファイル名フ�
 |キー名|内容|
 |:----|:----|
 |`safetitle`|`title`タグを改行で切り詰め、末尾の空白を削除し、安全でない文字を置換する|
+|`albummedia`|`disctotal`が2以上の場合、`{album} {メディア名}` または `{album} CD{discnumber}`。それ以外は `album` と同じ|
 
 Note: これらはFLACファイルには保存されず、ファイル名形式でのみ使用できます。
 
@@ -292,7 +292,7 @@ Scheme CD ripperは設定ファイルを参照します。INI形式に似た形�
 ```ini
 [cdrip]
 device=/dev/cdrom
-format={album}/{tracknumber:02d}_{safetitle}.flac
+format={albummedia}/{tracknumber:02d}_{safetitle}.flac
 compression=auto     # auto または 0-8
 max_width=512        # カバーアート最大幅(px、1以上)
 speed=slow           # slow または fast（デフォルト: slow）
