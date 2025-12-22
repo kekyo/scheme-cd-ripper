@@ -1007,7 +1007,13 @@ bool ensure_cover_art_merged(
     const std::vector<CdRipCddbEntry*> effective =
         !candidates.empty() ? candidates : std::vector<CdRipCddbEntry*>{target};
 
-    auto try_phase = [&](auto fetch_fn, CoverArtFetchSource phase_source) -> bool {
+    struct PhaseResult {
+        bool success{false};
+        bool had_error{false};
+    };
+
+    auto try_phase = [&](auto fetch_fn, CoverArtFetchSource phase_source) -> PhaseResult {
+        PhaseResult result{};
         for (CdRipCddbEntry* e : effective) {
             if (!e) continue;
             const bool had_data = (e->cover_art.data && e->cover_art.size > 0);
@@ -1025,27 +1031,43 @@ bool ensure_cover_art_merged(
                     source_out = phase_source;
                 }
                 if (cover_err) cdrip_release_error(cover_err);
-                return true;
+                result.success = true;
+                return result;
             }
             if (cover_err) {
                 notice_out = view_string(cover_err);
+                result.had_error = true;
                 cdrip_release_error(cover_err);
             }
         }
-        return false;
+        return result;
     };
 
     if (discogs_mode == DiscogsMode::Always) {
-        if (try_phase(&cdrip_fetch_discogs_cover_art, CoverArtFetchSource::Discogs)) return true;
+        PhaseResult discogs_result = try_phase(&cdrip_fetch_discogs_cover_art, CoverArtFetchSource::Discogs);
+        if (discogs_result.success) return true;
         // Keep any existing cover art if Discogs did not succeed.
         if (target_has_cover) return true;
-        return try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive);
+        PhaseResult caa_result = try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive);
+        if (caa_result.success) return true;
+        if (caa_result.had_error) {
+            PhaseResult retry_discogs = try_phase(&cdrip_fetch_discogs_cover_art, CoverArtFetchSource::Discogs);
+            if (retry_discogs.success) return true;
+        }
+        return false;
     }
     if (discogs_mode == DiscogsMode::Fallback) {
-        if (try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive)) return true;
-        return try_phase(&cdrip_fetch_discogs_cover_art, CoverArtFetchSource::Discogs);
+        PhaseResult caa_result = try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive);
+        if (caa_result.success) return true;
+        PhaseResult discogs_result = try_phase(&cdrip_fetch_discogs_cover_art, CoverArtFetchSource::Discogs);
+        if (discogs_result.success) return true;
+        if (discogs_result.had_error) {
+            PhaseResult retry_caa = try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive);
+            if (retry_caa.success) return true;
+        }
+        return false;
     }
-    return try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive);
+    return try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive).success;
 }
 
 struct CddbSelection {
