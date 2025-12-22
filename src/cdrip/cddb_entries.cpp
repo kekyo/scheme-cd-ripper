@@ -12,6 +12,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <unordered_set>
 #include <vector>
 
 #include <cddb/cddb.h>
@@ -78,10 +79,59 @@ static std::string get_string_member(JsonObject* obj, const char* name) {
     return value ? std::string{value} : std::string{};
 }
 
+static void release_cddb_entry(CdRipCddbEntry& e) {
+    release_cstr(e.cddb_discid);
+    release_cstr(e.source_label);
+    release_cstr(e.source_url);
+    release_cstr(e.fetched_at);
+    if (e.cover_art.data) {
+        delete[] e.cover_art.data;
+        e.cover_art.data = nullptr;
+    }
+    release_cstr(e.cover_art.mime_type);
+    e.cover_art.size = 0;
+    e.cover_art.available = 0;
+    e.cover_art.is_front = 0;
+    if (e.album_tags) {
+        for (size_t ti = 0; ti < e.album_tags_count; ++ti) {
+            release_cstr(e.album_tags[ti].key);
+            release_cstr(e.album_tags[ti].value);
+        }
+        delete[] e.album_tags;
+        e.album_tags = nullptr;
+    }
+    e.album_tags_count = 0;
+    if (e.tracks) {
+        for (size_t t = 0; t < e.tracks_count; ++t) {
+            CdRipTrackTags* tt = &e.tracks[t];
+            if (tt->tags) {
+                for (size_t kv = 0; kv < tt->tags_count; ++kv) {
+                    release_cstr(tt->tags[kv].key);
+                    release_cstr(tt->tags[kv].value);
+                }
+                delete[] tt->tags;
+                tt->tags = nullptr;
+            }
+            tt->tags_count = 0;
+        }
+        delete[] e.tracks;
+        e.tracks = nullptr;
+    }
+    e.tracks_count = 0;
+}
+
 static int get_int_member(JsonObject* obj, const char* name, int fallback = -1) {
     if (!obj || !name) return fallback;
     if (!json_object_has_member(obj, name)) return fallback;
     return json_object_get_int_member(obj, name);
+}
+
+static std::string build_musicbrainz_release_key(const CdRipCddbEntry& entry) {
+    const std::string release = trim(album_tag(&entry, "MUSICBRAINZ_RELEASE"));
+    if (release.empty()) return {};
+    const std::string medium = trim(album_tag(&entry, "MUSICBRAINZ_MEDIUM"));
+    if (!medium.empty()) return release + ":" + medium;
+    return release;
 }
 
 static JsonArray* get_array_member(JsonObject* obj, const char* name) {
@@ -1037,6 +1087,13 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
             const std::vector<std::string> candidates =
                 extract_album_title_candidates(other_entries);
             if (!candidates.empty()) {
+                std::unordered_set<std::string> seen_mb_keys;
+                auto& target = per_server[musicbrainz_insert_index].entries;
+                seen_mb_keys.reserve(target.size());
+                for (const auto& e : target) {
+                    const std::string key = build_musicbrainz_release_key(e);
+                    if (!key.empty()) seen_mb_keys.insert(key);
+                }
                 for (const auto& candidate : candidates) {
                     std::vector<CdRipCddbEntry> mb_entries;
                     std::string candidate_err;
@@ -1047,8 +1104,14 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
                         continue;
                     }
                     if (!mb_entries.empty()) {
-                        auto& target = per_server[musicbrainz_insert_index].entries;
-                        target.insert(target.end(), mb_entries.begin(), mb_entries.end());
+                        for (auto& entry : mb_entries) {
+                            const std::string key = build_musicbrainz_release_key(entry);
+                            if (!key.empty() && !seen_mb_keys.insert(key).second) {
+                                release_cddb_entry(entry);
+                                continue;
+                            }
+                            target.push_back(entry);
+                        }
                     }
                 }
             }
