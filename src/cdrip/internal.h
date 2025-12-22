@@ -146,6 +146,9 @@ static inline std::string track_tag(
     return find_tag(tt.tags, tt.tags_count, to_upper(key));
 }
 
+std::vector<std::string> extract_album_title_candidates(
+    const std::vector<const CdRipCddbEntry*>& entries);
+
 static inline FLAC__StreamMetadata* build_vorbis_comments(
     const std::map<std::string, std::string>& tags) {
 

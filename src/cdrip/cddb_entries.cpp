@@ -53,6 +53,7 @@ using namespace cdrip::detail;
 constexpr int kMusicBrainzTimeoutSec = 10;
 constexpr int kMusicBrainzRetryDelayMs = 1200;
 constexpr int kMusicBrainzMaxAttempts = 3;
+constexpr int kMusicBrainzSearchLimit = 10;
 
 static const char* kMusicBrainzLabel = "musicbrainz";
 // Includes kept minimal but must contain genres/tags so we can populate GENRE.
@@ -310,6 +311,33 @@ static bool http_get_json(const std::string& url, std::string& body, std::string
 
     body.assign(reinterpret_cast<const char*>(bytes.data()), bytes.size());
     return true;
+}
+
+static std::string escape_mb_query(const std::string& value) {
+    gchar* escaped = g_uri_escape_string(value.c_str(), nullptr, true);
+    if (!escaped) return {};
+    std::string out = escaped;
+    g_free(escaped);
+    return out;
+}
+
+static std::string build_musicbrainz_release_search_url(const std::string& album_title) {
+    std::string title = trim(album_title);
+    if (title.empty()) return {};
+    std::string sanitized;
+    sanitized.reserve(title.size());
+    for (char ch : title) {
+        if (ch == '"') continue;
+        sanitized.push_back(ch);
+    }
+    if (sanitized.empty()) return {};
+    const std::string query = "release:\"" + sanitized + "\"";
+    const std::string encoded = escape_mb_query(query);
+    if (encoded.empty()) return {};
+    std::ostringstream oss;
+    oss << "https://musicbrainz.org/ws/2/release/?fmt=json&limit=" << kMusicBrainzSearchLimit
+        << "&query=" << encoded;
+    return oss.str();
 }
 
 static bool build_entries_from_release(
@@ -702,6 +730,84 @@ static bool fetch_musicbrainz_entries(
     return true;
 }
 
+static bool fetch_musicbrainz_entries_by_title(
+    const CdRipDiscToc* toc,
+    const std::string& album_title,
+    std::vector<CdRipCddbEntry>& results,
+    std::string& err) {
+
+    if (!toc || !toc->tracks || toc->tracks_count == 0) {
+        err = "MusicBrainz query failed: invalid TOC";
+        return false;
+    }
+
+    const std::string url = build_musicbrainz_release_search_url(album_title);
+    if (url.empty()) return true;
+
+    long mb_leadout = 0;
+    std::vector<long> offsets = build_mb_offsets(toc, mb_leadout);
+    if (offsets.empty()) {
+        err = "MusicBrainz query failed: unable to build TOC";
+        return false;
+    }
+
+    std::string discid = to_string_or_empty(toc->mb_discid);
+    if (discid.empty()) {
+        std::string computed;
+        long temp_leadout = 0;
+        if (compute_musicbrainz_discid(toc, computed, temp_leadout)) {
+            discid = computed;
+        }
+    }
+
+    std::string body;
+    if (!http_get_json(url, body, err)) {
+        return false;
+    }
+
+    JsonParser* parser = json_parser_new();
+    GError* gerr = nullptr;
+    if (!json_parser_load_from_data(parser, body.c_str(), body.size(), &gerr)) {
+        err = gerr && gerr->message ? std::string{gerr->message} : "MusicBrainz response parse error";
+        if (gerr) g_error_free(gerr);
+        g_object_unref(parser);
+        return false;
+    }
+    JsonNode* root = json_parser_get_root(parser);
+    if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
+        err = "MusicBrainz response is not a JSON object";
+        g_object_unref(parser);
+        return false;
+    }
+    JsonObject* root_obj = json_node_get_object(root);
+    JsonArray* releases = get_array_member(root_obj, "releases");
+    if (releases) {
+        const guint len = json_array_get_length(releases);
+        bool any_success = false;
+        std::string last_err;
+        for (guint i = 0; i < len; ++i) {
+            JsonObject* release_obj = json_array_get_object_element(releases, i);
+            if (!release_obj) continue;
+            const std::string rid = get_string_member(release_obj, "id");
+            if (rid.empty()) continue;
+            std::string rel_err;
+            if (fetch_release_details_and_build(toc, rid, offsets, discid, results, rel_err)) {
+                any_success = true;
+            } else if (!rel_err.empty()) {
+                last_err = rel_err;
+            }
+        }
+        if (!any_success && !last_err.empty()) {
+            err = last_err;
+            g_object_unref(parser);
+            return false;
+        }
+    }
+
+    g_object_unref(parser);
+    return true;
+}
+
 /* ------------------------------------------------------------------- */
 /* Exported API functions */
 
@@ -868,11 +974,22 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
 
     std::vector<std::future<ServerFetchResult>> futures;
     futures.reserve(servers->count);
+    bool has_musicbrainz_server = false;
+    size_t musicbrainz_insert_index = 0;
+    std::vector<bool> is_musicbrainz_server(servers->count, false);
     for (size_t si = 0; si < servers->count; ++si) {
         const CdRipCddbServer server = servers->servers[si];
+        const std::string server_label = to_string_or_empty(server.label);
+        if (to_lower(server_label) == kMusicBrainzLabel) {
+            if (!has_musicbrainz_server) {
+                musicbrainz_insert_index = si;
+            }
+            has_musicbrainz_server = true;
+            is_musicbrainz_server[si] = true;
+        }
         futures.push_back(std::async(std::launch::async, [toc, server, toc_discid]() -> ServerFetchResult {
-            const std::string server_label = to_string_or_empty(server.label);
-            if (to_lower(server_label) == kMusicBrainzLabel) {
+            const std::string label = to_string_or_empty(server.label);
+            if (to_lower(label) == kMusicBrainzLabel) {
                 return fetch_entries_from_musicbrainz(toc);
             }
             return fetch_entries_from_cddb_server(toc, server, toc_discid);
@@ -895,10 +1012,56 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
         }
     }
 
+    std::string mb_title_err;
+    if (has_musicbrainz_server) {
+        size_t mb_entries_count = 0;
+        std::vector<const CdRipCddbEntry*> other_entries;
+        size_t other_entries_count = 0;
+        for (size_t si = 0; si < per_server.size(); ++si) {
+            if (is_musicbrainz_server[si]) {
+                mb_entries_count += per_server[si].entries.size();
+            } else {
+                other_entries_count += per_server[si].entries.size();
+            }
+        }
+        other_entries.reserve(other_entries_count);
+        for (size_t si = 0; si < per_server.size(); ++si) {
+            if (is_musicbrainz_server[si]) {
+                continue;
+            }
+            for (const auto& e : per_server[si].entries) {
+                other_entries.push_back(&e);
+            }
+        }
+        if (mb_entries_count == 0 && !other_entries.empty()) {
+            const std::vector<std::string> candidates =
+                extract_album_title_candidates(other_entries);
+            if (!candidates.empty()) {
+                for (const auto& candidate : candidates) {
+                    std::vector<CdRipCddbEntry> mb_entries;
+                    std::string candidate_err;
+                    if (!fetch_musicbrainz_entries_by_title(toc, candidate, mb_entries, candidate_err)) {
+                        if (!candidate_err.empty()) {
+                            mb_title_err = candidate_err;
+                        }
+                        continue;
+                    }
+                    if (!mb_entries.empty()) {
+                        auto& target = per_server[musicbrainz_insert_index].entries;
+                        target.insert(target.end(), mb_entries.begin(), mb_entries.end());
+                    }
+                }
+            }
+        }
+    }
+
     // Preserve the original server order when merging results and choosing the first error.
     for (const auto& r : per_server) {
         if (!r.error.empty()) set_error(error, r.error);
         results.insert(results.end(), r.entries.begin(), r.entries.end());
+    }
+    if (!mb_title_err.empty()) {
+        set_error(error, std::string{"MusicBrainz title search failed: "} + mb_title_err);
     }
 
     if (!results.empty()) {
