@@ -7,9 +7,9 @@
 #include <cctype>
 #include <chrono>
 #include <filesystem>
-#include <iomanip>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <unistd.h>
@@ -22,6 +22,7 @@
 #include <glib.h>
 
 #include "internal.h"
+#include "format_value.h"
 
 using namespace cdrip::detail;
 
@@ -127,9 +128,52 @@ static std::string truncate_on_newline(
     return s.substr(0, pos);
 }
 
+using FormatTagMap = std::map<std::string, std::unique_ptr<Formattable>>;
+
+static bool is_numeric_format_key(const std::string& key_upper) {
+    return key_upper == "TRACKNUMBER"
+        || key_upper == "TRACKTOTAL"
+        || key_upper == "DISCNUMBER"
+        || key_upper == "DISCTOTAL"
+        || key_upper == "CDDB_TOTAL_SECONDS"
+        || key_upper == "MUSICBRAINZ_LEADOUT";
+}
+
+static bool parse_int_strict(const std::string& s, int& out) {
+    const std::string trimmed = trim(s);
+    if (trimmed.empty()) return false;
+    size_t idx = 0;
+    try {
+        int value = std::stoi(trimmed, &idx);
+        if (idx != trimmed.size()) return false;
+        out = value;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+static FormatTagMap build_format_tags(
+    const std::map<std::string, std::string>& path_tags) {
+
+    FormatTagMap format_tags;
+    for (const auto& [key, value] : path_tags) {
+        const std::string key_upper = to_upper(key);
+        if (is_numeric_format_key(key_upper)) {
+            int numeric = 0;
+            if (parse_int_strict(value, numeric)) {
+                format_tags[key_upper] = std::make_unique<NumericValue>(numeric, value);
+                continue;
+            }
+        }
+        format_tags[key_upper] = std::make_unique<StringValue>(value);
+    }
+    return format_tags;
+}
+
 static std::string format_filename(
     const std::string& fmt,
-    const std::map<std::string, std::string>& tags) {
+    const FormatTagMap& tags) {
 
     std::string out;
     for (size_t i = 0; i < fmt.size(); ++i) {
@@ -138,43 +182,16 @@ static std::string format_filename(
             if (end != std::string::npos) {
                 std::string token = fmt.substr(i + 1, end - i - 1);
                 std::string key = token;
-                int width = 0;
-                bool zero_pad = false;
+                std::string format_spec;
                 auto colon = token.find(':');
                 if (colon != std::string::npos) {
                     key = token.substr(0, colon);
-                    std::string fmt = token.substr(colon + 1);
-                    if (!fmt.empty() && fmt.back() == 'd') {
-                        fmt.pop_back();
-                        try {
-                            width = std::stoi(fmt);
-                            zero_pad = true;
-                        } catch (...) {
-                            width = 0;
-                        }
-                    }
+                    format_spec = token.substr(colon + 1);
                 }
-                auto it = tags.find(to_lower(key));
-                if (it == tags.end()) {
-                    it = tags.find(key);
-                }
-                std::string value;
-                if (it != tags.end()) {
-                    value = it->second;
-                } else {
-                    auto it_upper = tags.find(to_upper(key));
-                    if (it_upper != tags.end()) value = it_upper->second;
-                }
-                if (width > 0) {
-                    std::ostringstream oss;
-                    if (zero_pad) {
-                        oss << std::setw(width) << std::setfill('0') << value;
-                    } else {
-                        oss << value;
-                    }
-                    out += oss.str();
-                } else {
-                    out += value;
+                const std::string key_upper = to_upper(key);
+                auto it = tags.find(key_upper);
+                if (it != tags.end() && it->second) {
+                    out += it->second->toString(format_spec);
                 }
                 i = end;
                 continue;
@@ -363,8 +380,9 @@ int cdrip_rip_track(
     };
     path_tags["ALBUMMEDIA"] = build_album_media();
 
+    FormatTagMap format_tags = build_format_tags(path_tags);
     const std::string fmt = !rip->format.empty() ? rip->format : "";
-    const std::string outfile = format_filename(fmt, path_tags);
+    const std::string outfile = format_filename(fmt, format_tags);
     const bool uri_output = is_uri(outfile);
 
     GioSink sink;

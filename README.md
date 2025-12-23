@@ -344,6 +344,9 @@ A special server id `musicbrainz` is not required `[cddb.musicbrainz]` section d
 - GNOME GIO
 - libsoup 3.0
 - json-glib
+- libpng
+- libjpeg
+- liblcms 2.0
 - chafa (libchafa)
 - CMake and a C++17 compiler
 - Node.js and [screw-up](https://github.com/kekyo/screw-up) (Automated-versioning tool)
@@ -355,11 +358,11 @@ A special server id `musicbrainz` is not required `[cddb.musicbrainz]` section d
 
 ### Build
 
-In Ubuntu 22.04/24.04:
+In Ubuntu noble/jammy:
 
 ```bash
 sudo apt-get install build-essential cmake dpkg-dev nodejs \
-  libcdio-paranoia-dev libcddb2-dev libflac++-dev libglib2.0-dev libsoup-3.0-dev libjson-glib-dev libchafa-dev
+  libcdio-paranoia-dev libcddb2-dev libflac++-dev libglib2.0-dev libsoup-3.0-dev libjson-glib-dev libchafa-dev libpng-dev libjpeg-dev liblcms2-dev
 npm install -g screw-up
 
 ./build.sh
