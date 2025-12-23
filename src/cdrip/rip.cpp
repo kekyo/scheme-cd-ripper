@@ -128,8 +128,6 @@ static std::string truncate_on_newline(
     return s.substr(0, pos);
 }
 
-using FormatTagMap = std::map<std::string, std::unique_ptr<Formattable>>;
-
 static bool is_numeric_format_key(const std::string& key_upper) {
     return key_upper == "TRACKNUMBER"
         || key_upper == "TRACKTOTAL"
@@ -181,18 +179,8 @@ static std::string format_filename(
             size_t end = fmt.find('}', i);
             if (end != std::string::npos) {
                 std::string token = fmt.substr(i + 1, end - i - 1);
-                std::string key = token;
-                std::string format_spec;
-                auto colon = token.find(':');
-                if (colon != std::string::npos) {
-                    key = token.substr(0, colon);
-                    format_spec = token.substr(colon + 1);
-                }
-                const std::string key_upper = to_upper(key);
-                auto it = tags.find(key_upper);
-                if (it != tags.end() && it->second) {
-                    out += it->second->toString(format_spec);
-                }
+                const FormatExpression expr = parse_format_expression(token);
+                out += format_token_expression(expr, tags);
                 i = end;
                 continue;
             }
