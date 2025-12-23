@@ -23,80 +23,13 @@ Scheme CD Ripperは、オーディオCDをFLAC形式でリッピングするLinu
 ### 機能
 
 - 音楽ストリームの完全性チェック（`cd-paranoia`を使用）を実行しながら、オーディオトラックをFLAC形式でエンコード・保存します。
-- ディスクのTOCを読み取り、複数のCDDBサーバーとMusicBrainzに照会します。一致した情報をすべて統合し、候補を選択することができます。
+- ディスクのTOCを読み取り、複数のCDDBサーバーとMusicBrainzに照会します。一致した情報をすべて統合し、候補を選択することができます。更に、柔軟なメタデータ自動検索機能と候補の正規表現フィルタで、自動タグ付けの負担を軽減。
 - Vorbis comments（FLAC形式のID3タグに相当）を自動挿入。さらにDiscogsやCAAにカバーアート画像が存在する場合、自動埋め込みが可能。
 - 指定したタグによる書式でファイル名とディレクトリを自動生成。
 - ファイル出力にGNOME GIO（GVfs）を使用するため、URL経由でNASなどのデバイスへ直接出力可能。
 - 複数CDの効率的な処理のための連続モードをサポート。
 
-### 実行例
-
-```bash
-$ cdrip
-
-Scheme CD music/sound ripper
-Copyright (c) Kouji Matsui (@kekyo@mi.kekyo.net)
-https://github.com/kekyo/cd-ripper
-Licence: Under MIT.
-
-Detected CD drives:
-  [1] /dev/cdrom (media: present)
-  [2] /dev/sr1 (media: none)
-Select device [1-2] (default first with media, otherwise 1): 
-
-Using device: /dev/cdrom (media: present)
-Checking /dev/cdrom for cdrom...
-                CDROM sensed: PIONEER  BD-RW   BDR-XD05 3.10 SCSI CD-ROM
-
-Verifying drive can read CDDA...
-        Expected command set reads OK.
-
-Attempting to determine drive endianness from data........
-        Data appears to be coming back Little Endian.
-        certainty: 100%
-
-Options:
-  device      : "/dev/cdrom"
-  format      : "{albummedia}/{tracknumber:02d}_{safetitle}.flac"
-  compression : 5 (auto)
-  mode        : best (full integrity checks)
-  speed       : slow (1x)
-  auto        : disabled
-
-CDDB disc id: "1403e605"
-MusicBrainz disc id: "zLsp.2WaOeSl6clZ0YhGDmARjmY-"
-
-Fetcing from CDDB servers ...
-
-[1] BarlowGirl - For the Beauty of the Earth (Studio Series) (via freedb (japan))
-[2] Bomani "D'mite" Armah - Read a Book Single (via freedb (japan))
-[3] Stellar Kart - Angel In Chorus (Studio Series) (via freedb (japan))
-[4] Disney - Shanna (via dbpoweramp)
-[5] Ladina - Verbotene Liebe (via dbpoweramp)
-[6] Across The Sky - Found By You [Studio Series]  (2003) (via dbpoweramp)
-[7] Bomani "D'mite" Armah - Read a Book Single (via dbpoweramp)
-[8] Cuba Libre - Sierra Madre (via dbpoweramp)
-[9] Big Daddy Weave - You're Worthy Of My Praise(Studio Series) (via dbpoweramp)
-[10] BarlowGirl - For the Beauty of the Earth (Studio Series) (via dbpoweramp)
-[11] Crossroads - Unknown (via dbpoweramp)
-[12] Stellar Kart - Angel In Chorus (Studio Series) (via dbpoweramp)
-[13] Tigertown - Wandering Eyes EP (via dbpoweramp)
-[14] Jerry Smith - Twinkle Tracks (via dbpoweramp)
-[15] DONALDO 22 - DONALDO22 (via dbpoweramp)
-[0] (Ignore all, not use these tags)
-
-Select match [0-15] (comma/space separated, default 1): 3
-
-Start ripping...
-
-Track  1/ 5 [ETA: 13:19 ====================]: "Angel In Chorus (LP Version)"
-Track  2/ 5 [ETA: 09:59 ====================]: "Angel In Chorus (original key performance with background vocals)"
-Track  3/ 5 [ETA: 06:39 ====================]: "Angel In Chorus (low key performance without background vocals)"
-Track  4/ 5 [ETA: 03:19 ====================]: "Angel In Chorus (medium key without background vocals (original key)"
-Track  5/ 5 [ETA: 00:00 ====================]: "Angel In Chorus (high key without background vocals)"
-
-Done.
-```
+![Example session](./images/session.png)
 
 -----
 
@@ -114,16 +47,17 @@ Debian (trixie, bookworm) / Ubuntu (noble, jammy) では、[ビルド済みバ�
 もちろん、以下のように好みに合わせて調整することも可能です:
 
 ```bash
-cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex] [-r] [-ne] [-a] [-ss|-sf] [-dc no|always|fallback] [-na] [-i config] [-u file|dir ...]
+cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-dc no|always|fallback] [-na] [-i config] [-u file|dir ...]
 ```
 
 - `-d`, `--device`: CDデバイスのパス（`/dev/cdrom` など）。指定しない場合、利用可能なCDデバイスを自動検出して一覧表示します。
-- `-f`, `--format`: FLAC出力ファイルパスの形式。`{}`内のタグ名を使用し、タグは大文字小文字を区別しません（デフォルト: `{albummedia}/{tracknumber:02d}_{safetitle}.flac`）。
+- `-f`, `--format`: FLAC出力ファイルパスの形式。`{}`内のタグ名を使用し、タグは大文字小文字を区別しません（後述）。
 - `-m`, `--mode`: 整合性チェックモード: `best`（完全な整合性チェック。デフォルト）または `fast` (チェックを無効化)
 - `-c`, `--compression`: FLAC圧縮レベル (デフォルト: `auto` (best --> `5`, fast --> `1`))
 - `-w`, `--max-width`: カバーアートの最大幅（ピクセル、デフォルト: `512`）
 - `-s`, `--sort`: CDDB検索結果をアルバム名順に並べ替えて表示。
 - `-ft`, `--filter-title`: CDDB候補のタイトルを正規表現でフィルタ（大文字小文字無視、UTF-8）
+- `-nr`, `--no-recrawl`: CDDBのタイトル候補でMusicBrainzを再検索しない
 - `-r`, `--repeat`: 終了後に次のCDのリッピング作業を連続して行う。
 - `-ne`, `--no-eject`: リッピング終了後もCDをドライブ内に保持する。
 - `-a`, `--auto`: 完全自動モードを有効化（プロンプトなし）。
@@ -132,12 +66,13 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex
 - `-sf`, `--speed-fast`: リッピング開始時にドライブの読込速度を最大へ要求する。
 - `-dc`, `--discogs`: Discogsのカバーアートの使用方法（`no`,`always`,`fallback`、デフォルト: `always`）。
 - `-na`, `--no-aa`: カバーアートのANSI/ASCIIアート表示を無効化する。
+- `-l`, `--logs`: デバッグログを出力する。
 - `-i`, `--input`: cdrip設定ファイルのパス（デフォルト検索: `./cdrip.conf` --> `~/.cdrip.conf`）
 - `-u`, `--update <file|dir> [more ...]`: 埋め込みタグを使用してCDDBから既存のFLACタグを更新（他のオプションは無視）
 
 すべてのコマンドラインオプション（`-u` および `-i` を除く）は、`-i` で指定された設定ファイルの内容を上書きできます。
 
-TIPS: MusicBrainzタグ付けで大量のCDを連続してインポートしたい場合は、`cdrip -a -r` オプションを指定することで実現できます。
+TIPS: MusicBrainzタグ付けで大量のCDを連続してインポートしたい場合は、`cdrip -a -r` オプションを指定することで実現できます。また、同じシリーズのCDをリッピングする場合は、 `-ft` オプションでタイトルをある程度絞り込んでおけば、CDDB候補の選択ミスを減らすことができます。
 
 TIPS: いくつかのハードウェアメディアプレーヤーでは、圧縮レベルを6以上にすると誤動作を起こします。したがって、Scheme CD ripperのデフォルトは5となっています。
 
@@ -189,6 +124,7 @@ Select match [0-15] (comma/space separated, default 1): 3,12
 |`discnumber`|リリースパッケージ内のCD番号|MusicBrainz|
 |`disctotal`|リリースパッケージのCD枚数|MusicBrainz|
 |`media`|メディアフォーマット|MusicBrainz|
+|`medium`|メディアタイトル（`musicbrainz_mediumtitle`の別名）|MusicBrainz|
 |`releasecountry`|リリース国|MusicBrainz|
 |`releasestatus`|リリース状況|MusicBrainz|
 |`label`|ラベル名|MusicBrainz|
@@ -201,6 +137,8 @@ Select match [0-15] (comma/space separated, default 1): 3,12
 |`cddb_total_seconds`|CD全体の時間（CDDBサーバーから情報を再取得する際に必要）|internal|
 |`musicbrainz_release`|リリースMBID（MusicBrainzのリリース特定ID）|MusicBrainz|
 |`musicbrainz_medium`|メディアMBID（MusicBrainzのメディア特定ID）|MusicBrainz|
+|`musicbrainz_mediumtitle`|メディアタイトル（複数メディア時のみ、空の場合はVorbis commentにのみ`CD n`を挿入）|MusicBrainz|
+|`musicbrainz_mediumtitle_raw`|メディアタイトル（raw、フォーマット専用。単一メディアでも使用可）|MusicBrainz|
 |`musicbrainz_releasegroupid`|リリースグループMBID|MusicBrainz|
 |`musicbrainz_trackid`|トラックMBID|MusicBrainz|
 |`musicbrainz_recordingid`|レコーディングMBID|MusicBrainz|
@@ -236,29 +174,28 @@ MusicBrainzから情報を取得した場合は、追加でカバーアート画
 
 ファイル名フォーマットは、ディレクトリ名を含むあらゆるパス用のテンプレートであり、中括弧を用いてVorbis commentsのキー名から自動的に柔軟にパスを決定できます。
 
-例えば:
+デフォルトは `"{album:n/medium:n/tracknumber:02d}_{title:n}.flac"` となっていて、アルバムとメディアタイトルでディレクトリが作られ、その中に `"01_foobar.flac"` のようなファイル名で保存されます。
 
-- `"{albummedia}/{tracknumber:02d}_{safetitle}.flac"`: これがデフォルトの設定であり、ほとんどの場合に適切です。複数CDのリリースはCD別のディレクトリに分割されます。
-- `"store/to/{safetitle}.flac"`: もちろん、ベースパスを追加して常にその中に保存することも可能です。
-- `"smb://nas.yourhome.localdomain/smbshare/music/{safetitle}.flac"`: Scheme CD ripperはGNOME GIOをサポートしているため、
-  リモートホストへの直接保存用URLを指定することも可能です（GVfsの設定が必要です）。
+以下にこのフォーマットの詳細を示します:
 
-Vorbis commentsキーに加えて、以下の専用キーもファイル名フォーマットで使用できます：
-
-|キー名|内容|
-|:----|:----|
-|`safetitle`|`title`タグを改行で切り詰め、末尾の空白を削除し、安全でない文字を置換する|
-|`albummedia`|`disctotal`が2以上の場合、`{album} {メディア名}` または `{album} CD{discnumber}`。それ以外は `album` と同じ|
-
-Note: これらはFLACファイルには保存されず、ファイル名形式でのみ使用できます。
+- 括弧 `{}` 内で、 `/` や `+` で複数キーを連結し、任意のパスやラベルを結合できます。
+  - `/` でパス区切り、 `+` でスペースで結合します。例えば、 `"{album/medium/title}.flac"` と指定すると、アルバムタイトルとメディアタイトルがパス区切りで区切られ、 `"foobar/baz/intro.flac"` のようにサブディレクトリ内にファイルを配置できます。
+  - 例: `"{album/medium}"` --> `"Album/Disc1"`
+  - 例: `"{album+medium}"` --> `"Album Disc1"`
+  - `"{album}/{medium}/{title}.flac"` のように括弧外で区切る場合、`album`や`medium`キーが存在しないと、パスがエラーとなります。しかし、括弧内で区切れば、キーが存在しない場合はパス区切りも追加されません（`+`によるスペース区切りも同様）。
+- 文字列は、`:n`という書式指定で安全なパス名に変換できます。
+  - パスとして不適切な文字をアンダースコアに置き換え、改行などが含まれる場合は、そこまでの文字列として区切ります。
+  - 例: `"{title:n}.flac"`
+- 数値は、 `:02d` のような書式指定で先頭ゼロを補間できます。
+  - これはC言語の`printf`書式指定と似ていますが、サポートしている指定はこの形式のみです。
+  - 例: `"{tracknumber:02d}.flac"` --> `"04.flac"`
 
 その他に、以下のような機能があります:
 
-- 2桁の数字は `:02d` などで先頭ゼロを補完できます。
-  これはC言語の`printf`書式指定と似ていますが、サポートしている指定はこの形式のみです。
-  例: `"{tracknumber:02d}.flac"`。
-- フォーマットにディレクトリが含まれる場合、自動的に作成されます。
+- フォーマット後にディレクトリパスが含まれる場合は、そのディレクトリ群は自動的に作成されます。
 - `.flac` 拡張子は省略すると自動的に付加されます。
+- Scheme CD ripperはGNOME GIOをサポートしているため、リモートホストへの直接保存用URLを指定することも可能です（GVfsの設定が必要です）。
+  - 例: `"smb://nas.yourhome.localdomain/smbshare/music/{title:n}.flac"`
 
 ### 既存のFLACファイルを埋め込まれたCDDBタグを使用して更新する
 
@@ -292,7 +229,7 @@ Scheme CD ripperは設定ファイルを参照します。INI形式に似た形�
 ```ini
 [cdrip]
 device=/dev/cdrom
-format={albummedia}/{tracknumber:02d}_{safetitle}.flac
+format={album:n/medium:n/tracknumber:02d}_{title:n}.flac
 compression=auto     # auto または 0-8
 max_width=512        # カバーアート最大幅(px、1以上)
 speed=slow           # slow または fast（デフォルト: slow）

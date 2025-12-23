@@ -76,6 +76,10 @@ static inline std::string trim(const std::string& s) {
     return s.substr(start, end - start + 1);
 }
 
+static inline void drop_format_only_tags(std::map<std::string, std::string>& tags) {
+    tags.erase("MUSICBRAINZ_MEDIUMTITLE_RAW");
+}
+
 static inline bool parse_int(const std::string& s, int& out) {
     try {
         out = std::stoi(s);
@@ -145,6 +149,9 @@ static inline std::string track_tag(
     const auto& tt = entry->tracks[track_index_zero_based];
     return find_tag(tt.tags, tt.tags_count, to_upper(key));
 }
+
+std::vector<std::string> extract_album_title_candidates(
+    const std::vector<const CdRipCddbEntry*>& entries);
 
 static inline FLAC__StreamMetadata* build_vorbis_comments(
     const std::map<std::string, std::string>& tags) {

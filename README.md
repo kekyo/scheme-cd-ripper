@@ -23,79 +23,14 @@ This workflow is designed for processing large numbers of CDs continuously, for 
 
 - Encode and save audio tracks as FLAC while performing music stream integrity checks (with `cd-paranoia`).
 - Reads the disc TOC, queries multiple CDDB servers and MusicBrainz. Merges all matches, and prompts you to pick a candidate.
-- Inserts Vorbis comments (ID3 like tags in FLAC format) automatically. Furthermore, if a cover art image exists at Discogs/CAA, it can be automatically embedded.
+- Inserts Vorbis comments (ID3 like tags in FLAC format) automatically.
+  Furthermore, if a cover art image exists at Discogs/CAA, it can be automatically embedded.
+  And, the flexible metadata auto-search feature and candidate regular expression filters reduce the burden of automatic tagging.
 - File names and directories can be automated using your specified format with tags.
 - And since it uses GNOME GIO (GVfs) for file output, you can output directly to a NAS or similar device using a URL.
 - Supports continuous mode for efficient operation of multiple CDs.
 
-### Example session
-
-```bash
-$ cdrip
-
-Scheme CD music/sound ripper
-Copyright (c) Kouji Matsui (@kekyo@mi.kekyo.net)
-https://github.com/kekyo/cd-ripper
-Licence: Under MIT.
-
-Detected CD drives:
-  [1] /dev/cdrom (media: present)
-  [2] /dev/sr1 (media: none)
-Select device [1-2] (default first with media, otherwise 1): 
-
-Using device: /dev/cdrom (media: present)
-Checking /dev/cdrom for cdrom...
-                CDROM sensed: PIONEER  BD-RW   BDR-XD05 3.10 SCSI CD-ROM
-
-Verifying drive can read CDDA...
-        Expected command set reads OK.
-
-Attempting to determine drive endianness from data........
-        Data appears to be coming back Little Endian.
-        certainty: 100%
-
-Options:
-  device      : "/dev/cdrom"
-  format      : "{albummedia}/{tracknumber:02d}_{safetitle}.flac"
-  compression : 5 (auto)
-  mode        : best (full integrity checks)
-  speed       : slow (1x)
-  auto        : disabled
-
-CDDB disc id: "1403e605"
-MusicBrainz disc id: "zLsp.2WaOeSl6clZ0YhGDmARjmY-"
-
-Fetcing from CDDB servers ...
-
-[1] BarlowGirl - For the Beauty of the Earth (Studio Series) (via freedb (japan))
-[2] Bomani "D'mite" Armah - Read a Book Single (via freedb (japan))
-[3] Stellar Kart - Angel In Chorus (Studio Series) (via freedb (japan))
-[4] Disney - Shanna (via dbpoweramp)
-[5] Ladina - Verbotene Liebe (via dbpoweramp)
-[6] Across The Sky - Found By You [Studio Series]  (2003) (via dbpoweramp)
-[7] Bomani "D'mite" Armah - Read a Book Single (via dbpoweramp)
-[8] Cuba Libre - Sierra Madre (via dbpoweramp)
-[9] Big Daddy Weave - You're Worthy Of My Praise(Studio Series) (via dbpoweramp)
-[10] BarlowGirl - For the Beauty of the Earth (Studio Series) (via dbpoweramp)
-[11] Crossroads - Unknown (via dbpoweramp)
-[12] Stellar Kart - Angel In Chorus (Studio Series) (via dbpoweramp)
-[13] Tigertown - Wandering Eyes EP (via dbpoweramp)
-[14] Jerry Smith - Twinkle Tracks (via dbpoweramp)
-[15] DONALDO 22 - DONALDO22 (via dbpoweramp)
-[0] (Ignore all, not use these tags)
-
-Select match [0-15] (comma/space separated, default 1): 3
-
-Start ripping...
-
-Track  1/ 5 [ETA: 13:19 ====================]: "Angel In Chorus (LP Version)"
-Track  2/ 5 [ETA: 09:59 ====================]: "Angel In Chorus (original key performance with background vocals)"
-Track  3/ 5 [ETA: 06:39 ====================]: "Angel In Chorus (low key performance without background vocals)"
-Track  4/ 5 [ETA: 03:19 ====================]: "Angel In Chorus (medium key without background vocals (original key)"
-Track  5/ 5 [ETA: 00:00 ====================]: "Angel In Chorus (high key without background vocals)"
-
-Done.
-```
+![Example session](./images/session.png)
 
 -----
 
@@ -113,16 +48,17 @@ The default options are configured for easy use of cdrip.
 Of course, you can adjust them to your preferences as follows:
 
 ```bash
-cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex] [-r] [-ne] [-a] [-ss|-sf] [-dc no|always|fallback] [-na] [-i config] [-u file|dir ...]
+cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-dc no|always|fallback] [-na] [-i config] [-u file|dir ...]
 ```
 
 - `-d`, `--device`: CD device path (`/dev/cdrom` or others). If not specified, it will automatically detect available CD devices and list them.
-- `-f`, `--format`: FLAC destination path format. using tag names inside `{}`, tags are case-insensitive. (default: `{albummedia}/{tracknumber:02d}_{safetitle}.flac`)
+- `-f`, `--format`: FLAC destination path format. using tag names inside `{}`, tags are case-insensitive. (see below)
 - `-m`, `--mode`: Integrity check mode: `best` (full integrity checks, default), `fast` (disabled any checks)
 - `-c`, `--compression`: FLAC compression level (default: `auto` (best --> `5`, fast --> `1`))
 - `-w`, `--max-width`: Cover art max width in pixels (default: `512`)
 - `-s`, `--sort`: Sort CDDB results by album name on the prompt.
 - `-ft`, `--filter-title`: Filter CDDB candidates by title using case-insensitive regex (UTF-8)
+- `-nr`, `--no-recrawl`: Disable MusicBrainz recrawl from CDDB titles.
 - `-r`, `--repeat`: Prompt for next disc after finishing.
 - `-ne`, `--no-eject`: Keep disc in the drive after ripping finishes.
 - `-a`, `--auto`: Enable fully automatic mode (without any prompts).
@@ -131,12 +67,14 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex
 - `-sf`, `--speed-fast`: Request maximum drive read speed when ripping starts.
 - `-dc`, `--discogs`: Discogs cover art preference: `no`, `always` (default), `fallback`.
 - `-na`, `--no-aa`: Disable cover art ANSI/ASCII art output.
+- `-l`, `--logs`: Print debug logs.
 - `-i`, `--input`: cdrip config file path (default search: `./cdrip.conf` --> `~/.cdrip.conf`)
 - `-u`, `--update <file|dir> [more ...]`: Update existing FLAC tags from CDDB using embedded tags (other options ignored)
 
 All command-line options (except `-u` and `-i`) can override the contents of the config file specified with `-i`.
 
 TIPS: If you want to import a large number of CDs continuously with MusicBrainz tagging, you can do so by specifying the `cdrip -a -r` option.
+Additionally, when ripping CDs from the same series, using the `-ft` option to narrow down the titles somewhat can reduce mistakes in selecting CDDB candidates.
 
 TIPS: Some hardware media players malfunction when the compression level is set to 6 or higher. Therefore, the default for Scheme CD ripper is set to 5.
 
@@ -188,6 +126,7 @@ The following Vorbis comments are inserted:
 |`discnumber`|Disc number (position)|MusicBrainz|
 |`disctotal`|Total discs in release|MusicBrainz|
 |`media`|Medium format (CD etc.)|MusicBrainz|
+|`medium`|Medium title (alias of `musicbrainz_mediumtitle`)|MusicBrainz|
 |`releasecountry`|Release country code|MusicBrainz|
 |`releasestatus`|Release status|MusicBrainz|
 |`label`|Label name(s)|MusicBrainz|
@@ -200,6 +139,8 @@ The following Vorbis comments are inserted:
 |`cddb_total_seconds`|Disc length in seconds (Required for re-fetching from CDDB server)|internal|
 |`musicbrainz_release`|Release MBID (Primary key for MusicBrainz)|MusicBrainz|
 |`musicbrainz_medium`|Medium MBID (Primary key for MusicBrainz)|MusicBrainz|
+|`musicbrainz_mediumtitle`|Medium title (multi-disc only; falls back to `CD n` in Vorbis comment when empty)|MusicBrainz|
+|`musicbrainz_mediumtitle_raw`|Medium title (raw, format-only; available even for single disc)|MusicBrainz|
 |`musicbrainz_releasegroupid`|Release group MBID|MusicBrainz|
 |`musicbrainz_trackid`|Track MBID|MusicBrainz|
 |`musicbrainz_recordingid`|Recording MBID|MusicBrainz|
@@ -236,28 +177,28 @@ If the player supports cover art display, the cover art image will be shown:
 
 The filename format is a template for any path, including directory names, that uses curly braces to automatically and flexibly determine the path using Vorbis comment key names.
 
-For example:
+The default is `“{album:n/medium/:ntracknumber:02d}_{title:n}.flac”`, where directories are created using the album and media title, and files are saved within them with names like `“01_foobar.flac”`.
 
-- `"{albummedia}/{tracknumber:02d}_{safetitle}.flac"`: This is the default definition and should be appropriate in most cases. It separates multi-disc releases into disc-specific directories.
-- `"store/to/{safetitle}.flac"`: Of course, you can also add a base path and always store it within that.
-- `"smb://nas.yourhome.localdomain/smbshare/music/{safetitle}.flac"`: Scheme CD ripper supports GNOME GIO, so you can also specify a URL to save directly to a remote host (Required GVfs configuration.)
+Below are the details of this format syntax:
 
-In addition to Vorbis comment keys, the following dedicated keys can also be used in filename formatting:
-
-|Key|Description|
-|:----|:----|
-|`safetitle`|Truncate `title` tag at newline, trim trailing and replace unsafe characters|
-|`albummedia`|If `disctotal` > 1, `{album} {medium title}` or `{album} CD{discnumber}`; otherwise same as `album`|
-
-Note: These are not stored in the FLAC file and can only be used in the filename format.
+- Within curly braces `{}`, you can concatenate multiple keys using `/` or `+` to combine any paths or labels:
+  - `/` separates paths, while `+` joins them with spaces. For example, specifying `“{album/medium/title}.flac”` separates the album title, media title and music title with a path separator, allowing files to be placed in subdirectories like `“foobar/baz/intro.flac”`.
+  - ex: `“{album/medium}”` --> `“Album/Disc1”`
+  - ex: `"{album+medium}"` --> `"Album Disc1"`
+  - If you separate paths outside the brackets, like `“{album}/{medium}/{title}.flac”`, the path will error if the `album` and/or `medium` key doesn't exist. However, if you separate paths inside the brackets, no path separator is added if the key doesn't exist (the same applies to space separation using `+`).
+- Strings can be converted to safe pathnames using the `:n` format specifier.
+  - Replaces inappropriate path characters with underscores, and if line breaks are present, truncates the string up to that point.
+  - ex: `“{title:n}.flac”`
+- Numbers can have leading zeros interpolated using format specifiers like `:02d`.
+  - This resembles C language `printf` format specifiers, but only this format is supported.
+  - ex: `“{tracknumber:02d}.flac”` --> `“04.flac”`
 
 Additionally, it includes the following features:
 
-- You can zero-pad two digit numbers with `:02d` etc.
-  This is similar to C language's `printf` format specifiers, but it only supports this format.
-  e.g. `"{tracknumber:02d}.flac"`.
-- If the format contains directories, they will be created automatically.
-- The `.flac` extension is appended automatically if you omit it.
+- If a directory path is included after formatting, those directories will be created automatically.
+- The `.flac` extension will be appended automatically if omitted.
+- Scheme CD ripper supports GNOME GIO, allowing you to specify a direct save URL to a remote host (requires GVfs configuration).
+  - ex: `“smb://nas.yourhome.localdomain/smbshare/music/{title:n}.flac”`
 
 ### Update existing FLACs using embedded CDDB tags
 
@@ -291,7 +232,7 @@ Example config file:
 ```ini
 [cdrip]
 device=/dev/cdrom
-format={albummedia}/{tracknumber:02d}_{safetitle}.flac
+format={album:n/medium:n/tracknumber:02d}_{title:n}.flac
 compression=auto     # auto or 0-8
 max_width=512        # cover art max width in pixels (> 0)
 speed=slow           # slow or fast (default: slow)
@@ -344,6 +285,9 @@ A special server id `musicbrainz` is not required `[cddb.musicbrainz]` section d
 - GNOME GIO
 - libsoup 3.0
 - json-glib
+- libpng
+- libjpeg
+- liblcms 2.0
 - chafa (libchafa)
 - CMake and a C++17 compiler
 - Node.js and [screw-up](https://github.com/kekyo/screw-up) (Automated-versioning tool)
@@ -355,11 +299,11 @@ A special server id `musicbrainz` is not required `[cddb.musicbrainz]` section d
 
 ### Build
 
-In Ubuntu 22.04/24.04:
+In Ubuntu noble/jammy:
 
 ```bash
 sudo apt-get install build-essential cmake dpkg-dev nodejs \
-  libcdio-paranoia-dev libcddb2-dev libflac++-dev libglib2.0-dev libsoup-3.0-dev libjson-glib-dev libchafa-dev
+  libcdio-paranoia-dev libcddb2-dev libflac++-dev libglib2.0-dev libsoup-3.0-dev libjson-glib-dev libchafa-dev libpng-dev libjpeg-dev liblcms2-dev
 npm install -g screw-up
 
 ./build.sh

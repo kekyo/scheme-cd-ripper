@@ -8,10 +8,12 @@
 #include <cctype>
 #include <cstdlib>
 #include <future>
+#include <iostream>
 #include <sstream>
 #include <string>
 #include <thread>
 #include <utility>
+#include <unordered_set>
 #include <vector>
 
 #include <cddb/cddb.h>
@@ -53,6 +55,7 @@ using namespace cdrip::detail;
 constexpr int kMusicBrainzTimeoutSec = 10;
 constexpr int kMusicBrainzRetryDelayMs = 1200;
 constexpr int kMusicBrainzMaxAttempts = 3;
+constexpr int kMusicBrainzSearchLimit = 10;
 
 static const char* kMusicBrainzLabel = "musicbrainz";
 // Includes kept minimal but must contain genres/tags so we can populate GENRE.
@@ -77,10 +80,59 @@ static std::string get_string_member(JsonObject* obj, const char* name) {
     return value ? std::string{value} : std::string{};
 }
 
+static void release_cddb_entry(CdRipCddbEntry& e) {
+    release_cstr(e.cddb_discid);
+    release_cstr(e.source_label);
+    release_cstr(e.source_url);
+    release_cstr(e.fetched_at);
+    if (e.cover_art.data) {
+        delete[] e.cover_art.data;
+        e.cover_art.data = nullptr;
+    }
+    release_cstr(e.cover_art.mime_type);
+    e.cover_art.size = 0;
+    e.cover_art.available = 0;
+    e.cover_art.is_front = 0;
+    if (e.album_tags) {
+        for (size_t ti = 0; ti < e.album_tags_count; ++ti) {
+            release_cstr(e.album_tags[ti].key);
+            release_cstr(e.album_tags[ti].value);
+        }
+        delete[] e.album_tags;
+        e.album_tags = nullptr;
+    }
+    e.album_tags_count = 0;
+    if (e.tracks) {
+        for (size_t t = 0; t < e.tracks_count; ++t) {
+            CdRipTrackTags* tt = &e.tracks[t];
+            if (tt->tags) {
+                for (size_t kv = 0; kv < tt->tags_count; ++kv) {
+                    release_cstr(tt->tags[kv].key);
+                    release_cstr(tt->tags[kv].value);
+                }
+                delete[] tt->tags;
+                tt->tags = nullptr;
+            }
+            tt->tags_count = 0;
+        }
+        delete[] e.tracks;
+        e.tracks = nullptr;
+    }
+    e.tracks_count = 0;
+}
+
 static int get_int_member(JsonObject* obj, const char* name, int fallback = -1) {
     if (!obj || !name) return fallback;
     if (!json_object_has_member(obj, name)) return fallback;
     return json_object_get_int_member(obj, name);
+}
+
+static std::string build_musicbrainz_release_key(const CdRipCddbEntry& entry) {
+    const std::string release = trim(album_tag(&entry, "MUSICBRAINZ_RELEASE"));
+    if (release.empty()) return {};
+    const std::string medium = trim(album_tag(&entry, "MUSICBRAINZ_MEDIUM"));
+    if (!medium.empty()) return release + ":" + medium;
+    return release;
 }
 
 static JsonArray* get_array_member(JsonObject* obj, const char* name) {
@@ -312,6 +364,244 @@ static bool http_get_json(const std::string& url, std::string& body, std::string
     return true;
 }
 
+static std::string escape_mb_query(const std::string& value) {
+    gchar* escaped = g_uri_escape_string(value.c_str(), nullptr, true);
+    if (!escaped) return {};
+    std::string out = escaped;
+    g_free(escaped);
+    return out;
+}
+
+static std::string build_musicbrainz_release_search_url(const std::string& album_title) {
+    std::string title = trim(album_title);
+    if (title.empty()) return {};
+    std::string sanitized;
+    sanitized.reserve(title.size());
+    for (char ch : title) {
+        if (ch == '"') continue;
+        sanitized.push_back(ch);
+    }
+    if (sanitized.empty()) return {};
+    const std::string query = "release:\"" + sanitized + "\"";
+    const std::string encoded = escape_mb_query(query);
+    if (encoded.empty()) return {};
+    std::ostringstream oss;
+    oss << "https://musicbrainz.org/ws/2/release/?fmt=json&limit=" << kMusicBrainzSearchLimit
+        << "&query=" << encoded;
+    return oss.str();
+}
+
+static std::vector<std::string> split_title_tokens(const std::string& input) {
+    std::vector<std::string> tokens;
+    size_t pos = 0;
+    while (pos < input.size()) {
+        while (pos < input.size() && input[pos] == ' ') ++pos;
+        if (pos >= input.size()) break;
+        size_t end = pos;
+        while (end < input.size() && input[end] != ' ') ++end;
+        if (end > pos) {
+            tokens.push_back(input.substr(pos, end - pos));
+        }
+        pos = end;
+    }
+    return tokens;
+}
+
+static std::string join_title_tokens(const std::vector<std::string>& tokens) {
+    std::ostringstream oss;
+    bool first = true;
+    for (const auto& token : tokens) {
+        if (token.empty()) continue;
+        if (!first) oss << ' ';
+        oss << token;
+        first = false;
+    }
+    return oss.str();
+}
+
+static bool is_ascii_alpha_token(const std::string& token) {
+    if (token.empty()) return false;
+    for (unsigned char ch : token) {
+        if (ch >= 0x80 || !std::isalpha(ch)) return false;
+    }
+    return true;
+}
+
+static bool is_digit_token(const std::string& token) {
+    if (token.empty()) return false;
+    for (unsigned char ch : token) {
+        if (!std::isdigit(ch)) return false;
+    }
+    return true;
+}
+
+static bool roman_to_int(const std::string& token, int& value) {
+    struct RomanEntry {
+        const char* roman;
+        int value;
+    };
+    static const RomanEntry kRomanMap[] = {
+        {"i", 1}, {"ii", 2}, {"iii", 3}, {"iv", 4}, {"v", 5},
+        {"vi", 6}, {"vii", 7}, {"viii", 8}, {"ix", 9}, {"x", 10},
+        {"xi", 11}, {"xii", 12}, {"xiii", 13}, {"xiv", 14}, {"xv", 15},
+        {"xvi", 16}, {"xvii", 17}, {"xviii", 18}, {"xix", 19}, {"xx", 20}
+    };
+    for (const auto& entry : kRomanMap) {
+        if (token == entry.roman) {
+            value = entry.value;
+            return true;
+        }
+    }
+    return false;
+}
+
+static std::string int_to_roman(int value) {
+    struct RomanEntry {
+        const char* roman;
+        int value;
+    };
+    static const RomanEntry kRomanMap[] = {
+        {"i", 1}, {"ii", 2}, {"iii", 3}, {"iv", 4}, {"v", 5},
+        {"vi", 6}, {"vii", 7}, {"viii", 8}, {"ix", 9}, {"x", 10},
+        {"xi", 11}, {"xii", 12}, {"xiii", 13}, {"xiv", 14}, {"xv", 15},
+        {"xvi", 16}, {"xvii", 17}, {"xviii", 18}, {"xix", 19}, {"xx", 20}
+    };
+    for (const auto& entry : kRomanMap) {
+        if (value == entry.value) return entry.roman;
+    }
+    return {};
+}
+
+static std::vector<std::vector<std::string>> expand_token_variants(const std::string& token) {
+    std::vector<std::vector<std::string>> out;
+    if (token.empty()) return out;
+    const std::string lower = to_lower(token);
+
+    auto add = [&out](std::vector<std::string> tokens) {
+        if (!tokens.empty()) {
+            out.push_back(std::move(tokens));
+        }
+    };
+
+    if (lower == "vol") add({"volume"});
+    if (lower == "pt") add({"part"});
+    if (lower == "no" || lower == "nr") add({"number"});
+    if (lower == "ed") add({"edition"});
+    if (lower == "ver" || lower == "vers") add({"version"});
+    if (lower == "feat" || lower == "ft") add({"featuring"});
+    if (lower == "ost") add({"original", "soundtrack"});
+    if (lower == "rmx") add({"remix"});
+    if (lower == "anniv" || lower == "anni") add({"anniversary"});
+
+    if (lower == "disc") {
+        add({"disk"});
+        add({"cd"});
+    } else if (lower == "disk") {
+        add({"disc"});
+        add({"cd"});
+    } else if (lower == "cd") {
+        add({"disc"});
+        add({"disk"});
+    }
+
+    int roman_value = 0;
+    if (roman_to_int(lower, roman_value)) {
+        add({std::to_string(roman_value)});
+    } else if (is_digit_token(lower)) {
+        try {
+            int value = std::stoi(lower);
+            std::string roman = int_to_roman(value);
+            if (!roman.empty()) {
+                add({roman});
+            }
+        } catch (...) {
+        }
+    }
+
+    return out;
+}
+
+static std::vector<std::string> hyphenate_short_alpha_tokens(
+    const std::vector<std::string>& tokens) {
+
+    std::vector<std::string> out;
+    out.reserve(tokens.size());
+    size_t i = 0;
+    while (i < tokens.size()) {
+        if (i + 1 < tokens.size() &&
+            is_ascii_alpha_token(tokens[i]) &&
+            is_ascii_alpha_token(tokens[i + 1]) &&
+            tokens[i].size() <= 3 &&
+            tokens[i + 1].size() <= 3) {
+            out.push_back(tokens[i] + "-" + tokens[i + 1]);
+            i += 2;
+            continue;
+        }
+        out.push_back(tokens[i]);
+        ++i;
+    }
+    return out;
+}
+
+static std::vector<std::string> build_recrawl_title_variants(const std::string& title) {
+    std::vector<std::string> out;
+    const std::string trimmed = trim(title);
+    if (trimmed.empty()) return out;
+    std::vector<std::string> tokens = split_title_tokens(trimmed);
+    if (tokens.empty()) {
+        out.push_back(trimmed);
+        return out;
+    }
+
+    std::unordered_set<std::string> seen;
+    std::vector<std::vector<std::string>> variants;
+    const std::string base = join_title_tokens(tokens);
+    if (base.empty()) return out;
+    variants.push_back(tokens);
+    seen.insert(base);
+
+    constexpr size_t kMaxVariants = 8;
+    size_t index = 0;
+    while (index < variants.size() && variants.size() < kMaxVariants) {
+        const auto current = variants[index++];
+        for (size_t pos = 0; pos < current.size() && variants.size() < kMaxVariants; ++pos) {
+            const auto replacements = expand_token_variants(current[pos]);
+            for (const auto& rep : replacements) {
+                std::vector<std::string> next;
+                next.reserve(current.size() - 1 + rep.size());
+                next.insert(next.end(), current.begin(),
+                            current.begin() + static_cast<std::vector<std::string>::difference_type>(pos));
+                next.insert(next.end(), rep.begin(), rep.end());
+                next.insert(next.end(),
+                            current.begin() + static_cast<std::vector<std::string>::difference_type>(pos) + 1,
+                            current.end());
+                const std::string joined = join_title_tokens(next);
+                if (joined.empty()) continue;
+                if (seen.insert(joined).second) {
+                    variants.push_back(std::move(next));
+                    if (variants.size() >= kMaxVariants) break;
+                }
+            }
+        }
+    }
+
+    for (size_t i = 0; i < variants.size() && variants.size() < kMaxVariants; ++i) {
+        std::vector<std::string> hyphenated = hyphenate_short_alpha_tokens(variants[i]);
+        if (hyphenated == variants[i]) continue;
+        const std::string joined = join_title_tokens(hyphenated);
+        if (joined.empty()) continue;
+        if (seen.insert(joined).second) {
+            variants.push_back(std::move(hyphenated));
+        }
+    }
+
+    out.reserve(variants.size());
+    for (const auto& variant : variants) {
+        out.push_back(join_title_tokens(variant));
+    }
+    return out;
+}
+
 static bool build_entries_from_release(
     const CdRipDiscToc* toc,
     const std::string& request_url,
@@ -489,16 +779,29 @@ static bool build_entries_from_release(
         get_bool_member(cover_art_archive, "artwork", false) ||
         get_bool_member(cover_art_archive, "front", false);
 
-    for (JsonObject* medium_obj : media) {
+    for (size_t medium_index = 0; medium_index < media.size(); ++medium_index) {
+        JsonObject* medium_obj = media[medium_index];
         if (!medium_obj) continue;
         std::vector<CdRipTagKV> album_tags;
         std::vector<std::vector<CdRipTagKV>> track_tags(toc->tracks_count);
 
         const std::string medium_id = get_string_member(medium_obj, "id");
         const std::string medium_title = get_string_member(medium_obj, "title");
+        const std::string medium_title_raw = trim(medium_title);
         const std::string medium_format = get_string_member(medium_obj, "format");
         const int track_total = get_int_member(medium_obj, "track-count", -1);
         const int disc_number = get_int_member(medium_obj, "position", -1);
+        int disc_number_effective = disc_number;
+        if (disc_number_effective <= 0 && medium_total > 1) {
+            disc_number_effective = static_cast<int>(medium_index + 1);
+        }
+        std::string medium_title_value;
+        if (medium_total > 1) {
+            medium_title_value = medium_title_raw;
+            if (medium_title_value.empty() && disc_number_effective > 0) {
+                medium_title_value = "CD " + std::to_string(disc_number_effective);
+            }
+        }
 
         append_tag(album_tags, "ALBUM", release_title);
         append_tag(album_tags, "ARTIST", album_artist);
@@ -511,11 +814,13 @@ static bool build_entries_from_release(
         append_tag(album_tags, "MEDIA", medium_format);
         append_tag(album_tags, "MUSICBRAINZ_RELEASE", release_id);
         append_tag(album_tags, "MUSICBRAINZ_MEDIUM", medium_id);
-        append_tag(album_tags, "MUSICBRAINZ_MEDIUMTITLE", medium_title);
+        append_tag(album_tags, "MUSICBRAINZ_MEDIUMTITLE", medium_title_value);
+        append_tag(album_tags, "MUSICBRAINZ_MEDIUMTITLE_RAW", medium_title_raw);
+        append_tag(album_tags, "MEDIUM", medium_title_value);
         append_tag(album_tags, "MUSICBRAINZ_RELEASEGROUPID", release_group_id);
         append_tag(album_tags, "DISCOGS_RELEASE", discogs_release_id);
         if (track_total > 0) append_tag(album_tags, "TRACKTOTAL", std::to_string(track_total));
-        if (disc_number > 0) append_tag(album_tags, "DISCNUMBER", std::to_string(disc_number));
+        if (disc_number_effective > 0) append_tag(album_tags, "DISCNUMBER", std::to_string(disc_number_effective));
         if (medium_total > 0) append_tag(album_tags, "DISCTOTAL", std::to_string(medium_total));
 
         JsonArray* label_info = get_array_member(release_obj, "label-info");
@@ -702,6 +1007,84 @@ static bool fetch_musicbrainz_entries(
     return true;
 }
 
+static bool fetch_musicbrainz_entries_by_title(
+    const CdRipDiscToc* toc,
+    const std::string& album_title,
+    std::vector<CdRipCddbEntry>& results,
+    std::string& err) {
+
+    if (!toc || !toc->tracks || toc->tracks_count == 0) {
+        err = "MusicBrainz query failed: invalid TOC";
+        return false;
+    }
+
+    const std::string url = build_musicbrainz_release_search_url(album_title);
+    if (url.empty()) return true;
+
+    long mb_leadout = 0;
+    std::vector<long> offsets = build_mb_offsets(toc, mb_leadout);
+    if (offsets.empty()) {
+        err = "MusicBrainz query failed: unable to build TOC";
+        return false;
+    }
+
+    std::string discid = to_string_or_empty(toc->mb_discid);
+    if (discid.empty()) {
+        std::string computed;
+        long temp_leadout = 0;
+        if (compute_musicbrainz_discid(toc, computed, temp_leadout)) {
+            discid = computed;
+        }
+    }
+
+    std::string body;
+    if (!http_get_json(url, body, err)) {
+        return false;
+    }
+
+    JsonParser* parser = json_parser_new();
+    GError* gerr = nullptr;
+    if (!json_parser_load_from_data(parser, body.c_str(), body.size(), &gerr)) {
+        err = gerr && gerr->message ? std::string{gerr->message} : "MusicBrainz response parse error";
+        if (gerr) g_error_free(gerr);
+        g_object_unref(parser);
+        return false;
+    }
+    JsonNode* root = json_parser_get_root(parser);
+    if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
+        err = "MusicBrainz response is not a JSON object";
+        g_object_unref(parser);
+        return false;
+    }
+    JsonObject* root_obj = json_node_get_object(root);
+    JsonArray* releases = get_array_member(root_obj, "releases");
+    if (releases) {
+        const guint len = json_array_get_length(releases);
+        bool any_success = false;
+        std::string last_err;
+        for (guint i = 0; i < len; ++i) {
+            JsonObject* release_obj = json_array_get_object_element(releases, i);
+            if (!release_obj) continue;
+            const std::string rid = get_string_member(release_obj, "id");
+            if (rid.empty()) continue;
+            std::string rel_err;
+            if (fetch_release_details_and_build(toc, rid, offsets, discid, results, rel_err)) {
+                any_success = true;
+            } else if (!rel_err.empty()) {
+                last_err = rel_err;
+            }
+        }
+        if (!any_success && !last_err.empty()) {
+            err = last_err;
+            g_object_unref(parser);
+            return false;
+        }
+    }
+
+    g_object_unref(parser);
+    return true;
+}
+
 /* ------------------------------------------------------------------- */
 /* Exported API functions */
 
@@ -850,6 +1233,8 @@ extern "C" {
 CdRipCddbEntryList* cdrip_fetch_cddb_entries(
     const CdRipDiscToc* toc,
     const CdRipCddbServerList* servers,
+    bool allow_recrawl,
+    bool log_recrawl,
     const char** error) {
 
     clear_error(error);
@@ -868,11 +1253,22 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
 
     std::vector<std::future<ServerFetchResult>> futures;
     futures.reserve(servers->count);
+    bool has_musicbrainz_server = false;
+    size_t musicbrainz_insert_index = 0;
+    std::vector<bool> is_musicbrainz_server(servers->count, false);
     for (size_t si = 0; si < servers->count; ++si) {
         const CdRipCddbServer server = servers->servers[si];
+        const std::string server_label = to_string_or_empty(server.label);
+        if (to_lower(server_label) == kMusicBrainzLabel) {
+            if (!has_musicbrainz_server) {
+                musicbrainz_insert_index = si;
+            }
+            has_musicbrainz_server = true;
+            is_musicbrainz_server[si] = true;
+        }
         futures.push_back(std::async(std::launch::async, [toc, server, toc_discid]() -> ServerFetchResult {
-            const std::string server_label = to_string_or_empty(server.label);
-            if (to_lower(server_label) == kMusicBrainzLabel) {
+            const std::string label = to_string_or_empty(server.label);
+            if (to_lower(label) == kMusicBrainzLabel) {
                 return fetch_entries_from_musicbrainz(toc);
             }
             return fetch_entries_from_cddb_server(toc, server, toc_discid);
@@ -895,10 +1291,90 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
         }
     }
 
+    std::string mb_title_err;
+    if (has_musicbrainz_server) {
+        size_t mb_entries_count = 0;
+        std::vector<const CdRipCddbEntry*> other_entries;
+        size_t other_entries_count = 0;
+        for (size_t si = 0; si < per_server.size(); ++si) {
+            if (is_musicbrainz_server[si]) {
+                mb_entries_count += per_server[si].entries.size();
+            } else {
+                other_entries_count += per_server[si].entries.size();
+            }
+        }
+        other_entries.reserve(other_entries_count);
+        for (size_t si = 0; si < per_server.size(); ++si) {
+            if (is_musicbrainz_server[si]) {
+                continue;
+            }
+            for (const auto& e : per_server[si].entries) {
+                other_entries.push_back(&e);
+            }
+        }
+        const bool has_cddb_candidates = !other_entries.empty();
+        const bool should_recrawl = has_cddb_candidates && (allow_recrawl || mb_entries_count == 0);
+        if (should_recrawl) {
+            const std::vector<std::string> candidates =
+                extract_album_title_candidates(other_entries);
+            if (!candidates.empty()) {
+                if (log_recrawl) {
+                    std::cerr << "MusicBrainz recrawl candidates (" << candidates.size() << "):\n";
+                    for (size_t i = 0; i < candidates.size(); ++i) {
+                        std::cerr << "  [" << (i + 1) << "] " << candidates[i] << "\n";
+                    }
+                }
+                std::unordered_set<std::string> seen_mb_keys;
+                auto& target = per_server[musicbrainz_insert_index].entries;
+                seen_mb_keys.reserve(target.size());
+                for (const auto& e : target) {
+                    const std::string key = build_musicbrainz_release_key(e);
+                    if (!key.empty()) seen_mb_keys.insert(key);
+                }
+                for (const auto& candidate : candidates) {
+                    const auto variants = build_recrawl_title_variants(candidate);
+                    bool added_any = false;
+                    if (log_recrawl) {
+                        std::cerr << "MusicBrainz recrawl target: \"" << candidate
+                                  << "\" (" << variants.size() << " variants)\n";
+                    }
+                    for (const auto& variant : variants) {
+                        if (log_recrawl) {
+                            std::cerr << "  try: " << variant << "\n";
+                        }
+                        std::vector<CdRipCddbEntry> mb_entries;
+                        std::string candidate_err;
+                        if (!fetch_musicbrainz_entries_by_title(toc, variant, mb_entries, candidate_err)) {
+                            if (!candidate_err.empty()) {
+                                mb_title_err = candidate_err;
+                            }
+                            continue;
+                        }
+                        if (!mb_entries.empty()) {
+                            for (auto& entry : mb_entries) {
+                                const std::string key = build_musicbrainz_release_key(entry);
+                                if (!key.empty() && !seen_mb_keys.insert(key).second) {
+                                    release_cddb_entry(entry);
+                                    continue;
+                                }
+                                target.push_back(entry);
+                                added_any = true;
+                            }
+                        }
+                        if (added_any) break;
+                    }
+                }
+            }
+        }
+    }
+
     // Preserve the original server order when merging results and choosing the first error.
     for (const auto& r : per_server) {
         if (!r.error.empty()) set_error(error, r.error);
         results.insert(results.end(), r.entries.begin(), r.entries.end());
+    }
+    if (!mb_title_err.empty()) {
+        set_error(error, std::string{"MusicBrainz title search failed: "} + mb_title_err);
     }
 
     if (!results.empty()) {

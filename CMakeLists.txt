@@ -89,6 +89,7 @@ set(COMMON_CFLAGS
 )
 
 set(CDRIP_SOURCES
+    src/cdrip/album_extractor.cpp
     src/cdrip/config.cpp
     src/cdrip/cddb_entries.cpp
     src/cdrip/flac_metadata.cpp

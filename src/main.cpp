@@ -117,6 +117,40 @@ std::string get_album_media_tag(
     return album + " CD" + discnumber;
 }
 
+void log_selected_entry_tags(const CdRipCddbEntry* entry) {
+    if (!entry) {
+        std::cerr << "Selected metadata entry tags: (null)\n";
+        return;
+    }
+    std::cerr << "Selected metadata entry tags:\n";
+    if (!entry->album_tags || entry->album_tags_count == 0) {
+        std::cerr << "  (no album tags)\n";
+    } else {
+        for (size_t i = 0; i < entry->album_tags_count; ++i) {
+            const std::string key = view_string(entry->album_tags[i].key);
+            const std::string value = view_string(entry->album_tags[i].value);
+            std::cerr << "  " << key << " = " << value << "\n";
+        }
+    }
+    if (!entry->tracks || entry->tracks_count == 0) {
+        std::cerr << "  (no track tags)\n";
+        return;
+    }
+    for (size_t ti = 0; ti < entry->tracks_count; ++ti) {
+        const auto& tt = entry->tracks[ti];
+        std::cerr << "  Track " << (ti + 1) << ":\n";
+        if (!tt.tags || tt.tags_count == 0) {
+            std::cerr << "    (no tags)\n";
+            continue;
+        }
+        for (size_t i = 0; i < tt.tags_count; ++i) {
+            const std::string key = view_string(tt.tags[i].key);
+            const std::string value = view_string(tt.tags[i].value);
+            std::cerr << "    " << key << " = " << value << "\n";
+        }
+    }
+}
+
 [[maybe_unused]] std::string get_track_tag(
     const CdRipCddbEntry* entry,
     size_t index_zero_based,
@@ -1007,7 +1041,13 @@ bool ensure_cover_art_merged(
     const std::vector<CdRipCddbEntry*> effective =
         !candidates.empty() ? candidates : std::vector<CdRipCddbEntry*>{target};
 
-    auto try_phase = [&](auto fetch_fn, CoverArtFetchSource phase_source) -> bool {
+    struct PhaseResult {
+        bool success{false};
+        bool had_error{false};
+    };
+
+    auto try_phase = [&](auto fetch_fn, CoverArtFetchSource phase_source) -> PhaseResult {
+        PhaseResult result{};
         for (CdRipCddbEntry* e : effective) {
             if (!e) continue;
             const bool had_data = (e->cover_art.data && e->cover_art.size > 0);
@@ -1025,27 +1065,43 @@ bool ensure_cover_art_merged(
                     source_out = phase_source;
                 }
                 if (cover_err) cdrip_release_error(cover_err);
-                return true;
+                result.success = true;
+                return result;
             }
             if (cover_err) {
                 notice_out = view_string(cover_err);
+                result.had_error = true;
                 cdrip_release_error(cover_err);
             }
         }
-        return false;
+        return result;
     };
 
     if (discogs_mode == DiscogsMode::Always) {
-        if (try_phase(&cdrip_fetch_discogs_cover_art, CoverArtFetchSource::Discogs)) return true;
+        PhaseResult discogs_result = try_phase(&cdrip_fetch_discogs_cover_art, CoverArtFetchSource::Discogs);
+        if (discogs_result.success) return true;
         // Keep any existing cover art if Discogs did not succeed.
         if (target_has_cover) return true;
-        return try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive);
+        PhaseResult caa_result = try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive);
+        if (caa_result.success) return true;
+        if (caa_result.had_error) {
+            PhaseResult retry_discogs = try_phase(&cdrip_fetch_discogs_cover_art, CoverArtFetchSource::Discogs);
+            if (retry_discogs.success) return true;
+        }
+        return false;
     }
     if (discogs_mode == DiscogsMode::Fallback) {
-        if (try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive)) return true;
-        return try_phase(&cdrip_fetch_discogs_cover_art, CoverArtFetchSource::Discogs);
+        PhaseResult caa_result = try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive);
+        if (caa_result.success) return true;
+        PhaseResult discogs_result = try_phase(&cdrip_fetch_discogs_cover_art, CoverArtFetchSource::Discogs);
+        if (discogs_result.success) return true;
+        if (discogs_result.had_error) {
+            PhaseResult retry_caa = try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive);
+            if (retry_caa.success) return true;
+        }
+        return false;
     }
-    return try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive);
+    return try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive).success;
 }
 
 struct CddbSelection {
@@ -1063,6 +1119,8 @@ CddbSelection select_cddb_entry_for_toc(
     const std::string& context_label = std::string{},
     bool auto_mode = false,
     bool allow_fallback = true,
+    bool allow_recrawl = true,
+    bool log_recrawl = false,
     EntryListCache* metadata_cache = nullptr,
     const GRegex* title_filter = nullptr) {
 
@@ -1105,7 +1163,7 @@ CddbSelection select_cddb_entry_for_toc(
         }
     }
     if (!entries) {
-        entries = cdrip_fetch_cddb_entries(toc, servers, &fetch_err);
+        entries = cdrip_fetch_cddb_entries(toc, servers, allow_recrawl, log_recrawl, &fetch_err);
         if (entries && metadata_cache && !cache_key.empty()) {
             (*metadata_cache)[cache_key] = EntryListPtr(
                 clone_cddb_entry_list(entries));
@@ -1328,6 +1386,11 @@ CddbSelection select_cddb_entry_for_toc(
         }
     } else {
         result.selected = selected_entries.front();
+    }
+    if (log_recrawl && result.selected) {
+        std::cerr << "\n";
+        log_selected_entry_tags(result.selected);
+        std::cerr << "\n";
     }
     return result;
 }
@@ -1564,6 +1627,8 @@ struct Options {
     std::string config_file;
     bool no_eject = false;
     bool no_aa = false;
+    bool no_recrawl = false;
+    bool logs = false;
     std::vector<std::string> update_paths;
 };
 
@@ -1617,6 +1682,10 @@ Options parse_args(int argc, char** argv) {
             opts.discogs = argv[++i];
         } else if (arg == "-na" || arg == "--no-aa") {
             opts.no_aa = true;
+        } else if (arg == "-nr" || arg == "--no-recrawl") {
+            opts.no_recrawl = true;
+        } else if (arg == "-l" || arg == "--logs") {
+            opts.logs = true;
         } else if (arg == "-ne" || arg == "--no-eject") {
             opts.no_eject = true;
         } else if (arg == "-n") {
@@ -1630,14 +1699,15 @@ Options parse_args(int argc, char** argv) {
                 std::exit(1);
             }
         } else if (arg == "-?" || arg == "-h" || arg == "--help") {
-            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-r] [-ne] [-a] [-ss|-sf] [-dc no|always|fallback] [-na] [-i config] [-u file|dir ...]\n";
+            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-dc no|always|fallback] [-na] [-i config] [-u file|dir ...]\n";
             std::cout << "  -d  / --device: CD device path (default: auto-detect)\n";
-            std::cout << "  -f  / --format: FLAC destination path format (default: \"{albummedia}/{tracknumber:02d}_{safetitle}.flac\")\n";
+            std::cout << "  -f  / --format: FLAC destination path format (default: \"{album:n/medium:n/tracknumber:02d}_{title:n}.flac\")\n";
             std::cout << "  -m  / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disabled any checks)\n";
             std::cout << "  -c  / --compression: FLAC compression level (default: auto (best --> 5, fast --> 1))\n";
             std::cout << "  -w  / --max-width: Cover art max width in pixels (default: 512)\n";
             std::cout << "  -s  / --sort: Sort CDDB results by album name on the prompt\n";
             std::cout << "  -ft / --filter-title: Filter CDDB candidates by title using case-insensitive regex (UTF-8)\n";
+            std::cout << "  -nr / --no-recrawl: Disable MusicBrainz recrawl from CDDB titles (revert to MB-0-only behavior)\n";
             std::cout << "  -r  / --repeat: Prompt for next disc after finishing\n";
             std::cout << "  -ne / --no-eject: Keep disc in the drive after ripping finishes\n";
             std::cout << "  -a  / --auto: Enable fully automatic mode (without any prompts)\n";
@@ -1645,6 +1715,7 @@ Options parse_args(int argc, char** argv) {
             std::cout << "  -sf / --speed-fast: Request maximum drive read speed when ripping starts\n";
             std::cout << "  -dc / --discogs: Cover art preference for Discogs: no, always (default), fallback\n";
             std::cout << "  -na / --no-aa: Disable cover art ANSI/ASCII art output\n";
+            std::cout << "  -l  / --logs: Print debug logs for MusicBrainz recrawl and selected metadata\n";
             std::cout << "  -i  / --input: cdrip config file path (default search: ./cdrip.conf --> ~/.cdrip.conf)\n";
             std::cout << "  -u  / --update <file|dir> [more ...]: Update existing FLAC tags from CDDB using embedded tags (other options ignored)\n";
             std::exit(0);
@@ -1658,6 +1729,8 @@ int run_update_mode(
     const CdRipCddbServerList* servers,
     bool sort,
     bool auto_mode,
+    bool allow_recrawl,
+    bool log_recrawl,
     DiscogsMode discogs_mode,
     bool allow_aa,
     const GRegex* title_filter) {
@@ -1705,7 +1778,8 @@ int run_update_mode(
 
             const std::string cache_key = build_metadata_cache_key(item.toc);
             auto selection = select_cddb_entry_for_toc(
-                item.toc, servers, sort, view_string(item.path), auto_mode, /*allow_fallback=*/false, &metadata_cache, title_filter);
+                item.toc, servers, sort, view_string(item.path), auto_mode,
+                /*allow_fallback=*/false, allow_recrawl, log_recrawl, &metadata_cache, title_filter);
             if (!selection.entries || !selection.selected) {
                 std::cout << "  Skipped: no metadata selected\n";
                 if (selection.entries) cdrip_release_cddbentry_list(selection.entries);
@@ -1777,6 +1851,8 @@ int main(int argc, char** argv) {
     bool sort = cli_opts.sort.value_or(cfg->sort);
     bool auto_mode = cli_opts.auto_mode.value_or(cfg->auto_mode);
     bool eject_after = !cli_opts.no_eject;
+    bool allow_recrawl = !cli_opts.no_recrawl;
+    bool log_recrawl = cli_opts.logs;
     CdRipCddbServerList* servers_from_config = cfg->servers;
 
     std::string filter_title = trim_ws(cli_opts.filter_title.value_or(view_string(cfg->filter_title)));
@@ -1860,7 +1936,8 @@ int main(int argc, char** argv) {
 
     if (!cli_opts.update_paths.empty()) {
         // Ignore other options when update mode is specified.
-        return run_update_mode(cli_opts.update_paths, servers_from_config, cfg->sort, auto_mode, discogs_mode, allow_aa, title_filter.get());
+        return run_update_mode(cli_opts.update_paths, servers_from_config, cfg->sort, auto_mode,
+                               allow_recrawl, log_recrawl, discogs_mode, allow_aa, title_filter.get());
     }
 
     const char* err = nullptr;
@@ -2042,7 +2119,9 @@ int main(int argc, char** argv) {
 
         CdRipCddbServerList* servers = servers_from_config;
 
-        auto selection = select_cddb_entry_for_toc(toc, servers, sort, std::string{}, auto_mode, /*allow_fallback=*/true, /*metadata_cache=*/nullptr, title_filter.get());
+        auto selection = select_cddb_entry_for_toc(
+            toc, servers, sort, std::string{}, auto_mode, /*allow_fallback=*/true,
+            allow_recrawl, log_recrawl, /*metadata_cache=*/nullptr, title_filter.get());
         const bool ignore_meta = (selection.selected == nullptr);
         if (!selection.entries) {
             std::cerr << "Failed to obtain CDDB entries\n";

@@ -160,7 +160,7 @@ static CdRipRipModes parse_mode(
 static CdRipConfig* make_default_config() {
     auto* cfg = new CdRipConfig{};
     cfg->device = nullptr;
-    cfg->format = make_cstr_copy("{albummedia}/{tracknumber:02d}_{safetitle}.flac");
+    cfg->format = make_cstr_copy("{album:n/medium:n/tracknumber:02d}_{title:n}.flac");
     cfg->compression_level = -1;
     cfg->max_width = 512;
     cfg->mode = RIP_MODES_DEFAULT;

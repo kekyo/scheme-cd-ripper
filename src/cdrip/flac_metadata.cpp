@@ -391,7 +391,6 @@ int cdrip_update_flac_with_cddb_entry(
             std::string key = to_upper(to_string_or_empty(kvs[i].key));
             std::string val = to_string_or_empty(kvs[i].value);
             if (!key.empty() && !val.empty()) {
-                if (key == "MUSICBRAINZ_MEDIUMTITLE") continue;
                 tags[key] = val;
             }
         }
@@ -416,6 +415,7 @@ int cdrip_update_flac_with_cddb_entry(
         }
     };
     prune_empty(tags);
+    drop_format_only_tags(tags);
 
     FLAC__Metadata_Chain* chain = FLAC__metadata_chain_new();
     if (!chain) {
