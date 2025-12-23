@@ -117,6 +117,40 @@ std::string get_album_media_tag(
     return album + " CD" + discnumber;
 }
 
+void log_selected_entry_tags(const CdRipCddbEntry* entry) {
+    if (!entry) {
+        std::cerr << "Selected metadata entry tags: (null)\n";
+        return;
+    }
+    std::cerr << "Selected metadata entry tags:\n";
+    if (!entry->album_tags || entry->album_tags_count == 0) {
+        std::cerr << "  (no album tags)\n";
+    } else {
+        for (size_t i = 0; i < entry->album_tags_count; ++i) {
+            const std::string key = view_string(entry->album_tags[i].key);
+            const std::string value = view_string(entry->album_tags[i].value);
+            std::cerr << "  " << key << " = " << value << "\n";
+        }
+    }
+    if (!entry->tracks || entry->tracks_count == 0) {
+        std::cerr << "  (no track tags)\n";
+        return;
+    }
+    for (size_t ti = 0; ti < entry->tracks_count; ++ti) {
+        const auto& tt = entry->tracks[ti];
+        std::cerr << "  Track " << (ti + 1) << ":\n";
+        if (!tt.tags || tt.tags_count == 0) {
+            std::cerr << "    (no tags)\n";
+            continue;
+        }
+        for (size_t i = 0; i < tt.tags_count; ++i) {
+            const std::string key = view_string(tt.tags[i].key);
+            const std::string value = view_string(tt.tags[i].value);
+            std::cerr << "    " << key << " = " << value << "\n";
+        }
+    }
+}
+
 [[maybe_unused]] std::string get_track_tag(
     const CdRipCddbEntry* entry,
     size_t index_zero_based,
@@ -1353,6 +1387,11 @@ CddbSelection select_cddb_entry_for_toc(
     } else {
         result.selected = selected_entries.front();
     }
+    if (log_recrawl && result.selected) {
+        std::cerr << "\n";
+        log_selected_entry_tags(result.selected);
+        std::cerr << "\n";
+    }
     return result;
 }
 
@@ -1676,7 +1715,7 @@ Options parse_args(int argc, char** argv) {
             std::cout << "  -sf / --speed-fast: Request maximum drive read speed when ripping starts\n";
             std::cout << "  -dc / --discogs: Cover art preference for Discogs: no, always (default), fallback\n";
             std::cout << "  -na / --no-aa: Disable cover art ANSI/ASCII art output\n";
-            std::cout << "  -l  / --logs: Print debug logs for MusicBrainz recrawl queries\n";
+            std::cout << "  -l  / --logs: Print debug logs for MusicBrainz recrawl and selected metadata\n";
             std::cout << "  -i  / --input: cdrip config file path (default search: ./cdrip.conf --> ~/.cdrip.conf)\n";
             std::cout << "  -u  / --update <file|dir> [more ...]: Update existing FLAC tags from CDDB using embedded tags (other options ignored)\n";
             std::exit(0);

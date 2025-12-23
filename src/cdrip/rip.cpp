@@ -414,7 +414,9 @@ int cdrip_rip_track(
         static_cast<uint64_t>(sectors) * kSamplesPerSector);
 
     // Prepare Vorbis and cover art metadata; attach to encoder
-    FLAC__StreamMetadata* vorbis = build_vorbis_comments(tags);
+    std::map<std::string, std::string> vorbis_tags = tags;
+    drop_format_only_tags(vorbis_tags);
+    FLAC__StreamMetadata* vorbis = build_vorbis_comments(vorbis_tags);
     FLAC__StreamMetadata* picture = nullptr;
     if (!vorbis) {
         set_error(error, "Failed to create vorbis comment metadata");

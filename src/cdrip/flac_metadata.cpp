@@ -415,6 +415,7 @@ int cdrip_update_flac_with_cddb_entry(
         }
     };
     prune_empty(tags);
+    drop_format_only_tags(tags);
 
     FLAC__Metadata_Chain* chain = FLAC__metadata_chain_new();
     if (!chain) {

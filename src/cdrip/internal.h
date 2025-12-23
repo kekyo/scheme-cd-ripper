@@ -76,6 +76,10 @@ static inline std::string trim(const std::string& s) {
     return s.substr(start, end - start + 1);
 }
 
+static inline void drop_format_only_tags(std::map<std::string, std::string>& tags) {
+    tags.erase("MUSICBRAINZ_MEDIUMTITLE_RAW");
+}
+
 static inline bool parse_int(const std::string& s, int& out) {
     try {
         out = std::stoi(s);

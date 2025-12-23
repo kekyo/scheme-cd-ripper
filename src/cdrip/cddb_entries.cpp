@@ -787,6 +787,7 @@ static bool build_entries_from_release(
 
         const std::string medium_id = get_string_member(medium_obj, "id");
         const std::string medium_title = get_string_member(medium_obj, "title");
+        const std::string medium_title_raw = trim(medium_title);
         const std::string medium_format = get_string_member(medium_obj, "format");
         const int track_total = get_int_member(medium_obj, "track-count", -1);
         const int disc_number = get_int_member(medium_obj, "position", -1);
@@ -796,7 +797,7 @@ static bool build_entries_from_release(
         }
         std::string medium_title_value;
         if (medium_total > 1) {
-            medium_title_value = trim(medium_title);
+            medium_title_value = medium_title_raw;
             if (medium_title_value.empty() && disc_number_effective > 0) {
                 medium_title_value = "CD " + std::to_string(disc_number_effective);
             }
@@ -814,6 +815,7 @@ static bool build_entries_from_release(
         append_tag(album_tags, "MUSICBRAINZ_RELEASE", release_id);
         append_tag(album_tags, "MUSICBRAINZ_MEDIUM", medium_id);
         append_tag(album_tags, "MUSICBRAINZ_MEDIUMTITLE", medium_title_value);
+        append_tag(album_tags, "MUSICBRAINZ_MEDIUMTITLE_RAW", medium_title_raw);
         append_tag(album_tags, "MEDIUM", medium_title_value);
         append_tag(album_tags, "MUSICBRAINZ_RELEASEGROUPID", release_group_id);
         append_tag(album_tags, "DISCOGS_RELEASE", discogs_release_id);

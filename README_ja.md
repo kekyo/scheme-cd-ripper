@@ -205,6 +205,7 @@ Select match [0-15] (comma/space separated, default 1): 3,12
 |`musicbrainz_release`|リリースMBID（MusicBrainzのリリース特定ID）|MusicBrainz|
 |`musicbrainz_medium`|メディアMBID（MusicBrainzのメディア特定ID）|MusicBrainz|
 |`musicbrainz_mediumtitle`|メディアタイトル（複数メディア時のみ、空の場合は`CD n`）|MusicBrainz|
+|`musicbrainz_mediumtitle_raw`|メディアタイトル（raw、フォーマット専用。単一メディアでも使用可）|MusicBrainz|
 |`musicbrainz_releasegroupid`|リリースグループMBID|MusicBrainz|
 |`musicbrainz_trackid`|トラックMBID|MusicBrainz|
 |`musicbrainz_recordingid`|レコーディングMBID|MusicBrainz|

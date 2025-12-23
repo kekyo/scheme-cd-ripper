@@ -204,7 +204,8 @@ The following Vorbis comments are inserted:
 |`cddb_total_seconds`|Disc length in seconds (Required for re-fetching from CDDB server)|internal|
 |`musicbrainz_release`|Release MBID (Primary key for MusicBrainz)|MusicBrainz|
 |`musicbrainz_medium`|Medium MBID (Primary key for MusicBrainz)|MusicBrainz|
-|`musicbrainz_mediumtitle`|Medium title (multi-disc only; falls back to `CD n` when unavailable)|MusicBrainz|
+|`musicbrainz_mediumtitle`|Medium title (multi-disc only; falls back to `CD n` when empty)|MusicBrainz|
+|`musicbrainz_mediumtitle_raw`|Medium title (raw, format-only; available even for single disc)|MusicBrainz|
 |`musicbrainz_releasegroupid`|Release group MBID|MusicBrainz|
 |`musicbrainz_trackid`|Track MBID|MusicBrainz|
 |`musicbrainz_recordingid`|Recording MBID|MusicBrainz|
