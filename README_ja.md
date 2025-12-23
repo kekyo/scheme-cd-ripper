@@ -114,7 +114,7 @@ Debian (trixie, bookworm) / Ubuntu (noble, jammy) では、[ビルド済みバ�
 もちろん、以下のように好みに合わせて調整することも可能です:
 
 ```bash
-cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex] [-r] [-ne] [-a] [-ss|-sf] [-dc no|always|fallback] [-na] [-i config] [-u file|dir ...]
+cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-dc no|always|fallback] [-na] [-i config] [-u file|dir ...]
 ```
 
 - `-d`, `--device`: CDデバイスのパス（`/dev/cdrom` など）。指定しない場合、利用可能なCDデバイスを自動検出して一覧表示します。
@@ -124,6 +124,7 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex
 - `-w`, `--max-width`: カバーアートの最大幅（ピクセル、デフォルト: `512`）
 - `-s`, `--sort`: CDDB検索結果をアルバム名順に並べ替えて表示。
 - `-ft`, `--filter-title`: CDDB候補のタイトルを正規表現でフィルタ（大文字小文字無視、UTF-8）
+- `-nr`, `--no-recrawl`: CDDBのタイトル候補でMusicBrainzを再検索しない
 - `-r`, `--repeat`: 終了後に次のCDのリッピング作業を連続して行う。
 - `-ne`, `--no-eject`: リッピング終了後もCDをドライブ内に保持する。
 - `-a`, `--auto`: 完全自動モードを有効化（プロンプトなし）。
@@ -132,12 +133,13 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex
 - `-sf`, `--speed-fast`: リッピング開始時にドライブの読込速度を最大へ要求する。
 - `-dc`, `--discogs`: Discogsのカバーアートの使用方法（`no`,`always`,`fallback`、デフォルト: `always`）。
 - `-na`, `--no-aa`: カバーアートのANSI/ASCIIアート表示を無効化する。
+- `-l`, `--logs`: デバッグログを出力する。
 - `-i`, `--input`: cdrip設定ファイルのパス（デフォルト検索: `./cdrip.conf` --> `~/.cdrip.conf`）
 - `-u`, `--update <file|dir> [more ...]`: 埋め込みタグを使用してCDDBから既存のFLACタグを更新（他のオプションは無視）
 
 すべてのコマンドラインオプション（`-u` および `-i` を除く）は、`-i` で指定された設定ファイルの内容を上書きできます。
 
-TIPS: MusicBrainzタグ付けで大量のCDを連続してインポートしたい場合は、`cdrip -a -r` オプションを指定することで実現できます。
+TIPS: MusicBrainzタグ付けで大量のCDを連続してインポートしたい場合は、`cdrip -a -r` オプションを指定することで実現できます。また、同じシリーズのCDをリッピングする場合は、 `-ft` オプションでタイトルをある程度絞り込んでおけば、CDDB候補の選択ミスを減らすことができます。
 
 TIPS: いくつかのハードウェアメディアプレーヤーでは、圧縮レベルを6以上にすると誤動作を起こします。したがって、Scheme CD ripperのデフォルトは5となっています。
 

@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <future>
+#include <iostream>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -388,6 +389,217 @@ static std::string build_musicbrainz_release_search_url(const std::string& album
     oss << "https://musicbrainz.org/ws/2/release/?fmt=json&limit=" << kMusicBrainzSearchLimit
         << "&query=" << encoded;
     return oss.str();
+}
+
+static std::vector<std::string> split_title_tokens(const std::string& input) {
+    std::vector<std::string> tokens;
+    size_t pos = 0;
+    while (pos < input.size()) {
+        while (pos < input.size() && input[pos] == ' ') ++pos;
+        if (pos >= input.size()) break;
+        size_t end = pos;
+        while (end < input.size() && input[end] != ' ') ++end;
+        if (end > pos) {
+            tokens.push_back(input.substr(pos, end - pos));
+        }
+        pos = end;
+    }
+    return tokens;
+}
+
+static std::string join_title_tokens(const std::vector<std::string>& tokens) {
+    std::ostringstream oss;
+    bool first = true;
+    for (const auto& token : tokens) {
+        if (token.empty()) continue;
+        if (!first) oss << ' ';
+        oss << token;
+        first = false;
+    }
+    return oss.str();
+}
+
+static bool is_ascii_alpha_token(const std::string& token) {
+    if (token.empty()) return false;
+    for (unsigned char ch : token) {
+        if (ch >= 0x80 || !std::isalpha(ch)) return false;
+    }
+    return true;
+}
+
+static bool is_digit_token(const std::string& token) {
+    if (token.empty()) return false;
+    for (unsigned char ch : token) {
+        if (!std::isdigit(ch)) return false;
+    }
+    return true;
+}
+
+static bool roman_to_int(const std::string& token, int& value) {
+    struct RomanEntry {
+        const char* roman;
+        int value;
+    };
+    static const RomanEntry kRomanMap[] = {
+        {"i", 1}, {"ii", 2}, {"iii", 3}, {"iv", 4}, {"v", 5},
+        {"vi", 6}, {"vii", 7}, {"viii", 8}, {"ix", 9}, {"x", 10},
+        {"xi", 11}, {"xii", 12}, {"xiii", 13}, {"xiv", 14}, {"xv", 15},
+        {"xvi", 16}, {"xvii", 17}, {"xviii", 18}, {"xix", 19}, {"xx", 20}
+    };
+    for (const auto& entry : kRomanMap) {
+        if (token == entry.roman) {
+            value = entry.value;
+            return true;
+        }
+    }
+    return false;
+}
+
+static std::string int_to_roman(int value) {
+    struct RomanEntry {
+        const char* roman;
+        int value;
+    };
+    static const RomanEntry kRomanMap[] = {
+        {"i", 1}, {"ii", 2}, {"iii", 3}, {"iv", 4}, {"v", 5},
+        {"vi", 6}, {"vii", 7}, {"viii", 8}, {"ix", 9}, {"x", 10},
+        {"xi", 11}, {"xii", 12}, {"xiii", 13}, {"xiv", 14}, {"xv", 15},
+        {"xvi", 16}, {"xvii", 17}, {"xviii", 18}, {"xix", 19}, {"xx", 20}
+    };
+    for (const auto& entry : kRomanMap) {
+        if (value == entry.value) return entry.roman;
+    }
+    return {};
+}
+
+static std::vector<std::vector<std::string>> expand_token_variants(const std::string& token) {
+    std::vector<std::vector<std::string>> out;
+    if (token.empty()) return out;
+    const std::string lower = to_lower(token);
+
+    auto add = [&out](std::vector<std::string> tokens) {
+        if (!tokens.empty()) {
+            out.push_back(std::move(tokens));
+        }
+    };
+
+    if (lower == "vol") add({"volume"});
+    if (lower == "pt") add({"part"});
+    if (lower == "no" || lower == "nr") add({"number"});
+    if (lower == "ed") add({"edition"});
+    if (lower == "ver" || lower == "vers") add({"version"});
+    if (lower == "feat" || lower == "ft") add({"featuring"});
+    if (lower == "ost") add({"original", "soundtrack"});
+    if (lower == "rmx") add({"remix"});
+    if (lower == "anniv" || lower == "anni") add({"anniversary"});
+
+    if (lower == "disc") {
+        add({"disk"});
+        add({"cd"});
+    } else if (lower == "disk") {
+        add({"disc"});
+        add({"cd"});
+    } else if (lower == "cd") {
+        add({"disc"});
+        add({"disk"});
+    }
+
+    int roman_value = 0;
+    if (roman_to_int(lower, roman_value)) {
+        add({std::to_string(roman_value)});
+    } else if (is_digit_token(lower)) {
+        try {
+            int value = std::stoi(lower);
+            std::string roman = int_to_roman(value);
+            if (!roman.empty()) {
+                add({roman});
+            }
+        } catch (...) {
+        }
+    }
+
+    return out;
+}
+
+static std::vector<std::string> hyphenate_short_alpha_tokens(
+    const std::vector<std::string>& tokens) {
+
+    std::vector<std::string> out;
+    out.reserve(tokens.size());
+    size_t i = 0;
+    while (i < tokens.size()) {
+        if (i + 1 < tokens.size() &&
+            is_ascii_alpha_token(tokens[i]) &&
+            is_ascii_alpha_token(tokens[i + 1]) &&
+            tokens[i].size() <= 3 &&
+            tokens[i + 1].size() <= 3) {
+            out.push_back(tokens[i] + "-" + tokens[i + 1]);
+            i += 2;
+            continue;
+        }
+        out.push_back(tokens[i]);
+        ++i;
+    }
+    return out;
+}
+
+static std::vector<std::string> build_recrawl_title_variants(const std::string& title) {
+    std::vector<std::string> out;
+    const std::string trimmed = trim(title);
+    if (trimmed.empty()) return out;
+    std::vector<std::string> tokens = split_title_tokens(trimmed);
+    if (tokens.empty()) {
+        out.push_back(trimmed);
+        return out;
+    }
+
+    std::unordered_set<std::string> seen;
+    std::vector<std::vector<std::string>> variants;
+    const std::string base = join_title_tokens(tokens);
+    if (base.empty()) return out;
+    variants.push_back(tokens);
+    seen.insert(base);
+
+    constexpr size_t kMaxVariants = 8;
+    size_t index = 0;
+    while (index < variants.size() && variants.size() < kMaxVariants) {
+        const auto current = variants[index++];
+        for (size_t pos = 0; pos < current.size() && variants.size() < kMaxVariants; ++pos) {
+            const auto replacements = expand_token_variants(current[pos]);
+            for (const auto& rep : replacements) {
+                std::vector<std::string> next;
+                next.reserve(current.size() - 1 + rep.size());
+                next.insert(next.end(), current.begin(),
+                            current.begin() + static_cast<std::vector<std::string>::difference_type>(pos));
+                next.insert(next.end(), rep.begin(), rep.end());
+                next.insert(next.end(),
+                            current.begin() + static_cast<std::vector<std::string>::difference_type>(pos) + 1,
+                            current.end());
+                const std::string joined = join_title_tokens(next);
+                if (joined.empty()) continue;
+                if (seen.insert(joined).second) {
+                    variants.push_back(std::move(next));
+                    if (variants.size() >= kMaxVariants) break;
+                }
+            }
+        }
+    }
+
+    for (size_t i = 0; i < variants.size() && variants.size() < kMaxVariants; ++i) {
+        std::vector<std::string> hyphenated = hyphenate_short_alpha_tokens(variants[i]);
+        if (hyphenated == variants[i]) continue;
+        const std::string joined = join_title_tokens(hyphenated);
+        if (joined.empty()) continue;
+        if (seen.insert(joined).second) {
+            variants.push_back(std::move(hyphenated));
+        }
+    }
+
+    out.reserve(variants.size());
+    for (const auto& variant : variants) {
+        out.push_back(join_title_tokens(variant));
+    }
+    return out;
 }
 
 static bool build_entries_from_release(
@@ -1019,6 +1231,8 @@ extern "C" {
 CdRipCddbEntryList* cdrip_fetch_cddb_entries(
     const CdRipDiscToc* toc,
     const CdRipCddbServerList* servers,
+    bool allow_recrawl,
+    bool log_recrawl,
     const char** error) {
 
     clear_error(error);
@@ -1096,10 +1310,18 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
                 other_entries.push_back(&e);
             }
         }
-        if (mb_entries_count == 0 && !other_entries.empty()) {
+        const bool has_cddb_candidates = !other_entries.empty();
+        const bool should_recrawl = has_cddb_candidates && (allow_recrawl || mb_entries_count == 0);
+        if (should_recrawl) {
             const std::vector<std::string> candidates =
                 extract_album_title_candidates(other_entries);
             if (!candidates.empty()) {
+                if (log_recrawl) {
+                    std::cerr << "MusicBrainz recrawl candidates (" << candidates.size() << "):\n";
+                    for (size_t i = 0; i < candidates.size(); ++i) {
+                        std::cerr << "  [" << (i + 1) << "] " << candidates[i] << "\n";
+                    }
+                }
                 std::unordered_set<std::string> seen_mb_keys;
                 auto& target = per_server[musicbrainz_insert_index].entries;
                 seen_mb_keys.reserve(target.size());
@@ -1108,23 +1330,36 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
                     if (!key.empty()) seen_mb_keys.insert(key);
                 }
                 for (const auto& candidate : candidates) {
-                    std::vector<CdRipCddbEntry> mb_entries;
-                    std::string candidate_err;
-                    if (!fetch_musicbrainz_entries_by_title(toc, candidate, mb_entries, candidate_err)) {
-                        if (!candidate_err.empty()) {
-                            mb_title_err = candidate_err;
-                        }
-                        continue;
+                    const auto variants = build_recrawl_title_variants(candidate);
+                    bool added_any = false;
+                    if (log_recrawl) {
+                        std::cerr << "MusicBrainz recrawl target: \"" << candidate
+                                  << "\" (" << variants.size() << " variants)\n";
                     }
-                    if (!mb_entries.empty()) {
-                        for (auto& entry : mb_entries) {
-                            const std::string key = build_musicbrainz_release_key(entry);
-                            if (!key.empty() && !seen_mb_keys.insert(key).second) {
-                                release_cddb_entry(entry);
-                                continue;
-                            }
-                            target.push_back(entry);
+                    for (const auto& variant : variants) {
+                        if (log_recrawl) {
+                            std::cerr << "  try: " << variant << "\n";
                         }
+                        std::vector<CdRipCddbEntry> mb_entries;
+                        std::string candidate_err;
+                        if (!fetch_musicbrainz_entries_by_title(toc, variant, mb_entries, candidate_err)) {
+                            if (!candidate_err.empty()) {
+                                mb_title_err = candidate_err;
+                            }
+                            continue;
+                        }
+                        if (!mb_entries.empty()) {
+                            for (auto& entry : mb_entries) {
+                                const std::string key = build_musicbrainz_release_key(entry);
+                                if (!key.empty() && !seen_mb_keys.insert(key).second) {
+                                    release_cddb_entry(entry);
+                                    continue;
+                                }
+                                target.push_back(entry);
+                                added_any = true;
+                            }
+                        }
+                        if (added_any) break;
                     }
                 }
             }

@@ -5,7 +5,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "internal.h"
@@ -19,6 +22,7 @@ constexpr size_t kMinCandidateLen = 6;
 
 struct TitleItem {
     std::string normalized;
+    std::vector<std::string> tokens;
 };
 
 std::string normalize_album_title(const std::string& input) {
@@ -42,6 +46,45 @@ std::string normalize_album_title(const std::string& input) {
         }
     }
     return trim(out);
+}
+
+std::vector<std::string> split_tokens(const std::string& normalized) {
+    std::vector<std::string> tokens;
+    size_t pos = 0;
+    while (pos < normalized.size()) {
+        while (pos < normalized.size() && normalized[pos] == ' ') ++pos;
+        if (pos >= normalized.size()) break;
+        size_t end = pos;
+        while (end < normalized.size() && normalized[end] != ' ') ++end;
+        if (end > pos) {
+            tokens.push_back(normalized.substr(pos, end - pos));
+        }
+        pos = end;
+    }
+    return tokens;
+}
+
+bool is_stopword(const std::string& token) {
+    static const std::unordered_set<std::string> kStopwords = {
+        "a", "an", "and", "are", "at", "best", "by", "cd", "collection", "compilation",
+        "complete", "disc", "discs", "edition", "for", "from", "greatest", "history",
+        "hits", "in", "live", "mix", "of", "on", "or", "part", "pt", "remix", "series",
+        "selection", "set", "side", "sides", "special", "the", "to", "version", "versions",
+        "vol", "volume", "vols", "volumes", "with", "without"
+    };
+    return kStopwords.find(token) != kStopwords.end();
+}
+
+bool is_numeric_token(const std::string& token) {
+    if (token.empty()) return false;
+    for (unsigned char ch : token) {
+        if (std::isdigit(ch)) return true;
+    }
+    static const std::unordered_set<std::string> kRoman = {
+        "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x",
+        "xi", "xii", "xiii", "xiv", "xv", "xvi", "xvii", "xviii", "xix", "xx"
+    };
+    return kRoman.find(token) != kRoman.end();
 }
 
 int longest_common_substring_len(const std::string& a, const std::string& b) {
@@ -70,36 +113,6 @@ bool is_similar_title(const std::string& a, const std::string& b) {
     if (lcs < kMinMatchLen) return false;
     const double ratio = static_cast<double>(lcs) / static_cast<double>(min_len);
     return ratio >= kMinMatchRatio;
-}
-
-std::string longest_common_substring_all(const std::vector<std::string>& values) {
-    if (values.empty()) return {};
-    if (values.size() == 1) return values.front();
-    size_t base_index = 0;
-    for (size_t i = 1; i < values.size(); ++i) {
-        if (values[i].size() < values[base_index].size()) {
-            base_index = i;
-        }
-    }
-    const std::string& base = values[base_index];
-    if (base.empty()) return {};
-    for (size_t len = base.size(); len > 0; --len) {
-        for (size_t start = 0; start + len <= base.size(); ++start) {
-            std::string sub = base.substr(start, len);
-            const std::string trimmed = trim(sub);
-            if (trimmed.empty()) continue;
-            bool found_in_all = true;
-            for (size_t i = 0; i < values.size(); ++i) {
-                if (i == base_index) continue;
-                if (values[i].find(sub) == std::string::npos) {
-                    found_in_all = false;
-                    break;
-                }
-            }
-            if (found_in_all) return trimmed;
-        }
-    }
-    return {};
 }
 
 class DisjointSet {
@@ -140,7 +153,7 @@ std::vector<std::string> extract_album_title_candidates(
         if (title.empty()) continue;
         const std::string normalized = normalize_album_title(title);
         if (normalized.empty()) continue;
-        items.push_back({normalized});
+        items.push_back({normalized, split_tokens(normalized)});
     }
 
     if (items.empty()) return {};
@@ -163,12 +176,70 @@ std::vector<std::string> extract_album_title_candidates(
     std::vector<std::string> candidates;
     for (const auto& group : groups) {
         if (group.empty()) continue;
-        std::vector<std::string> normalized;
-        normalized.reserve(group.size());
+        std::unordered_map<std::string, size_t> freq;
+        freq.reserve(group.size() * 4);
         for (size_t idx : group) {
-            normalized.push_back(items[idx].normalized);
+            std::unordered_set<std::string> seen;
+            for (const auto& token : items[idx].tokens) {
+                if (token.empty()) continue;
+                if (seen.insert(token).second) {
+                    ++freq[token];
+                }
+            }
         }
-        std::string candidate = trim(longest_common_substring_all(normalized));
+
+        const size_t common_threshold = (group.size() * 3 + 4) / 5;
+        std::unordered_set<std::string> common_tokens;
+        common_tokens.reserve(freq.size());
+        for (const auto& it : freq) {
+            if (it.second >= common_threshold) {
+                common_tokens.insert(it.first);
+            }
+        }
+
+        double best_score = -1e9;
+        size_t best_index = group.front();
+        size_t best_numeric = 0;
+        size_t best_length = 0;
+
+        for (size_t idx : group) {
+            std::unordered_set<std::string> unique_tokens;
+            for (const auto& token : items[idx].tokens) {
+                if (!token.empty()) unique_tokens.insert(token);
+            }
+            size_t specific_tokens = 0;
+            size_t numeric_tokens = 0;
+            size_t stop_tokens = 0;
+            for (const auto& token : unique_tokens) {
+                const bool stop = is_stopword(token);
+                if (stop) {
+                    ++stop_tokens;
+                }
+                if (!stop && common_tokens.find(token) == common_tokens.end()) {
+                    ++specific_tokens;
+                }
+                if (is_numeric_token(token)) {
+                    ++numeric_tokens;
+                }
+            }
+            const double score =
+                static_cast<double>(specific_tokens) * 10.0 +
+                static_cast<double>(numeric_tokens) * 2.0 -
+                static_cast<double>(stop_tokens) * 3.0 +
+                static_cast<double>(items[idx].normalized.size()) * 0.05;
+            const size_t length = items[idx].normalized.size();
+            if (score > best_score + 1e-6 ||
+                (std::fabs(score - best_score) <= 1e-6 &&
+                 (numeric_tokens > best_numeric ||
+                  (numeric_tokens == best_numeric && length > best_length)))) {
+                best_score = score;
+                best_index = idx;
+                best_numeric = numeric_tokens;
+                best_length = length;
+            }
+        }
+
+        const std::string candidate = trim(items[best_index].normalized);
         if (candidate.size() < kMinCandidateLen) continue;
         candidates.push_back(candidate);
     }

@@ -302,12 +302,17 @@ typedef struct CdRipCddbEntryList {
  * Query multiple CDDB servers with the provided disc TOC.
  * @param toc Disc TOC.
  * @param servers Server list to query.
+ * @param allow_recrawl When true, always re-search MusicBrainz by title if CDDB candidates exist.
+ *                      When false, only re-search when MusicBrainz returned no entries.
+ * @param log_recrawl When true, emit debug logs for recrawl queries.
  * @param error Optional error string out-parameter.
  * @return Aggregated entry list; free with cdrip_release_cddbentry_list.
  */
 CdRipCddbEntryList* cdrip_fetch_cddb_entries(
     const CdRipDiscToc* toc,
     const CdRipCddbServerList* servers,
+    bool allow_recrawl,
+    bool log_recrawl,
     const char** error /* nullable */);
 /**
  * Fetch front cover art from Cover Art Archive using MusicBrainz metadata.

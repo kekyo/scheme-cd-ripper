@@ -113,7 +113,7 @@ The default options are configured for easy use of cdrip.
 Of course, you can adjust them to your preferences as follows:
 
 ```bash
-cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex] [-r] [-ne] [-a] [-ss|-sf] [-dc no|always|fallback] [-na] [-i config] [-u file|dir ...]
+cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-dc no|always|fallback] [-na] [-i config] [-u file|dir ...]
 ```
 
 - `-d`, `--device`: CD device path (`/dev/cdrom` or others). If not specified, it will automatically detect available CD devices and list them.
@@ -123,6 +123,7 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex
 - `-w`, `--max-width`: Cover art max width in pixels (default: `512`)
 - `-s`, `--sort`: Sort CDDB results by album name on the prompt.
 - `-ft`, `--filter-title`: Filter CDDB candidates by title using case-insensitive regex (UTF-8)
+- `-nr`, `--no-recrawl`: Disable MusicBrainz recrawl from CDDB titles.
 - `-r`, `--repeat`: Prompt for next disc after finishing.
 - `-ne`, `--no-eject`: Keep disc in the drive after ripping finishes.
 - `-a`, `--auto`: Enable fully automatic mode (without any prompts).
@@ -131,12 +132,14 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex
 - `-sf`, `--speed-fast`: Request maximum drive read speed when ripping starts.
 - `-dc`, `--discogs`: Discogs cover art preference: `no`, `always` (default), `fallback`.
 - `-na`, `--no-aa`: Disable cover art ANSI/ASCII art output.
+- `-l`, `--logs`: Print debug logs.
 - `-i`, `--input`: cdrip config file path (default search: `./cdrip.conf` --> `~/.cdrip.conf`)
 - `-u`, `--update <file|dir> [more ...]`: Update existing FLAC tags from CDDB using embedded tags (other options ignored)
 
 All command-line options (except `-u` and `-i`) can override the contents of the config file specified with `-i`.
 
 TIPS: If you want to import a large number of CDs continuously with MusicBrainz tagging, you can do so by specifying the `cdrip -a -r` option.
+Additionally, when ripping CDs from the same series, using the `-ft` option to narrow down the titles somewhat can reduce mistakes in selecting CDDB candidates.
 
 TIPS: Some hardware media players malfunction when the compression level is set to 6 or higher. Therefore, the default for Scheme CD ripper is set to 5.
 
