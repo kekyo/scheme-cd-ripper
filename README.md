@@ -56,7 +56,7 @@ Attempting to determine drive endianness from data........
 
 Options:
   device      : "/dev/cdrom"
-  format      : "{album/medium/tracknumber:02d}_{title:n}.flac"
+  format      : "{album:n/medium:n/tracknumber:02d}_{title:n}.flac"
   compression : 5 (auto)
   mode        : best (full integrity checks)
   speed       : slow (1x)
@@ -117,7 +117,7 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex
 ```
 
 - `-d`, `--device`: CD device path (`/dev/cdrom` or others). If not specified, it will automatically detect available CD devices and list them.
-- `-f`, `--format`: FLAC destination path format. using tag names inside `{}`, tags are case-insensitive. (default: `{album/medium/tracknumber:02d}_{title:n}.flac`)
+- `-f`, `--format`: FLAC destination path format. using tag names inside `{}`, tags are case-insensitive. (see below)
 - `-m`, `--mode`: Integrity check mode: `best` (full integrity checks, default), `fast` (disabled any checks)
 - `-c`, `--compression`: FLAC compression level (default: `auto` (best --> `5`, fast --> `1`))
 - `-w`, `--max-width`: Cover art max width in pixels (default: `512`)
@@ -241,14 +241,14 @@ If the player supports cover art display, the cover art image will be shown:
 
 The filename format is a template for any path, including directory names, that uses curly braces to automatically and flexibly determine the path using Vorbis comment key names.
 
-The default is `“{album/medium/tracknumber:02d}_{title:n}.flac”`, where directories are created using the album and media title, and files are saved within them with names like `“01_foobar.flac”`.
+The default is `“{album:n/medium/:ntracknumber:02d}_{title:n}.flac”`, where directories are created using the album and media title, and files are saved within them with names like `“01_foobar.flac”`.
 
 Below are the details of this format syntax:
 
 - Within curly braces `{}`, you can concatenate multiple keys using `/` or `+` to combine any paths or labels:
   - `/` separates paths, while `+` joins them with spaces. For example, specifying `“{album/medium/title}.flac”` separates the album title, media title and music title with a path separator, allowing files to be placed in subdirectories like `“foobar/baz/intro.flac”`.
-  - ex: `“{album/medium}”` --> `“Album/Disc 1”`
-  - ex: `“{artist+album}”` --> `“Artist Album”`
+  - ex: `“{album/medium}”` --> `“Album/Disc1”`
+  - ex: `"{album+medium}"` --> `"Album Disc1"`
   - If you separate paths outside the brackets, like `“{album}/{medium}/{title}.flac”`, the path will error if the `album` and/or `medium` key doesn't exist. However, if you separate paths inside the brackets, no path separator is added if the key doesn't exist (the same applies to space separation using `+`).
 - Strings can be converted to safe pathnames using the `:n` format specifier.
   - Replaces inappropriate path characters with underscores, and if line breaks are present, truncates the string up to that point.
@@ -296,7 +296,7 @@ Example config file:
 ```ini
 [cdrip]
 device=/dev/cdrom
-format={album/medium/tracknumber:02d}_{title:n}.flac
+format={album:n/medium:n/tracknumber:02d}_{title:n}.flac
 compression=auto     # auto or 0-8
 max_width=512        # cover art max width in pixels (> 0)
 speed=slow           # slow or fast (default: slow)

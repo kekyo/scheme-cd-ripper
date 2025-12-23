@@ -57,7 +57,7 @@ Attempting to determine drive endianness from data........
 
 Options:
   device      : "/dev/cdrom"
-  format      : "{album/medium/tracknumber:02d}_{title:n}.flac"
+  format      : "{album:n/medium:n/tracknumber:02d}_{title:n}.flac"
   compression : 5 (auto)
   mode        : best (full integrity checks)
   speed       : slow (1x)
@@ -118,7 +118,7 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex
 ```
 
 - `-d`, `--device`: CDデバイスのパス（`/dev/cdrom` など）。指定しない場合、利用可能なCDデバイスを自動検出して一覧表示します。
-- `-f`, `--format`: FLAC出力ファイルパスの形式。`{}`内のタグ名を使用し、タグは大文字小文字を区別しません（デフォルト: `{album/medium/tracknumber:02d}_{title:n}.flac`）。
+- `-f`, `--format`: FLAC出力ファイルパスの形式。`{}`内のタグ名を使用し、タグは大文字小文字を区別しません（後述）。
 - `-m`, `--mode`: 整合性チェックモード: `best`（完全な整合性チェック。デフォルト）または `fast` (チェックを無効化)
 - `-c`, `--compression`: FLAC圧縮レベル (デフォルト: `auto` (best --> `5`, fast --> `1`))
 - `-w`, `--max-width`: カバーアートの最大幅（ピクセル、デフォルト: `512`）
@@ -240,14 +240,14 @@ MusicBrainzから情報を取得した場合は、追加でカバーアート画
 
 ファイル名フォーマットは、ディレクトリ名を含むあらゆるパス用のテンプレートであり、中括弧を用いてVorbis commentsのキー名から自動的に柔軟にパスを決定できます。
 
-デフォルトは `"{album/medium/tracknumber:02d}_{title:n}.flac"` となっていて、アルバムとメディアタイトルでディレクトリが作られ、その中に `"01_foobar.flac"` のようなファイル名で保存されます。
+デフォルトは `"{album:n/medium:n/tracknumber:02d}_{title:n}.flac"` となっていて、アルバムとメディアタイトルでディレクトリが作られ、その中に `"01_foobar.flac"` のようなファイル名で保存されます。
 
 以下にこのフォーマットの詳細を示します:
 
 - 括弧 `{}` 内で、 `/` や `+` で複数キーを連結し、任意のパスやラベルを結合できます。
-  - `/` でパス区切り、 `+` でスペースで結合します。例えば、 `"{album/medium}/{title}.flac"` と指定すると、アルバムタイトルとメディアタイトルがパス区切りで区切られ、 `"foobar/baz/intro.flac"` のようにサブディレクトリ内にファイルを配置できます。
-  - 例: `"{album/medium}"` --> `"Album/Disc 1"`
-  - 例: `"{artist+album}"` --> `"Artist Album"`
+  - `/` でパス区切り、 `+` でスペースで結合します。例えば、 `"{album/medium/title}.flac"` と指定すると、アルバムタイトルとメディアタイトルがパス区切りで区切られ、 `"foobar/baz/intro.flac"` のようにサブディレクトリ内にファイルを配置できます。
+  - 例: `"{album/medium}"` --> `"Album/Disc1"`
+  - 例: `"{album+medium}"` --> `"Album Disc1"`
   - `"{album}/{medium}/{title}.flac"` のように括弧外で区切る場合、`album`や`medium`キーが存在しないと、パスがエラーとなります。しかし、括弧内で区切れば、キーが存在しない場合はパス区切りも追加されません（`+`によるスペース区切りも同様）。
 - 文字列は、`:n`という書式指定で安全なパス名に変換できます。
   - パスとして不適切な文字をアンダースコアに置き換え、改行などが含まれる場合は、そこまでの文字列として区切ります。
@@ -295,7 +295,7 @@ Scheme CD ripperは設定ファイルを参照します。INI形式に似た形�
 ```ini
 [cdrip]
 device=/dev/cdrom
-format={album/medium/tracknumber:02d}_{title:n}.flac
+format={album:n/medium:n/tracknumber:02d}_{title:n}.flac
 compression=auto     # auto または 0-8
 max_width=512        # カバーアート最大幅(px、1以上)
 speed=slow           # slow または fast（デフォルト: slow）

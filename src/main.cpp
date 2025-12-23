@@ -1662,14 +1662,13 @@ Options parse_args(int argc, char** argv) {
         } else if (arg == "-?" || arg == "-h" || arg == "--help") {
             std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-dc no|always|fallback] [-na] [-i config] [-u file|dir ...]\n";
             std::cout << "  -d  / --device: CD device path (default: auto-detect)\n";
-            std::cout << "  -f  / --format: FLAC destination path format (default: \"{album/medium/tracknumber:02d}_{title:n}.flac\")\n";
+            std::cout << "  -f  / --format: FLAC destination path format (default: \"{album:n/medium:n/tracknumber:02d}_{title:n}.flac\")\n";
             std::cout << "  -m  / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disabled any checks)\n";
             std::cout << "  -c  / --compression: FLAC compression level (default: auto (best --> 5, fast --> 1))\n";
             std::cout << "  -w  / --max-width: Cover art max width in pixels (default: 512)\n";
             std::cout << "  -s  / --sort: Sort CDDB results by album name on the prompt\n";
             std::cout << "  -ft / --filter-title: Filter CDDB candidates by title using case-insensitive regex (UTF-8)\n";
             std::cout << "  -nr / --no-recrawl: Disable MusicBrainz recrawl from CDDB titles (revert to MB-0-only behavior)\n";
-            std::cout << "  -l  / --logs: Print debug logs for MusicBrainz recrawl queries\n";
             std::cout << "  -r  / --repeat: Prompt for next disc after finishing\n";
             std::cout << "  -ne / --no-eject: Keep disc in the drive after ripping finishes\n";
             std::cout << "  -a  / --auto: Enable fully automatic mode (without any prompts)\n";
@@ -1677,6 +1676,7 @@ Options parse_args(int argc, char** argv) {
             std::cout << "  -sf / --speed-fast: Request maximum drive read speed when ripping starts\n";
             std::cout << "  -dc / --discogs: Cover art preference for Discogs: no, always (default), fallback\n";
             std::cout << "  -na / --no-aa: Disable cover art ANSI/ASCII art output\n";
+            std::cout << "  -l  / --logs: Print debug logs for MusicBrainz recrawl queries\n";
             std::cout << "  -i  / --input: cdrip config file path (default search: ./cdrip.conf --> ~/.cdrip.conf)\n";
             std::cout << "  -u  / --update <file|dir> [more ...]: Update existing FLAC tags from CDDB using embedded tags (other options ignored)\n";
             std::exit(0);
