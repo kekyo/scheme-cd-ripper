@@ -567,7 +567,8 @@ static bool build_entries_from_release(
         get_bool_member(cover_art_archive, "artwork", false) ||
         get_bool_member(cover_art_archive, "front", false);
 
-    for (JsonObject* medium_obj : media) {
+    for (size_t medium_index = 0; medium_index < media.size(); ++medium_index) {
+        JsonObject* medium_obj = media[medium_index];
         if (!medium_obj) continue;
         std::vector<CdRipTagKV> album_tags;
         std::vector<std::vector<CdRipTagKV>> track_tags(toc->tracks_count);
@@ -577,6 +578,17 @@ static bool build_entries_from_release(
         const std::string medium_format = get_string_member(medium_obj, "format");
         const int track_total = get_int_member(medium_obj, "track-count", -1);
         const int disc_number = get_int_member(medium_obj, "position", -1);
+        int disc_number_effective = disc_number;
+        if (disc_number_effective <= 0 && medium_total > 1) {
+            disc_number_effective = static_cast<int>(medium_index + 1);
+        }
+        std::string medium_title_value;
+        if (medium_total > 1) {
+            medium_title_value = trim(medium_title);
+            if (medium_title_value.empty() && disc_number_effective > 0) {
+                medium_title_value = "CD " + std::to_string(disc_number_effective);
+            }
+        }
 
         append_tag(album_tags, "ALBUM", release_title);
         append_tag(album_tags, "ARTIST", album_artist);
@@ -589,11 +601,12 @@ static bool build_entries_from_release(
         append_tag(album_tags, "MEDIA", medium_format);
         append_tag(album_tags, "MUSICBRAINZ_RELEASE", release_id);
         append_tag(album_tags, "MUSICBRAINZ_MEDIUM", medium_id);
-        append_tag(album_tags, "MUSICBRAINZ_MEDIUMTITLE", medium_title);
+        append_tag(album_tags, "MUSICBRAINZ_MEDIUMTITLE", medium_title_value);
+        append_tag(album_tags, "MEDIUM", medium_title_value);
         append_tag(album_tags, "MUSICBRAINZ_RELEASEGROUPID", release_group_id);
         append_tag(album_tags, "DISCOGS_RELEASE", discogs_release_id);
         if (track_total > 0) append_tag(album_tags, "TRACKTOTAL", std::to_string(track_total));
-        if (disc_number > 0) append_tag(album_tags, "DISCNUMBER", std::to_string(disc_number));
+        if (disc_number_effective > 0) append_tag(album_tags, "DISCNUMBER", std::to_string(disc_number_effective));
         if (medium_total > 0) append_tag(album_tags, "DISCTOTAL", std::to_string(medium_total));
 
         JsonArray* label_info = get_array_member(release_obj, "label-info");

@@ -193,9 +193,6 @@ static std::string format_filename(
     return sanitize_path(out);
 }
 
-static const std::string trailing_trim = ".,;|~/\\^";
-static const std::string replace_chars = ".:;|/\\^";
-
 /* ------------------------------------------------------------------- */
 /* Exported API functions */
 
@@ -237,6 +234,8 @@ int cdrip_rip_track(
     const std::string title = !meta_title.empty()
         ? meta_title
         : ("Track " + std::to_string(track->number));
+    const std::string track_name = truncate_on_newline(title);
+    const std::string safe_title = format_safe_string(track_name);
     const std::string meta_artist = album_tag(meta, "ARTIST");
     const std::string meta_album = album_tag(meta, "ALBUM");
     const std::string meta_genre = album_tag(meta, "GENRE");
@@ -293,7 +292,6 @@ int cdrip_rip_track(
             std::string key = to_upper(to_string_or_empty(kvs[i].key));
             std::string val = to_string_or_empty(kvs[i].value);
             if (!key.empty() && !val.empty()) {
-                if (key == "MUSICBRAINZ_MEDIUMTITLE") continue;
                 tags[key] = val;
             }
         }
@@ -335,38 +333,6 @@ int cdrip_rip_track(
     for (auto& kv : path_tags) {
         kv.second = truncate_on_newline(kv.second);
     }
-    const std::string track_name = truncate_on_newline(path_tags["TITLE"]);
-    path_tags["TITLE"] = track_name;
-    std::string safe_title = track_name;
-    while (!safe_title.empty() &&
-        trailing_trim.find(safe_title.back()) != std::string::npos) {
-        safe_title.pop_back();
-    }
-    for (char& ch : safe_title) {
-        if (replace_chars.find(ch) != std::string::npos) {
-            ch = '_';
-        }
-    }
-    path_tags["SAFETITLE"] = safe_title;
-
-    auto build_album_media = [&]() -> std::string {
-        const std::string album = trim(truncate_on_newline(path_tags["ALBUM"]));
-        int disctotal = 0;
-        parse_int(trim(truncate_on_newline(path_tags["DISCTOTAL"])), disctotal);
-        if (disctotal <= 1) return album;
-
-        const std::string medium_title = trim(truncate_on_newline(album_tag(meta, "MUSICBRAINZ_MEDIUMTITLE")));
-        if (!medium_title.empty()) {
-            if (album.empty()) return medium_title;
-            return album + " " + medium_title;
-        }
-
-        const std::string discnumber = trim(truncate_on_newline(path_tags["DISCNUMBER"]));
-        if (discnumber.empty()) return album;
-        if (album.empty()) return "CD" + discnumber;
-        return album + " CD" + discnumber;
-    };
-    path_tags["ALBUMMEDIA"] = build_album_media();
 
     FormatTagMap format_tags = build_format_tags(path_tags);
     const std::string fmt = !rip->format.empty() ? rip->format : "";

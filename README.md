@@ -56,7 +56,7 @@ Attempting to determine drive endianness from data........
 
 Options:
   device      : "/dev/cdrom"
-  format      : "{albummedia}/{tracknumber:02d}_{safetitle}.flac"
+  format      : "{album/medium}/{tracknumber:02d}_{title:n}.flac"
   compression : 5 (auto)
   mode        : best (full integrity checks)
   speed       : slow (1x)
@@ -117,7 +117,7 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex
 ```
 
 - `-d`, `--device`: CD device path (`/dev/cdrom` or others). If not specified, it will automatically detect available CD devices and list them.
-- `-f`, `--format`: FLAC destination path format. using tag names inside `{}`, tags are case-insensitive. (default: `{albummedia}/{tracknumber:02d}_{safetitle}.flac`)
+- `-f`, `--format`: FLAC destination path format. using tag names inside `{}`, tags are case-insensitive. (default: `{album/medium}/{tracknumber:02d}_{title:n}.flac`)
 - `-m`, `--mode`: Integrity check mode: `best` (full integrity checks, default), `fast` (disabled any checks)
 - `-c`, `--compression`: FLAC compression level (default: `auto` (best --> `5`, fast --> `1`))
 - `-w`, `--max-width`: Cover art max width in pixels (default: `512`)
@@ -188,6 +188,7 @@ The following Vorbis comments are inserted:
 |`discnumber`|Disc number (position)|MusicBrainz|
 |`disctotal`|Total discs in release|MusicBrainz|
 |`media`|Medium format (CD etc.)|MusicBrainz|
+|`medium`|Medium title (alias of `musicbrainz_mediumtitle`)|MusicBrainz|
 |`releasecountry`|Release country code|MusicBrainz|
 |`releasestatus`|Release status|MusicBrainz|
 |`label`|Label name(s)|MusicBrainz|
@@ -200,6 +201,7 @@ The following Vorbis comments are inserted:
 |`cddb_total_seconds`|Disc length in seconds (Required for re-fetching from CDDB server)|internal|
 |`musicbrainz_release`|Release MBID (Primary key for MusicBrainz)|MusicBrainz|
 |`musicbrainz_medium`|Medium MBID (Primary key for MusicBrainz)|MusicBrainz|
+|`musicbrainz_mediumtitle`|Medium title (multi-disc only; falls back to `CD n` when unavailable)|MusicBrainz|
 |`musicbrainz_releasegroupid`|Release group MBID|MusicBrainz|
 |`musicbrainz_trackid`|Track MBID|MusicBrainz|
 |`musicbrainz_recordingid`|Recording MBID|MusicBrainz|
@@ -238,18 +240,9 @@ The filename format is a template for any path, including directory names, that 
 
 For example:
 
-- `"{albummedia}/{tracknumber:02d}_{safetitle}.flac"`: This is the default definition and should be appropriate in most cases. It separates multi-disc releases into disc-specific directories.
-- `"store/to/{safetitle}.flac"`: Of course, you can also add a base path and always store it within that.
-- `"smb://nas.yourhome.localdomain/smbshare/music/{safetitle}.flac"`: Scheme CD ripper supports GNOME GIO, so you can also specify a URL to save directly to a remote host (Required GVfs configuration.)
-
-In addition to Vorbis comment keys, the following dedicated keys can also be used in filename formatting:
-
-|Key|Description|
-|:----|:----|
-|`safetitle`|Truncate `title` tag at newline, trim trailing and replace unsafe characters|
-|`albummedia`|If `disctotal` > 1, `{album} {medium title}` or `{album} CD{discnumber}`; otherwise same as `album`|
-
-Note: These are not stored in the FLAC file and can only be used in the filename format.
+- `"{album/medium}/{tracknumber:02d}_{title:n}.flac"`: This is the default definition and should be appropriate in most cases. It separates multi-disc releases into disc-specific directories.
+- `"store/to/{title:n}.flac"`: Of course, you can also add a base path and always store it within that.
+- `"smb://nas.yourhome.localdomain/smbshare/music/{title:n}.flac"`: Scheme CD ripper supports GNOME GIO, so you can also specify a URL to save directly to a remote host (Required GVfs configuration.)
 
 Additionally, it includes the following features:
 
@@ -257,8 +250,8 @@ Additionally, it includes the following features:
   This is similar to C language's `printf` format specifiers, but it only supports this format.
   e.g. `"{tracknumber:02d}.flac"`.
 - You can join multiple keys inside `{}` with `/` or `+` to build optional paths or labels (empty parts are omitted).
-  Examples: `"{album/mediumtitle}"` -> `Album/Disc 1`, `"{artist+album}"` -> `Artist Album`.
-- You can sanitize a string with `:n` to produce safer path text (same goal as `safetitle`).
+  Examples: `"{album/medium}"` -> `Album/Disc 1`, `"{artist+album}"` -> `Artist Album`.
+- You can sanitize a string with `:n` to produce safer path text.
   Example: `"{title:n}"`.
 - If the format contains directories, they will be created automatically.
 - The `.flac` extension is appended automatically if you omit it.
@@ -295,7 +288,7 @@ Example config file:
 ```ini
 [cdrip]
 device=/dev/cdrom
-format={albummedia}/{tracknumber:02d}_{safetitle}.flac
+format={album/medium}/{tracknumber:02d}_{title:n}.flac
 compression=auto     # auto or 0-8
 max_width=512        # cover art max width in pixels (> 0)
 speed=slow           # slow or fast (default: slow)

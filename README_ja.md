@@ -57,7 +57,7 @@ Attempting to determine drive endianness from data........
 
 Options:
   device      : "/dev/cdrom"
-  format      : "{albummedia}/{tracknumber:02d}_{safetitle}.flac"
+  format      : "{album/medium}/{tracknumber:02d}_{title:n}.flac"
   compression : 5 (auto)
   mode        : best (full integrity checks)
   speed       : slow (1x)
@@ -118,7 +118,7 @@ cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex
 ```
 
 - `-d`, `--device`: CDデバイスのパス（`/dev/cdrom` など）。指定しない場合、利用可能なCDデバイスを自動検出して一覧表示します。
-- `-f`, `--format`: FLAC出力ファイルパスの形式。`{}`内のタグ名を使用し、タグは大文字小文字を区別しません（デフォルト: `{albummedia}/{tracknumber:02d}_{safetitle}.flac`）。
+- `-f`, `--format`: FLAC出力ファイルパスの形式。`{}`内のタグ名を使用し、タグは大文字小文字を区別しません（デフォルト: `{album/medium}/{tracknumber:02d}_{title:n}.flac`）。
 - `-m`, `--mode`: 整合性チェックモード: `best`（完全な整合性チェック。デフォルト）または `fast` (チェックを無効化)
 - `-c`, `--compression`: FLAC圧縮レベル (デフォルト: `auto` (best --> `5`, fast --> `1`))
 - `-w`, `--max-width`: カバーアートの最大幅（ピクセル、デフォルト: `512`）
@@ -189,6 +189,7 @@ Select match [0-15] (comma/space separated, default 1): 3,12
 |`discnumber`|リリースパッケージ内のCD番号|MusicBrainz|
 |`disctotal`|リリースパッケージのCD枚数|MusicBrainz|
 |`media`|メディアフォーマット|MusicBrainz|
+|`medium`|メディアタイトル（`musicbrainz_mediumtitle`の別名）|MusicBrainz|
 |`releasecountry`|リリース国|MusicBrainz|
 |`releasestatus`|リリース状況|MusicBrainz|
 |`label`|ラベル名|MusicBrainz|
@@ -201,6 +202,7 @@ Select match [0-15] (comma/space separated, default 1): 3,12
 |`cddb_total_seconds`|CD全体の時間（CDDBサーバーから情報を再取得する際に必要）|internal|
 |`musicbrainz_release`|リリースMBID（MusicBrainzのリリース特定ID）|MusicBrainz|
 |`musicbrainz_medium`|メディアMBID（MusicBrainzのメディア特定ID）|MusicBrainz|
+|`musicbrainz_mediumtitle`|メディアタイトル（複数メディア時のみ、空の場合は`CD n`）|MusicBrainz|
 |`musicbrainz_releasegroupid`|リリースグループMBID|MusicBrainz|
 |`musicbrainz_trackid`|トラックMBID|MusicBrainz|
 |`musicbrainz_recordingid`|レコーディングMBID|MusicBrainz|
@@ -238,19 +240,10 @@ MusicBrainzから情報を取得した場合は、追加でカバーアート画
 
 例えば:
 
-- `"{albummedia}/{tracknumber:02d}_{safetitle}.flac"`: これがデフォルトの設定であり、ほとんどの場合に適切です。複数CDのリリースはCD別のディレクトリに分割されます。
-- `"store/to/{safetitle}.flac"`: もちろん、ベースパスを追加して常にその中に保存することも可能です。
-- `"smb://nas.yourhome.localdomain/smbshare/music/{safetitle}.flac"`: Scheme CD ripperはGNOME GIOをサポートしているため、
+- `"{album/medium}/{tracknumber:02d}_{title:n}.flac"`: これがデフォルトの設定であり、ほとんどの場合に適切です。複数CDのリリースはCD別のディレクトリに分割されます。
+- `"store/to/{title:n}.flac"`: もちろん、ベースパスを追加して常にその中に保存することも可能です。
+- `"smb://nas.yourhome.localdomain/smbshare/music/{title:n}.flac"`: Scheme CD ripperはGNOME GIOをサポートしているため、
   リモートホストへの直接保存用URLを指定することも可能です（GVfsの設定が必要です）。
-
-Vorbis commentsキーに加えて、以下の専用キーもファイル名フォーマットで使用できます：
-
-|キー名|内容|
-|:----|:----|
-|`safetitle`|`title`タグを改行で切り詰め、末尾の空白を削除し、安全でない文字を置換する|
-|`albummedia`|`disctotal`が2以上の場合、`{album} {メディア名}` または `{album} CD{discnumber}`。それ以外は `album` と同じ|
-
-Note: これらはFLACファイルには保存されず、ファイル名形式でのみ使用できます。
 
 その他に、以下のような機能があります:
 
@@ -258,8 +251,8 @@ Note: これらはFLACファイルには保存されず、ファイル名形式�
   これはC言語の`printf`書式指定と似ていますが、サポートしている指定はこの形式のみです。
   例: `"{tracknumber:02d}.flac"`。
 - `{}`内で`/`や`+`で複数キーを連結し、任意のパスやラベルを組み立てられます（空の要素は省略されます）。
-  例: `"{album/mediumtitle}"` -> `Album/Disc 1`, `"{artist+album}"` -> `Artist Album`。
-- 文字列は`:n`で安全化できます（`safetitle`と同じ目的）。
+  例: `"{album/medium}"` -> `Album/Disc 1`, `"{artist+album}"` -> `Artist Album`。
+- 文字列は`:n`で安全化できます。
   例: `"{title:n}"`。
 - フォーマットにディレクトリが含まれる場合、自動的に作成されます。
 - `.flac` 拡張子は省略すると自動的に付加されます。
@@ -296,7 +289,7 @@ Scheme CD ripperは設定ファイルを参照します。INI形式に似た形�
 ```ini
 [cdrip]
 device=/dev/cdrom
-format={albummedia}/{tracknumber:02d}_{safetitle}.flac
+format={album/medium}/{tracknumber:02d}_{title:n}.flac
 compression=auto     # auto または 0-8
 max_width=512        # カバーアート最大幅(px、1以上)
 speed=slow           # slow または fast（デフォルト: slow）
