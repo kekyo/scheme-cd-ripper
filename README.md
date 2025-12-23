@@ -256,6 +256,10 @@ Additionally, it includes the following features:
 - You can zero-pad two digit numbers with `:02d` etc.
   This is similar to C language's `printf` format specifiers, but it only supports this format.
   e.g. `"{tracknumber:02d}.flac"`.
+- You can join multiple keys inside `{}` with `/` or `+` to build optional paths or labels (empty parts are omitted).
+  Examples: `"{album/mediumtitle}"` -> `Album/Disc 1`, `"{artist+album}"` -> `Artist Album`.
+- You can sanitize a string with `:n` to produce safer path text (same goal as `safetitle`).
+  Example: `"{title:n}"`.
 - If the format contains directories, they will be created automatically.
 - The `.flac` extension is appended automatically if you omit it.
 
