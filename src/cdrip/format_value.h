@@ -71,6 +71,7 @@ struct FormatSegment {
 
 enum class FormatOperator {
     kJoinPath,
+    kJoinSpace,
 };
 
 struct FormatExpression {
@@ -79,12 +80,16 @@ struct FormatExpression {
 };
 
 inline bool is_format_operator(char ch) {
-    return ch == '/';
+    return ch == '/' || ch == '+';
 }
 
 inline FormatOperator format_operator_from_char(char ch) {
-    (void)ch;
-    return FormatOperator::kJoinPath;
+    switch (ch) {
+    case '+':
+        return FormatOperator::kJoinSpace;
+    default:
+        return FormatOperator::kJoinPath;
+    }
 }
 
 inline std::string format_key_upper(const std::string& s) {
@@ -143,6 +148,9 @@ inline std::string format_token_expression(
             switch (op) {
             case FormatOperator::kJoinPath:
                 out += "/";
+                break;
+            case FormatOperator::kJoinSpace:
+                out += " ";
                 break;
             }
         }
