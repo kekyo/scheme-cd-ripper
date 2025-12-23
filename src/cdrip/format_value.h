@@ -5,6 +5,7 @@
 // Under MIT.
 // https://github.com/kekyo/scheme-cd-ripper
 
+#include <algorithm>
 #include <cctype>
 #include <iomanip>
 #include <map>
@@ -15,6 +16,43 @@
 #include <vector>
 
 namespace cdrip::detail {
+
+inline std::string format_truncate_on_newline(const std::string& s) {
+    const size_t pos_ctrl = s.find_first_of("\r\n");
+    const size_t pos_lit_n = s.find("\\n");
+    const size_t pos_lit_r = s.find("\\r");
+
+    size_t pos = std::string::npos;
+
+    if (pos_ctrl != std::string::npos) pos = pos_ctrl;
+    if (pos_lit_n != std::string::npos) pos = (pos == std::string::npos) ? pos_lit_n : std::min(pos, pos_lit_n);
+    if (pos_lit_r != std::string::npos) pos = (pos == std::string::npos) ? pos_lit_r : std::min(pos, pos_lit_r);
+    if (pos == std::string::npos) return s;
+    return s.substr(0, pos);
+}
+
+inline bool format_char_in_set(const char* chars, char ch) {
+    for (const char* p = chars; *p != '\0'; ++p) {
+        if (*p == ch) return true;
+    }
+    return false;
+}
+
+inline std::string format_safe_string(const std::string& s) {
+    constexpr const char kTrailingTrimChars[] = ".,;|~/\\^";
+    constexpr const char kReplaceChars[] = ".:;|/\\^";
+
+    std::string out = format_truncate_on_newline(s);
+    while (!out.empty() && format_char_in_set(kTrailingTrimChars, out.back())) {
+        out.pop_back();
+    }
+    for (char& ch : out) {
+        if (format_char_in_set(kReplaceChars, ch)) {
+            ch = '_';
+        }
+    }
+    return out;
+}
 
 class Formattable {
 public:
@@ -27,7 +65,10 @@ public:
     explicit StringValue(std::string value)
         : value_(std::move(value)) {}
 
-    std::string toString(const std::string& /*format*/) const override {
+    std::string toString(const std::string& format) const override {
+        if (format == "n") {
+            return format_safe_string(value_);
+        }
         return value_;
     }
 
