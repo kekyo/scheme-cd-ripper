@@ -23,79 +23,14 @@ This workflow is designed for processing large numbers of CDs continuously, for 
 
 - Encode and save audio tracks as FLAC while performing music stream integrity checks (with `cd-paranoia`).
 - Reads the disc TOC, queries multiple CDDB servers and MusicBrainz. Merges all matches, and prompts you to pick a candidate.
-- Inserts Vorbis comments (ID3 like tags in FLAC format) automatically. Furthermore, if a cover art image exists at Discogs/CAA, it can be automatically embedded.
+- Inserts Vorbis comments (ID3 like tags in FLAC format) automatically.
+  Furthermore, if a cover art image exists at Discogs/CAA, it can be automatically embedded.
+  And, the flexible metadata auto-search feature and candidate regular expression filters reduce the burden of automatic tagging.
 - File names and directories can be automated using your specified format with tags.
 - And since it uses GNOME GIO (GVfs) for file output, you can output directly to a NAS or similar device using a URL.
 - Supports continuous mode for efficient operation of multiple CDs.
 
-### Example session
-
-```bash
-$ cdrip
-
-Scheme CD music/sound ripper
-Copyright (c) Kouji Matsui (@kekyo@mi.kekyo.net)
-https://github.com/kekyo/cd-ripper
-Licence: Under MIT.
-
-Detected CD drives:
-  [1] /dev/cdrom (media: present)
-  [2] /dev/sr1 (media: none)
-Select device [1-2] (default first with media, otherwise 1): 
-
-Using device: /dev/cdrom (media: present)
-Checking /dev/cdrom for cdrom...
-                CDROM sensed: PIONEER  BD-RW   BDR-XD05 3.10 SCSI CD-ROM
-
-Verifying drive can read CDDA...
-        Expected command set reads OK.
-
-Attempting to determine drive endianness from data........
-        Data appears to be coming back Little Endian.
-        certainty: 100%
-
-Options:
-  device      : "/dev/cdrom"
-  format      : "{album:n/medium:n/tracknumber:02d}_{title:n}.flac"
-  compression : 5 (auto)
-  mode        : best (full integrity checks)
-  speed       : slow (1x)
-  auto        : disabled
-
-CDDB disc id: "1403e605"
-MusicBrainz disc id: "zLsp.2WaOeSl6clZ0YhGDmARjmY-"
-
-Fetcing from CDDB servers ...
-
-[1] BarlowGirl - For the Beauty of the Earth (Studio Series) (via freedb (japan))
-[2] Bomani "D'mite" Armah - Read a Book Single (via freedb (japan))
-[3] Stellar Kart - Angel In Chorus (Studio Series) (via freedb (japan))
-[4] Disney - Shanna (via dbpoweramp)
-[5] Ladina - Verbotene Liebe (via dbpoweramp)
-[6] Across The Sky - Found By You [Studio Series]  (2003) (via dbpoweramp)
-[7] Bomani "D'mite" Armah - Read a Book Single (via dbpoweramp)
-[8] Cuba Libre - Sierra Madre (via dbpoweramp)
-[9] Big Daddy Weave - You're Worthy Of My Praise(Studio Series) (via dbpoweramp)
-[10] BarlowGirl - For the Beauty of the Earth (Studio Series) (via dbpoweramp)
-[11] Crossroads - Unknown (via dbpoweramp)
-[12] Stellar Kart - Angel In Chorus (Studio Series) (via dbpoweramp)
-[13] Tigertown - Wandering Eyes EP (via dbpoweramp)
-[14] Jerry Smith - Twinkle Tracks (via dbpoweramp)
-[15] DONALDO 22 - DONALDO22 (via dbpoweramp)
-[0] (Ignore all, not use these tags)
-
-Select match [0-15] (comma/space separated, default 1): 3
-
-Start ripping...
-
-Track  1/ 5 [ETA: 13:19 ====================]: "Angel In Chorus (LP Version)"
-Track  2/ 5 [ETA: 09:59 ====================]: "Angel In Chorus (original key performance with background vocals)"
-Track  3/ 5 [ETA: 06:39 ====================]: "Angel In Chorus (low key performance without background vocals)"
-Track  4/ 5 [ETA: 03:19 ====================]: "Angel In Chorus (medium key without background vocals (original key)"
-Track  5/ 5 [ETA: 00:00 ====================]: "Angel In Chorus (high key without background vocals)"
-
-Done.
-```
+![Example session](./images/session.png)
 
 -----
 
@@ -204,7 +139,7 @@ The following Vorbis comments are inserted:
 |`cddb_total_seconds`|Disc length in seconds (Required for re-fetching from CDDB server)|internal|
 |`musicbrainz_release`|Release MBID (Primary key for MusicBrainz)|MusicBrainz|
 |`musicbrainz_medium`|Medium MBID (Primary key for MusicBrainz)|MusicBrainz|
-|`musicbrainz_mediumtitle`|Medium title (multi-disc only; falls back to `CD n` when empty)|MusicBrainz|
+|`musicbrainz_mediumtitle`|Medium title (multi-disc only; falls back to `CD n` in Vorbis comment when empty)|MusicBrainz|
 |`musicbrainz_mediumtitle_raw`|Medium title (raw, format-only; available even for single disc)|MusicBrainz|
 |`musicbrainz_releasegroupid`|Release group MBID|MusicBrainz|
 |`musicbrainz_trackid`|Track MBID|MusicBrainz|
