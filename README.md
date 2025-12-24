@@ -44,12 +44,21 @@ For environments other than those listed above, you can build it yourself. In th
 
 ## CLI Usage
 
+Simply run the `cdrip` command, and it will detect your PC's CD drive and start working.
+Ripped FLAC files are stored in subdirectories under the album name, created within the current directory:
+
+```bash
+cdrip
+```
+
 The default options are configured for easy use of cdrip.
 Of course, you can adjust them to your preferences as follows:
 
 ```bash
-cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-dc no|always|fallback] [-na] [-i config] [-u file|dir ...]
+cdrip -d /dev/sr1 -f "{artist:n/title:n}.flac" -r
 ```
+
+The following are the options:
 
 - `-d`, `--device`: CD device path (`/dev/cdrom` or others). If not specified, it will automatically detect available CD devices and list them.
 - `-f`, `--format`: FLAC destination path format. using tag names inside `{}`, tags are case-insensitive. (see below)
@@ -177,7 +186,7 @@ If the player supports cover art display, the cover art image will be shown:
 
 The filename format is a template for any path, including directory names, that uses curly braces to automatically and flexibly determine the path using Vorbis comment key names.
 
-The default is `“{album:n/medium/:ntracknumber:02d}_{title:n}.flac”`, where directories are created using the album and media title, and files are saved within them with names like `“01_foobar.flac”`.
+The default is `“{album:n/medium:n/tracknumber:02d}_{title:n}.flac”`, where directories are created using the album and media title, and files are saved within them with names like `“01_foobar.flac”`.
 
 Below are the details of this format syntax:
 

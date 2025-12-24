@@ -43,12 +43,21 @@ Debian (trixie, bookworm) / Ubuntu (noble, jammy) では、[ビルド済みバ�
 
 ## コマンドの使用方法
 
+単に `cdrip` コマンドを実行すれば、あなたのPCのCDドライブを検出して動作を始めます。
+リッピングしたFLACファイルは、カレントディレクトリ配下にアルバム名のサブディレクトリを作り、その下に格納されます:
+
+```bash
+cdrip
+```
+
 デフォルトのオプションはcdripを簡単に使用できるように設定されています。
 もちろん、以下のように好みに合わせて調整することも可能です:
 
 ```bash
-cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-dc no|always|fallback] [-na] [-i config] [-u file|dir ...]
+cdrip -d /dev/sr1 -f "{artist:n/title:n}.flac" -r
 ```
+
+以下にオプションを示します:
 
 - `-d`, `--device`: CDデバイスのパス（`/dev/cdrom` など）。指定しない場合、利用可能なCDデバイスを自動検出して一覧表示します。
 - `-f`, `--format`: FLAC出力ファイルパスの形式。`{}`内のタグ名を使用し、タグは大文字小文字を区別しません（後述）。
