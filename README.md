@@ -77,6 +77,7 @@ The following are the options:
 - `-g`, `--replaygain`: Enable ReplayGain tagging (default).
 - `-ng`, `--no-replaygain`: Disable ReplayGain tagging and save each track immediately as before.
 - `-dc`, `--discogs`: Discogs cover art preference: `no`, `always` (default), `fallback`.
+  In interactive mode, this also controls the default choice when both Discogs and CAA cover art candidates are available.
 - `-na`, `--no-aa`: Disable cover art ANSI/ASCII art output.
 - `-l`, `--logs`: Print debug logs.
 - `-i`, `--input`: cdrip config file path (default search: `./cdrip.conf` --> `~/.cdrip.conf`)
@@ -183,12 +184,19 @@ If the player supports cover art display, the cover art image will be shown:
 ![Cover art](./images/aa.png)
 
 - Fetching and embedding cover art is only possible when a MusicBrainz match is used; other CDDB servers do not supply cover art.
-- You can choose the preference order with `-dc`/`--discogs`: `always` (default: Discogs first, then CAA), `fallback` (CAA first, then Discogs), `no` (do not use Discogs).
-- Discogs cover art is only attempted when MusicBrainz release provides `discogs_release` tag.
+- In normal interactive mode, when both Cover Art Archive and Discogs images are available, both candidates are shown and you can choose `1` or `2`.
+  When ANSI/ASCII art output is enabled on a TTY, the two previews are displayed side by side in columns.
+  The default choice follows `-dc`/`--discogs` (`always` => Discogs, `fallback`/`no` => Cover Art Archive).
+
+  ![Cover art selection](./images/aa-2.png)
+
 - Cover art is always converted to PNG format.
   This is because images provided by CAA may contain special metadata (such as ICC profiles), which can cause the hardware media player to be unable to display the image.
   Since it's in PNG format, the image itself does not degrade over time
   (though there is a form of “degradation” in the sense that the ICC profile is removed, which performs the color space conversion to sRGB).
+- Discogs cover art is only attempted when MusicBrainz release provides `discogs_release` tag.
+- You can choose the preference order with `-dc`/`--discogs`: `always` (default: Discogs first, then CAA), `fallback` (CAA first, then Discogs), `no` (do not use Discogs).
+- In repeat mode and fully automatic mode, no cover-art choice prompt is shown; the configured preference order is used directly.
 
 ## Filename formatting
 

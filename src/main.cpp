@@ -12,6 +12,7 @@
 #include <iomanip>
 #include <iostream>
 #include <cctype>
+#include <cmath>
 #include <optional>
 #include <chrono>
 #include <thread>
@@ -37,6 +38,7 @@
 #include <unistd.h>
 
 #define COVER_ART_AA_WIDTH 35
+#define COVER_ART_AA_GAP 3
 
 namespace {
 
@@ -696,6 +698,42 @@ int compute_cover_art_columns_limit(int tty_columns) {
     return COVER_ART_AA_WIDTH;
 }
 
+int compute_cover_art_pair_columns_limit(int tty_columns) {
+    const int single_limit = compute_cover_art_columns_limit(tty_columns);
+    if (tty_columns <= 0) return single_limit;
+
+    const int available = tty_columns - COVER_ART_AA_GAP;
+    if (available <= 2) return 1;
+    return std::max(1, std::min(single_limit, available / 2));
+}
+
+std::string center_ascii_label(
+    const std::string& label,
+    int width) {
+
+    if (width <= 0) return label;
+    const int text_width = static_cast<int>(label.size());
+    if (text_width >= width) return label;
+
+    const int left_pad = (width - text_width) / 2;
+    const int right_pad = width - text_width - left_pad;
+    return std::string(static_cast<size_t>(left_pad), ' ') + label +
+        std::string(static_cast<size_t>(right_pad), ' ');
+}
+
+struct RenderedCoverArtAscii {
+    std::vector<std::string> lines{};
+    int display_columns{0};
+};
+
+struct RgbaImage {
+    int width{0};
+    int height{0};
+    std::vector<uint8_t> pixels{};
+};
+
+constexpr int kCoverArtPreviewPixelsPerColumn = 8;
+
 bool decode_png_to_rgba(
     const uint8_t* data,
     size_t size,
@@ -746,26 +784,162 @@ bool decode_png_to_rgba(
     return true;
 }
 
-void maybe_print_cover_art_ascii(const CdRipCoverArt& art) {
-    if (!art.data || art.size == 0) return;
-    if (::isatty(STDOUT_FILENO) == 0) return;
+bool decode_cover_art_rgba(
+    const CdRipCoverArt& art,
+    RgbaImage& out,
+    std::string& err_out) {
 
-    int img_w = 0;
-    int img_h = 0;
-    std::vector<uint8_t> rgba;
-    std::string decode_err;
-    if (!decode_png_to_rgba(art.data, art.size, img_w, img_h, rgba, decode_err)) {
+    out = RgbaImage{};
+    err_out.clear();
+    if (!art.data || art.size == 0) return false;
+
+    if (!decode_png_to_rgba(art.data, art.size, out.width, out.height, out.pixels, err_out)) {
+        return false;
+    }
+    return true;
+}
+
+void resize_rgba_bilinear(
+    const RgbaImage& src,
+    int target_width,
+    RgbaImage& out) {
+
+    out = RgbaImage{};
+    if (src.width <= 0 || src.height <= 0 || src.pixels.empty() || target_width <= 0) return;
+
+    const int target_height = std::max(1, static_cast<int>(
+        std::lround(static_cast<double>(src.height) * target_width / src.width)));
+    out.width = target_width;
+    out.height = target_height;
+    out.pixels.resize(static_cast<size_t>(target_width) * target_height * 4);
+
+    if (src.width == target_width && src.height == target_height) {
+        out.pixels = src.pixels;
         return;
     }
 
-    const TerminalSize tty = get_stdout_terminal_size();
-    const int max_cols = compute_cover_art_columns_limit(tty.columns);
+    const double x_scale = static_cast<double>(src.width) / target_width;
+    const double y_scale = static_cast<double>(src.height) / target_height;
+    for (int y = 0; y < target_height; ++y) {
+        const double sy = (y + 0.5) * y_scale - 0.5;
+        int y0 = static_cast<int>(std::floor(sy));
+        int y1 = y0 + 1;
+        const double wy = sy - y0;
+        if (y0 < 0) y0 = 0;
+        if (y1 >= src.height) y1 = src.height - 1;
+        for (int x = 0; x < target_width; ++x) {
+            const double sx = (x + 0.5) * x_scale - 0.5;
+            int x0 = static_cast<int>(std::floor(sx));
+            int x1 = x0 + 1;
+            const double wx = sx - x0;
+            if (x0 < 0) x0 = 0;
+            if (x1 >= src.width) x1 = src.width - 1;
 
-    gint canvas_cols = max_cols;
+            const uint8_t* p00 = src.pixels.data() + (static_cast<size_t>(y0) * src.width + x0) * 4;
+            const uint8_t* p10 = src.pixels.data() + (static_cast<size_t>(y0) * src.width + x1) * 4;
+            const uint8_t* p01 = src.pixels.data() + (static_cast<size_t>(y1) * src.width + x0) * 4;
+            const uint8_t* p11 = src.pixels.data() + (static_cast<size_t>(y1) * src.width + x1) * 4;
+            uint8_t* dst = out.pixels.data() + (static_cast<size_t>(y) * target_width + x) * 4;
+            for (int c = 0; c < 4; ++c) {
+                const double v00 = p00[c];
+                const double v10 = p10[c];
+                const double v01 = p01[c];
+                const double v11 = p11[c];
+                const double v0 = v00 + (v10 - v00) * wx;
+                const double v1 = v01 + (v11 - v01) * wx;
+                const double v = v0 + (v1 - v0) * wy;
+                dst[c] = static_cast<uint8_t>(std::clamp(static_cast<int>(std::lround(v)), 0, 255));
+            }
+        }
+    }
+}
+
+bool compose_rgba_side_by_side(
+    const RgbaImage& left,
+    const RgbaImage& right,
+    int gap_pixels,
+    RgbaImage& out,
+    std::string& err_out) {
+
+    out = RgbaImage{};
+    err_out.clear();
+    if (left.width <= 0 || left.height <= 0 || left.pixels.empty()) {
+        err_out = "Left preview image is empty";
+        return false;
+    }
+    if (right.width <= 0 || right.height <= 0 || right.pixels.empty()) {
+        err_out = "Right preview image is empty";
+        return false;
+    }
+    if (gap_pixels < 0) {
+        err_out = "Preview gap must be non-negative";
+        return false;
+    }
+
+    out.width = left.width + gap_pixels + right.width;
+    out.height = std::max(left.height, right.height);
+    out.pixels.assign(static_cast<size_t>(out.width) * out.height * 4, 0);
+
+    auto blit = [&](const RgbaImage& src, int dst_x) {
+        for (int y = 0; y < src.height; ++y) {
+            uint8_t* dst = out.pixels.data() + (static_cast<size_t>(y) * out.width + dst_x) * 4;
+            const uint8_t* in = src.pixels.data() + static_cast<size_t>(y) * src.width * 4;
+            std::memcpy(dst, in, static_cast<size_t>(src.width) * 4);
+        }
+    };
+
+    blit(left, 0);
+    blit(right, left.width + gap_pixels);
+    return true;
+}
+
+bool build_cover_art_pair_rgba(
+    const CdRipCoverArt& left_art,
+    const CdRipCoverArt& right_art,
+    int columns_per_image,
+    RgbaImage& out,
+    std::string& err_out) {
+
+    out = RgbaImage{};
+    err_out.clear();
+    if (columns_per_image <= 0) {
+        err_out = "Preview column width must be positive";
+        return false;
+    }
+
+    RgbaImage left{};
+    RgbaImage right{};
+    if (!decode_cover_art_rgba(left_art, left, err_out)) return false;
+    if (!decode_cover_art_rgba(right_art, right, err_out)) return false;
+
+    const int target_width = std::max(1, columns_per_image * kCoverArtPreviewPixelsPerColumn);
+    const int gap_pixels = std::max(1, COVER_ART_AA_GAP * kCoverArtPreviewPixelsPerColumn);
+
+    RgbaImage left_scaled{};
+    RgbaImage right_scaled{};
+    resize_rgba_bilinear(left, target_width, left_scaled);
+    resize_rgba_bilinear(right, target_width, right_scaled);
+    return compose_rgba_side_by_side(left_scaled, right_scaled, gap_pixels, out, err_out);
+}
+
+bool render_rgba_ascii(
+    const RgbaImage& image,
+    int columns_limit,
+    RenderedCoverArtAscii& rendered_out,
+    std::string& err_out) {
+
+    rendered_out = RenderedCoverArtAscii{};
+    err_out.clear();
+    if (image.width <= 0 || image.height <= 0 || image.pixels.empty()) {
+        err_out = "Preview image is empty";
+        return false;
+    }
+
+    gint canvas_cols = std::max(1, columns_limit);
     gint canvas_rows = -1;
     chafa_calc_canvas_geometry(
-        img_w,
-        img_h,
+        image.width,
+        image.height,
         &canvas_cols,
         &canvas_rows,
         0.5f,
@@ -787,15 +961,18 @@ void maybe_print_cover_art_ascii(const CdRipCoverArt& art) {
 
     ChafaCanvas* canvas = chafa_canvas_new(config);
     chafa_canvas_config_unref(config);
-    if (!canvas) return;
+    if (!canvas) {
+        err_out = "Failed to create cover art canvas";
+        return false;
+    }
 
     chafa_canvas_draw_all_pixels(
         canvas,
         CHAFA_PIXEL_RGBA8_UNASSOCIATED,
-        rgba.data(),
-        img_w,
-        img_h,
-        img_w * 4);
+        image.pixels.data(),
+        image.width,
+        image.height,
+        image.width * 4);
 
     ChafaTermDb* term_db = chafa_term_db_get_default();
     gchar** envp = g_get_environ();
@@ -804,17 +981,81 @@ void maybe_print_cover_art_ascii(const CdRipCoverArt& art) {
     if (!term_info) term_info = chafa_term_db_get_fallback_info(term_db);
     if (!term_info) {
         chafa_canvas_unref(canvas);
+        err_out = "Failed to detect terminal capabilities";
+        return false;
+    }
+
+    GString* printed = chafa_canvas_print(canvas, term_info);
+    if (!printed) {
+        chafa_term_info_unref(term_info);
+        chafa_canvas_unref(canvas);
+        err_out = "Failed to render cover art";
+        return false;
+    }
+
+    std::istringstream iss(printed->str ? std::string{printed->str} : std::string{});
+    std::string line;
+    while (std::getline(iss, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        rendered_out.lines.push_back(std::move(line));
+    }
+    while (!rendered_out.lines.empty() && rendered_out.lines.back().empty()) {
+        rendered_out.lines.pop_back();
+    }
+    rendered_out.display_columns = canvas_cols;
+    g_string_free(printed, TRUE);
+    chafa_term_info_unref(term_info);
+    chafa_canvas_unref(canvas);
+    return !rendered_out.lines.empty();
+}
+
+bool render_cover_art_ascii(
+    const CdRipCoverArt& art,
+    int columns_limit,
+    RenderedCoverArtAscii& rendered_out,
+    std::string& err_out) {
+
+    RgbaImage image{};
+    if (!decode_cover_art_rgba(art, image, err_out)) {
+        rendered_out = RenderedCoverArtAscii{};
+        return false;
+    }
+    return render_rgba_ascii(image, columns_limit, rendered_out, err_out);
+}
+
+std::string build_cover_art_choice_header(
+    const std::string& left_label,
+    const std::string& right_label,
+    int columns_per_image) {
+
+    const std::string gap(static_cast<size_t>(COVER_ART_AA_GAP), ' ');
+    return center_ascii_label(left_label, columns_per_image) +
+        gap +
+        center_ascii_label(right_label, columns_per_image) +
+        "\n";
+}
+
+void maybe_print_cover_art_ascii(const CdRipCoverArt& art) {
+    if (::isatty(STDOUT_FILENO) == 0) return;
+
+    const TerminalSize tty = get_stdout_terminal_size();
+    RenderedCoverArtAscii rendered{};
+    std::string render_err;
+    if (!render_cover_art_ascii(
+            art,
+            compute_cover_art_columns_limit(tty.columns),
+            rendered,
+            render_err)) {
         return;
     }
 
-    GString* out = chafa_canvas_print(canvas, term_info);
-    if (out) {
-        std::cout << "\n\n" << out->str << "\x1b[0m\n";
-        g_string_free(out, TRUE);
+    std::cout << "\n\n";
+    for (const auto& line : rendered.lines) {
+        std::cout << line << "\n";
     }
-
-    chafa_term_info_unref(term_info);
-    chafa_canvas_unref(canvas);
+    std::cout << "\x1b[0m\n";
 }
 
 CdRipCoverArt clone_cover_art(const CdRipCoverArt& src) {
@@ -1119,6 +1360,45 @@ const char* cover_art_source_label(CoverArtFetchSource src) {
     return "unknown";
 }
 
+bool should_offer_cover_art_choice(
+    bool allow_source_choice,
+    bool has_cover_art_archive,
+    bool has_discogs) {
+
+    return allow_source_choice && has_cover_art_archive && has_discogs;
+}
+
+size_t default_cover_art_choice(
+    DiscogsMode mode) {
+
+    switch (mode) {
+        case DiscogsMode::Always:
+            return 2;
+        case DiscogsMode::Fallback:
+        case DiscogsMode::No:
+        default:
+            return 1;
+    }
+}
+
+size_t prompt_cover_art_choice(
+    DiscogsMode discogs_mode) {
+
+    const size_t default_choice = default_cover_art_choice(discogs_mode);
+    while (true) {
+        std::cout << "\nSelect cover art [1-2] (default " << default_choice << "): ";
+        std::string line;
+        if (!std::getline(std::cin, line)) {
+            line.clear();
+        }
+        line = trim_ws(line);
+        if (line.empty()) return default_choice;
+        if (line == "1") return 1;
+        if (line == "2") return 2;
+        std::cerr << "Invalid selection. Choose 1 or 2.\n";
+    }
+}
+
 bool is_multi_value_tag_key(const std::string& key_upper) {
     // Tags that may contain multiple values separated by ',' or ';'.
     // e.g. GENRE: "foo; bar" / ISRC: "AAA; BBB"
@@ -1337,11 +1617,147 @@ void clear_cover_art(CdRipCoverArt& art) {
     art.available = 0;
 }
 
+bool has_cover_art_data_local(
+    const CdRipCoverArt& art) {
+
+    return art.data && art.size > 0;
+}
+
+void replace_cover_art(
+    CdRipCoverArt& target,
+    const CdRipCoverArt& source) {
+
+    clear_cover_art(target);
+    target = clone_cover_art(source);
+}
+
+using CoverArtFetchFunction = int (*)(
+    CdRipCddbEntry*,
+    const CdRipDiscToc*,
+    const CdRipActivityObserver*,
+    void*,
+    const char**);
+
+struct CoverArtFetchAttempt {
+    CoverArtFetchSource source{CoverArtFetchSource::None};
+    CdRipCoverArt art{};
+    bool success{false};
+    bool had_error{false};
+};
+
+void clear_cover_art_fetch_attempt(
+    CoverArtFetchAttempt& attempt) {
+
+    clear_cover_art(attempt.art);
+    attempt.source = CoverArtFetchSource::None;
+    attempt.success = false;
+    attempt.had_error = false;
+}
+
+CoverArtFetchAttempt fetch_cover_art_attempt(
+    const std::vector<CdRipCddbEntry*>& effective,
+    const CdRipDiscToc* toc,
+    CoverArtFetchFunction fetch_fn,
+    CoverArtFetchSource phase_source,
+    std::string& notice_out) {
+
+    CoverArtFetchAttempt result{};
+    ActivitySpinner phase_spinner{CDRIP_ACTIVITY_PHASE_COVER_ART_FETCH};
+    const CdRipActivityObserver* observer = nullptr;
+    if (phase_spinner.enabled()) {
+        phase_spinner.start();
+        observer = phase_spinner.observer();
+    }
+    void* observer_state = static_cast<void*>(&phase_spinner);
+    for (CdRipCddbEntry* e : effective) {
+        if (!e) continue;
+
+        EntryListPtr cloned_list(new CdRipCddbEntryList{});
+        cloned_list->count = 1;
+        cloned_list->entries = new CdRipCddbEntry[1]{};
+        cloned_list->entries[0] = clone_cddb_entry(*e);
+
+        CdRipCddbEntry* cloned = &cloned_list->entries[0];
+        const char* cover_err = nullptr;
+        const int ok = fetch_fn(cloned, toc, observer, observer_state, &cover_err);
+        if (ok && has_cover_art_data_local(cloned->cover_art)) {
+            result.art = clone_cover_art(cloned->cover_art);
+            result.source = phase_source;
+            result.success = true;
+            if (cover_err) cdrip_release_error(cover_err);
+            phase_spinner.stop();
+            return result;
+        }
+        if (cover_err) {
+            notice_out = view_string(cover_err);
+            result.had_error = true;
+            cdrip_release_error(cover_err);
+        }
+    }
+    phase_spinner.stop();
+    return result;
+}
+
+bool prompt_for_cover_art_source(
+    const CoverArtFetchAttempt& left,
+    const CoverArtFetchAttempt& right,
+    DiscogsMode discogs_mode,
+    bool allow_aa,
+    CoverArtFetchSource& selected_source_out) {
+
+    selected_source_out = CoverArtFetchSource::None;
+
+    const bool can_preview = allow_aa && (::isatty(STDOUT_FILENO) != 0);
+    if (can_preview) {
+        const TerminalSize tty = get_stdout_terminal_size();
+        const int columns_per_image = compute_cover_art_pair_columns_limit(tty.columns);
+        RgbaImage composite{};
+        std::string composite_err;
+        if (build_cover_art_pair_rgba(left.art, right.art, columns_per_image, composite, composite_err)) {
+            RenderedCoverArtAscii rendered{};
+            std::string render_err;
+            if (render_rgba_ascii(
+                    composite,
+                    columns_per_image * 2 + COVER_ART_AA_GAP,
+                    rendered,
+                    render_err)) {
+                std::cout << "\n"
+                          << build_cover_art_choice_header(
+                                 "[1] " + std::string{cover_art_source_label(left.source)},
+                                 "[2] " + std::string{cover_art_source_label(right.source)},
+                                 columns_per_image);
+                for (const auto& line : rendered.lines) {
+                    std::cout << line << "\n";
+                }
+                std::cout << "\x1b[0m";
+            } else {
+                std::cout << "\nCover art candidates:\n";
+                std::cout << "  [1] " << cover_art_source_label(left.source) << "\n";
+                std::cout << "  [2] " << cover_art_source_label(right.source) << "\n";
+            }
+        } else {
+            std::cout << "\n"
+                      << "Cover art candidates:\n";
+            std::cout << "  [1] " << cover_art_source_label(left.source) << "\n";
+            std::cout << "  [2] " << cover_art_source_label(right.source) << "\n";
+        }
+    } else {
+        std::cout << "\nCover art candidates:\n";
+        std::cout << "  [1] " << cover_art_source_label(left.source) << "\n";
+        std::cout << "  [2] " << cover_art_source_label(right.source) << "\n";
+    }
+
+    const size_t choice = prompt_cover_art_choice(discogs_mode);
+    selected_source_out = (choice == 2) ? right.source : left.source;
+    return true;
+}
+
 bool ensure_cover_art_merged(
     CdRipCddbEntry* target,
     const std::vector<CdRipCddbEntry*>& candidates,
     const CdRipDiscToc* toc,
     DiscogsMode discogs_mode,
+    bool allow_source_choice,
     CoverArtFetchSource& source_out,
     std::string& notice_out,
     bool allow_aa) {
@@ -1349,11 +1765,19 @@ bool ensure_cover_art_merged(
     notice_out.clear();
     source_out = CoverArtFetchSource::None;
     if (!target) return false;
-    const bool target_has_cover = (target->cover_art.data && target->cover_art.size > 0);
+    const bool target_has_cover = has_cover_art_data_local(target->cover_art);
     if (target_has_cover && discogs_mode != DiscogsMode::Always) return true;
 
     const std::vector<CdRipCddbEntry*> effective =
         !candidates.empty() ? candidates : std::vector<CdRipCddbEntry*>{target};
+
+    if (!target_has_cover) {
+        for (CdRipCddbEntry* e : effective) {
+            if (!e || !has_cover_art_data_local(e->cover_art)) continue;
+            replace_cover_art(target->cover_art, e->cover_art);
+            return true;
+        }
+    }
 
     struct PhaseResult {
         bool success{false};
@@ -1374,10 +1798,9 @@ bool ensure_cover_art_merged(
             const bool had_data = (e->cover_art.data && e->cover_art.size > 0);
             const char* cover_err = nullptr;
             const int ok = fetch_fn(e, toc, observer, observer_state, &cover_err);
-            if (ok && e->cover_art.data && e->cover_art.size > 0) {
+            if (ok && has_cover_art_data_local(e->cover_art)) {
                 if (e != target) {
-                    clear_cover_art(target->cover_art);
-                    target->cover_art = clone_cover_art(e->cover_art);
+                    replace_cover_art(target->cover_art, e->cover_art);
                 }
                 if (allow_aa && !had_data) {
                     maybe_print_cover_art_ascii(target->cover_art);
@@ -1399,6 +1822,60 @@ bool ensure_cover_art_merged(
         phase_spinner.stop();
         return result;
     };
+
+    if (allow_source_choice) {
+        CoverArtFetchAttempt caa_attempt = fetch_cover_art_attempt(
+            effective,
+            toc,
+            &cdrip_fetch_cover_art,
+            CoverArtFetchSource::CoverArtArchive,
+            notice_out);
+        CoverArtFetchAttempt discogs_attempt = fetch_cover_art_attempt(
+            effective,
+            toc,
+            &cdrip_fetch_discogs_cover_art,
+            CoverArtFetchSource::Discogs,
+            notice_out);
+
+        if (should_offer_cover_art_choice(
+                allow_source_choice,
+                caa_attempt.success,
+                discogs_attempt.success)) {
+            CoverArtFetchSource selected_source{};
+            prompt_for_cover_art_source(
+                caa_attempt,
+                discogs_attempt,
+                discogs_mode,
+                allow_aa,
+                selected_source);
+            const CdRipCoverArt& selected_art =
+                (selected_source == CoverArtFetchSource::Discogs) ? discogs_attempt.art : caa_attempt.art;
+            replace_cover_art(target->cover_art, selected_art);
+            source_out = selected_source;
+            clear_cover_art_fetch_attempt(caa_attempt);
+            clear_cover_art_fetch_attempt(discogs_attempt);
+            return true;
+        }
+        if (caa_attempt.success) {
+            replace_cover_art(target->cover_art, caa_attempt.art);
+            source_out = caa_attempt.source;
+            if (allow_aa) maybe_print_cover_art_ascii(target->cover_art);
+            clear_cover_art_fetch_attempt(caa_attempt);
+            clear_cover_art_fetch_attempt(discogs_attempt);
+            return true;
+        }
+        if (discogs_attempt.success) {
+            replace_cover_art(target->cover_art, discogs_attempt.art);
+            source_out = discogs_attempt.source;
+            if (allow_aa) maybe_print_cover_art_ascii(target->cover_art);
+            clear_cover_art_fetch_attempt(caa_attempt);
+            clear_cover_art_fetch_attempt(discogs_attempt);
+            return true;
+        }
+        clear_cover_art_fetch_attempt(caa_attempt);
+        clear_cover_art_fetch_attempt(discogs_attempt);
+        return false;
+    }
 
     if (discogs_mode == DiscogsMode::Always) {
         PhaseResult discogs_result = try_phase(&cdrip_fetch_discogs_cover_art, CoverArtFetchSource::Discogs);
@@ -2159,7 +2636,15 @@ int run_update_mode(
 
             std::string cover_notice;
             CoverArtFetchSource cover_source{};
-            if (!ensure_cover_art_merged(selection.selected, selection.selected_entries, item.toc, discogs_mode, cover_source, cover_notice, allow_aa)) {
+            if (!ensure_cover_art_merged(
+                    selection.selected,
+                    selection.selected_entries,
+                    item.toc,
+                    discogs_mode,
+                    !auto_mode,
+                    cover_source,
+                    cover_notice,
+                    allow_aa)) {
                 if (!cover_notice.empty()) {
                     std::cerr << "  Cover art fetch notice: " << cover_notice << "\n";
                 }
@@ -2555,7 +3040,15 @@ int main(int argc, char** argv) {
 
         std::string cover_notice;
         CoverArtFetchSource cover_source{};
-        if (ensure_cover_art_merged(meta, selection.selected_entries, toc, discogs_mode, cover_source, cover_notice, allow_aa)) {
+        if (ensure_cover_art_merged(
+                meta,
+                selection.selected_entries,
+                toc,
+                discogs_mode,
+                !auto_mode && !repeat,
+                cover_source,
+                cover_notice,
+                allow_aa)) {
             if (meta->cover_art.data && meta->cover_art.size > 0 && cover_source != CoverArtFetchSource::None) {
                 std::cout << "\nCover art fetched from " << cover_art_source_label(cover_source) << ".\n";
             }

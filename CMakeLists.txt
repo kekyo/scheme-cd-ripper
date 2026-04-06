@@ -181,3 +181,12 @@ target_link_directories(cdrip_test_activity_observer PRIVATE ${COMMON_LIB_DIRS})
 target_compile_options(cdrip_test_activity_observer PRIVATE ${COMMON_CFLAGS})
 target_link_libraries(cdrip_test_activity_observer PRIVATE cdrip_static)
 add_dependencies(cdrip_test_activity_observer version_header)
+
+add_executable(cdrip_test_cover_art_selection
+    tests/test_cover_art_selection.cpp
+)
+target_include_directories(cdrip_test_cover_art_selection PRIVATE ${COMMON_INCLUDES} ${CHAFA_INCLUDE_DIRS} ${VERSION_DIR})
+target_link_directories(cdrip_test_cover_art_selection PRIVATE ${COMMON_LIB_DIRS} ${CHAFA_LIBRARY_DIRS})
+target_compile_options(cdrip_test_cover_art_selection PRIVATE ${COMMON_CFLAGS} ${CHAFA_CFLAGS_OTHER})
+target_link_libraries(cdrip_test_cover_art_selection PRIVATE cdrip_static ${CHAFA_LIBRARIES})
+add_dependencies(cdrip_test_cover_art_selection version_header)

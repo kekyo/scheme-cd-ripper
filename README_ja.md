@@ -76,6 +76,7 @@ cdrip -d /dev/sr1 -f "{artist:n/title:n}.flac" -r
 - `-g`, `--replaygain`: ReplayGain タグ付与を有効化する（デフォルト）。
 - `-ng`, `--no-replaygain`: ReplayGain タグ付与を無効化し、従来どおりトラック単位で即時保存する。
 - `-dc`, `--discogs`: Discogsのカバーアートの使用方法（`no`,`always`,`fallback`、デフォルト: `always`）。
+  対話モードでは、DiscogsとCAAの両方が候補になったときのデフォルト選択にも使われます。
 - `-na`, `--no-aa`: カバーアートのANSI/ASCIIアート表示を無効化する。
 - `-l`, `--logs`: デバッグログを出力する。
 - `-i`, `--input`: cdrip設定ファイルのパス（デフォルト検索: `./cdrip.conf` --> `~/.cdrip.conf`）
@@ -181,11 +182,18 @@ MusicBrainzから情報を取得した場合は、追加でカバーアート画
 ![Cover art](./images/aa.png)
 
 - カバーアートの取得と埋め込みは、MusicBrainzのマッチングが使用された場合のみ可能です。他のCDDBサーバーはカバーアートを提供しません。
-- `-dc`/`--discogs` で優先順を指定できます: `always`（デフォルト: Discogsを優先し失敗時にCAA）、`fallback`（CAA優先で失敗時にDiscogs）、`no`（Discogsを使用しない）。
-- Discogsのカバーアートは、MusicBrainz release から `discogs_release` タグが取得できた場合のみ試行します。
+- 通常の対話モードでは、Cover Art Archive と Discogs の両方の画像が取得できた場合、両方の候補を表示して `1` または `2` で選択できます。
+  TTY 上で ANSI/ASCII アート表示が有効な場合は、2つのプレビューが左右のカラムで並んで表示されます。
+  デフォルト選択は `-dc`/`--discogs` に従い、`always` は Discogs、`fallback` と `no` は Cover Art Archive が既定になります。
+
+  ![Cover art selection](./images/aa-2.png)
+
 - カバーアートは常にPNGフォーマットに再変換されます。
   これは、CAAから提供される画像フォーマットに特殊なメタデータ（ICCプロファイルなど）が含まれている場合があり、これがハードウェアメディアプレーヤーで画像を表示できないことに繋がります。
   PNGフォーマットなので、画像が老化することはありません（取り除かれるICCプロファイルでsRGBへの色空間変換が行われるので、その意味での「老化」はあります）。
+- Discogsのカバーアートは、MusicBrainz release から `discogs_release` タグが取得できた場合のみ試行します。
+- `-dc`/`--discogs` で優先順を指定できます: `always`（デフォルト: Discogsを優先し失敗時にCAA）、`fallback`（CAA優先で失敗時にDiscogs）、`no`（Discogsを使用しない）。
+- リピートモードおよび完全自動モードでは、カバーアート選択プロンプトは表示されず、設定された優先順がそのまま使用されます。
 
 ## ファイル名のフォーマット
 
