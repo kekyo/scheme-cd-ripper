@@ -43,7 +43,7 @@ echo "Building for ARCH=${ARCH}, VERSION=${VERSION}, BUILD_TYPE=${BUILD_TYPE}"
 
 rm -rf ${BUILD_DIR}
 cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
-cmake --build "${BUILD_DIR}"
+cmake --build "${BUILD_DIR}" -j 16
 
 PKG_ROOT="${BUILD_DIR}/deb"
 rm -rf "${PKG_ROOT}"

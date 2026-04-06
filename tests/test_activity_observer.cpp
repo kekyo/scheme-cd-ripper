@@ -140,7 +140,7 @@ auto test_fetch_ex_validation_paths_keep_observer_quiet = []() {
     diagnostic_observer.user_data = &diagnostic_recorder;
 
     const char* err = nullptr;
-    CdRipCddbEntryList* list = cdrip_fetch_cddb_entries_ex(
+    CdRipCddbEntryList* list = cdrip_fetch_cddb_entries(
         nullptr,
         nullptr,
         false,
@@ -160,7 +160,7 @@ auto test_fetch_ex_validation_paths_keep_observer_quiet = []() {
 
     err = nullptr;
     expect_true(
-        cdrip_fetch_cover_art_ex(nullptr, nullptr, &observer, reinterpret_cast<void*>(0x2222), &err) == 0,
+        cdrip_fetch_cover_art(nullptr, nullptr, &observer, reinterpret_cast<void*>(0x2222), &err) == 0,
         "cover art validation should fail");
     expect_eq("Invalid entry for cover art fetch", cdrip::detail::to_string_or_empty(err), "cover art should report invalid entry");
     expect_size(0, recorder.events.size(), "cover art validation should not emit activity");
@@ -168,7 +168,7 @@ auto test_fetch_ex_validation_paths_keep_observer_quiet = []() {
 
     err = nullptr;
     expect_true(
-        cdrip_fetch_discogs_cover_art_ex(nullptr, nullptr, &observer, reinterpret_cast<void*>(0x3333), &err) == 0,
+        cdrip_fetch_discogs_cover_art(nullptr, nullptr, &observer, reinterpret_cast<void*>(0x3333), &err) == 0,
         "Discogs validation should fail");
     expect_eq("Invalid entry for Discogs cover art fetch", cdrip::detail::to_string_or_empty(err), "Discogs should report invalid entry");
     expect_size(0, recorder.events.size(), "Discogs validation should not emit activity");
@@ -197,12 +197,12 @@ auto test_notify_diagnostic_passes_through_payload = []() {
     expect_eq("sample diagnostic", recorder.events[0].message, "diagnostic message should be preserved");
 };
 
-auto test_legacy_cover_art_wrapper_still_behaves = []() {
+auto test_cover_art_validation_with_extended_signature = []() {
     const char* err = nullptr;
     expect_true(
-        cdrip_fetch_cover_art(nullptr, nullptr, &err) == 0,
-        "legacy cover art wrapper should preserve validation result");
-    expect_eq("Invalid entry for cover art fetch", cdrip::detail::to_string_or_empty(err), "legacy wrapper should preserve error");
+        cdrip_fetch_cover_art(nullptr, nullptr, nullptr, nullptr, &err) == 0,
+        "cover art validation should preserve error result");
+    expect_eq("Invalid entry for cover art fetch", cdrip::detail::to_string_or_empty(err), "cover art validation should preserve error");
     cdrip_release_error(err);
 };
 
@@ -212,6 +212,6 @@ int main() {
     test_notify_activity_passes_through_payload();
     test_notify_diagnostic_passes_through_payload();
     test_fetch_ex_validation_paths_keep_observer_quiet();
-    test_legacy_cover_art_wrapper_still_behaves();
+    test_cover_art_validation_with_extended_signature();
     return 0;
 }

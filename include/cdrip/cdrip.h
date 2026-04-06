@@ -409,7 +409,7 @@ typedef struct CdRipDiagnosticObserver {
  * @param error Optional error string out-parameter.
  * @return Aggregated entry list; free with cdrip_release_cddbentry_list.
  */
-CdRipCddbEntryList* cdrip_fetch_cddb_entries_ex(
+CdRipCddbEntryList* cdrip_fetch_cddb_entries(
     const CdRipDiscToc* toc,
     const CdRipCddbServerList* servers,
     bool allow_recrawl,
@@ -418,25 +418,6 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries_ex(
     const CdRipActivityObserver* observer /* nullable */,
     const CdRipDiagnosticObserver* diagnostic_observer /* nullable */,
     void* state /* nullable */,
-    const char** error /* nullable */);
-/**
- * Query multiple CDDB servers with the provided disc TOC.
- * @param toc Disc TOC.
- * @param servers Server list to query.
- * @param allow_recrawl When true, always re-search MusicBrainz by title if CDDB candidates exist.
- *                      When false, only re-search when MusicBrainz returned no entries.
- * @param recrawl_track_length_tolerance_percent Allowed per-track length drift for MusicBrainz candidates.
- * @param log_recrawl When true, emit debug logs for recrawl queries.
- * @param error Optional error string out-parameter.
- * @return Aggregated entry list; free with cdrip_release_cddbentry_list.
- * @remarks Equivalent to cdrip_fetch_cddb_entries_ex with a null observer.
- */
-CdRipCddbEntryList* cdrip_fetch_cddb_entries(
-    const CdRipDiscToc* toc,
-    const CdRipCddbServerList* servers,
-    bool allow_recrawl,
-    int recrawl_track_length_tolerance_percent,
-    bool log_recrawl,
     const char** error /* nullable */);
 /**
  * Fetch front cover art from Cover Art Archive using MusicBrainz metadata and optional activity observer.
@@ -448,24 +429,11 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
  * @param error Optional error string out-parameter.
  * @return Non-zero on success (image obtained), zero on failure or not applicable.
  */
-int cdrip_fetch_cover_art_ex(
+int cdrip_fetch_cover_art(
     CdRipCddbEntry* entry,
     const CdRipDiscToc* toc /* nullable */,
     const CdRipActivityObserver* observer /* nullable */,
     void* state /* nullable */,
-    const char** error /* nullable */);
-/**
- * Fetch front cover art from Cover Art Archive using MusicBrainz metadata.
- * On success, stores image bytes and MIME type into the entry's cover_art field.
- * @param entry Target CDDB entry (must come from MusicBrainz to be effective).
- * @param toc Disc TOC (used for fallback IDs, nullable).
- * @param error Optional error string out-parameter.
- * @return Non-zero on success (image obtained), zero on failure or not applicable.
- * @remarks Equivalent to cdrip_fetch_cover_art_ex with a null observer.
- */
-int cdrip_fetch_cover_art(
-    CdRipCddbEntry* entry,
-    const CdRipDiscToc* toc /* nullable */,
     const char** error /* nullable */);
 /**
  * Fetch front cover art from Discogs using DISCOGS_RELEASE tag (Discogs release ID)
@@ -478,24 +446,11 @@ int cdrip_fetch_cover_art(
  * @param error Optional error string out-parameter.
  * @return Non-zero on success (image obtained), zero on failure or not applicable.
  */
-int cdrip_fetch_discogs_cover_art_ex(
+int cdrip_fetch_discogs_cover_art(
     CdRipCddbEntry* entry,
     const CdRipDiscToc* toc /* nullable */,
     const CdRipActivityObserver* observer /* nullable */,
     void* state /* nullable */,
-    const char** error /* nullable */);
-/**
- * Fetch front cover art from Discogs using DISCOGS_RELEASE tag (Discogs release ID).
- * On success, stores image bytes and MIME type into the entry's cover_art field.
- * @param entry Target CDDB entry (must come from MusicBrainz and contain DISCOGS_RELEASE).
- * @param toc Disc TOC (reserved for future use, nullable).
- * @param error Optional error string out-parameter.
- * @return Non-zero on success (image obtained), zero on failure or not applicable.
- * @remarks Equivalent to cdrip_fetch_discogs_cover_art_ex with a null observer.
- */
-int cdrip_fetch_discogs_cover_art(
-    CdRipCddbEntry* entry,
-    const CdRipDiscToc* toc /* nullable */,
     const char** error /* nullable */);
 /**
  * Release CDDB entry list.

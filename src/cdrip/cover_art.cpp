@@ -916,7 +916,7 @@ void cdrip_set_cover_art_max_width(
     g_cover_art_max_width.store(max_width_px, std::memory_order_relaxed);
 }
 
-int cdrip_fetch_cover_art_ex(
+int cdrip_fetch_cover_art(
     CdRipCddbEntry* entry,
     const CdRipDiscToc* toc,
     const CdRipActivityObserver* observer,
@@ -1042,20 +1042,7 @@ int cdrip_fetch_cover_art_ex(
     return 1;
 }
 
-int cdrip_fetch_cover_art(
-    CdRipCddbEntry* entry,
-    const CdRipDiscToc* toc,
-    const char** error) {
-
-    return cdrip_fetch_cover_art_ex(
-        entry,
-        toc,
-        nullptr,
-        nullptr,
-        error);
-}
-
-int cdrip_fetch_discogs_cover_art_ex(
+int cdrip_fetch_discogs_cover_art(
     CdRipCddbEntry* entry,
     const CdRipDiscToc* toc,
     const CdRipActivityObserver* observer,
@@ -1230,19 +1217,6 @@ int cdrip_fetch_discogs_cover_art_ex(
         CDRIP_ACTIVITY_STATE_PHASE_FINISHED,
         nullptr);
     return 1;
-}
-
-int cdrip_fetch_discogs_cover_art(
-    CdRipCddbEntry* entry,
-    const CdRipDiscToc* toc,
-    const char** error) {
-
-    return cdrip_fetch_discogs_cover_art_ex(
-        entry,
-        toc,
-        nullptr,
-        nullptr,
-        error);
 }
 
 };

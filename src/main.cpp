@@ -1401,30 +1401,30 @@ bool ensure_cover_art_merged(
     };
 
     if (discogs_mode == DiscogsMode::Always) {
-        PhaseResult discogs_result = try_phase(&cdrip_fetch_discogs_cover_art_ex, CoverArtFetchSource::Discogs);
+        PhaseResult discogs_result = try_phase(&cdrip_fetch_discogs_cover_art, CoverArtFetchSource::Discogs);
         if (discogs_result.success) return true;
         // Keep any existing cover art if Discogs did not succeed.
         if (target_has_cover) return true;
-        PhaseResult caa_result = try_phase(&cdrip_fetch_cover_art_ex, CoverArtFetchSource::CoverArtArchive);
+        PhaseResult caa_result = try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive);
         if (caa_result.success) return true;
         if (caa_result.had_error) {
-            PhaseResult retry_discogs = try_phase(&cdrip_fetch_discogs_cover_art_ex, CoverArtFetchSource::Discogs);
+            PhaseResult retry_discogs = try_phase(&cdrip_fetch_discogs_cover_art, CoverArtFetchSource::Discogs);
             if (retry_discogs.success) return true;
         }
         return false;
     }
     if (discogs_mode == DiscogsMode::Fallback) {
-        PhaseResult caa_result = try_phase(&cdrip_fetch_cover_art_ex, CoverArtFetchSource::CoverArtArchive);
+        PhaseResult caa_result = try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive);
         if (caa_result.success) return true;
-        PhaseResult discogs_result = try_phase(&cdrip_fetch_discogs_cover_art_ex, CoverArtFetchSource::Discogs);
+        PhaseResult discogs_result = try_phase(&cdrip_fetch_discogs_cover_art, CoverArtFetchSource::Discogs);
         if (discogs_result.success) return true;
         if (discogs_result.had_error) {
-            PhaseResult retry_caa = try_phase(&cdrip_fetch_cover_art_ex, CoverArtFetchSource::CoverArtArchive);
+            PhaseResult retry_caa = try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive);
             if (retry_caa.success) return true;
         }
         return false;
     }
-    return try_phase(&cdrip_fetch_cover_art_ex, CoverArtFetchSource::CoverArtArchive).success;
+    return try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive).success;
 }
 
 struct CddbSelection {
@@ -1496,7 +1496,7 @@ CddbSelection select_cddb_entry_for_toc(
         }
         if (fetch_spinner.enabled()) {
             fetch_spinner.start();
-            entries = cdrip_fetch_cddb_entries_ex(
+            entries = cdrip_fetch_cddb_entries(
                 toc,
                 servers,
                 allow_recrawl,
@@ -1509,7 +1509,7 @@ CddbSelection select_cddb_entry_for_toc(
             fetch_spinner.stop();
         } else {
             std::cout << "Fetcing music tags from servers ...\n";
-            entries = cdrip_fetch_cddb_entries_ex(
+            entries = cdrip_fetch_cddb_entries(
                 toc,
                 servers,
                 allow_recrawl,

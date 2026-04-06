@@ -1485,7 +1485,7 @@ static ServerFetchResult fetch_entries_from_cddb_server(
 
 extern "C" {
 
-CdRipCddbEntryList* cdrip_fetch_cddb_entries_ex(
+CdRipCddbEntryList* cdrip_fetch_cddb_entries(
     const CdRipDiscToc* toc,
     const CdRipCddbServerList* servers,
     bool allow_recrawl,
@@ -1731,26 +1731,6 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries_ex(
         completed_sources.load(std::memory_order_relaxed),
         completed_sources.load(std::memory_order_relaxed));
     return list;
-}
-
-CdRipCddbEntryList* cdrip_fetch_cddb_entries(
-    const CdRipDiscToc* toc,
-    const CdRipCddbServerList* servers,
-    bool allow_recrawl,
-    int recrawl_track_length_tolerance_percent,
-    bool log_recrawl,
-    const char** error) {
-
-    return cdrip_fetch_cddb_entries_ex(
-        toc,
-        servers,
-        allow_recrawl,
-        recrawl_track_length_tolerance_percent,
-        log_recrawl,
-        nullptr,
-        nullptr,
-        nullptr,
-        error);
 }
 
 void cdrip_release_cddbentry_list(
