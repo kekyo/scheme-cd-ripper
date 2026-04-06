@@ -106,6 +106,161 @@ static void set_invalid_tagged_toc(
 /* ------------------------------------------------------------------- */
 /* Exported API functions */
 
+namespace cdrip::detail {
+
+bool update_flac_tags(
+    const std::string& path,
+    const CdRipDiscToc* toc,
+    int track_number,
+    const CdRipCddbEntry* entry,
+    const std::map<std::string, std::string>& extra_tags,
+    bool preserve_replaygain_tags,
+    std::string& err) {
+
+    err.clear();
+    if (!toc || !entry || path.empty()) {
+        err = "Invalid arguments to update_flac_tags";
+        return false;
+    }
+
+    const int safe_track_number = track_number > 0 ? track_number : 1;
+    const int track_total = static_cast<int>(toc->tracks_count);
+    CdRipTrackInfo synthetic_track{};
+    synthetic_track.number = safe_track_number;
+    synthetic_track.is_audio = 1;
+
+    const CdRipTrackInfo* track_info = &synthetic_track;
+    if (track_number > 0 &&
+        toc->tracks &&
+        static_cast<size_t>(track_number - 1) < toc->tracks_count) {
+        track_info = &toc->tracks[static_cast<size_t>(track_number - 1)];
+    }
+
+    std::string title;
+    std::string track_name;
+    std::string safe_title;
+    std::map<std::string, std::string> tags = build_track_vorbis_tags(
+        track_info,
+        entry,
+        toc,
+        track_total,
+        title,
+        track_name,
+        safe_title);
+
+    if (preserve_replaygain_tags) {
+        std::map<std::string, std::string> existing_tags;
+        if (collect_vorbis_comments(path, existing_tags)) {
+            for (const auto& [key, value] : existing_tags) {
+                const std::string key_upper = to_upper(key);
+                if (is_replaygain_tag_key(key_upper) && !value.empty()) {
+                    tags[key_upper] = value;
+                }
+            }
+        }
+    }
+    for (const auto& [key, value] : extra_tags) {
+        if (!key.empty() && !value.empty()) {
+            tags[to_upper(key)] = value;
+        }
+    }
+
+    prune_empty_tags(tags);
+    drop_format_only_tags(tags);
+
+    const bool replace_picture = has_cover_art_data(entry->cover_art);
+    FLAC__Metadata_Chain* chain = FLAC__metadata_chain_new();
+    if (!chain) {
+        err = "Failed to create FLAC metadata chain";
+        return false;
+    }
+    if (!FLAC__metadata_chain_read(chain, path.c_str())) {
+        err = "Failed to read FLAC metadata: " + path;
+        FLAC__metadata_chain_delete(chain);
+        return false;
+    }
+
+    FLAC__Metadata_Iterator* it = FLAC__metadata_iterator_new();
+    if (!it) {
+        err = "Failed to create FLAC metadata iterator";
+        FLAC__metadata_chain_delete(chain);
+        return false;
+    }
+
+    FLAC__metadata_iterator_init(it, chain);
+    while (true) {
+        FLAC__StreamMetadata* block = FLAC__metadata_iterator_get_block(it);
+        if (block && block->type == FLAC__METADATA_TYPE_VORBIS_COMMENT) {
+            FLAC__metadata_iterator_delete_block(it, true);
+            if (!FLAC__metadata_iterator_get_block(it) &&
+                !FLAC__metadata_iterator_next(it)) {
+                break;
+            }
+            continue;
+        }
+        if (replace_picture && block && block->type == FLAC__METADATA_TYPE_PICTURE) {
+            FLAC__metadata_iterator_delete_block(it, true);
+            if (!FLAC__metadata_iterator_get_block(it) &&
+                !FLAC__metadata_iterator_next(it)) {
+                break;
+            }
+            continue;
+        }
+        if (!FLAC__metadata_iterator_next(it)) break;
+    }
+
+    FLAC__metadata_iterator_init(it, chain);
+    while (FLAC__metadata_iterator_next(it)) {
+    }
+
+    FLAC__StreamMetadata* vorbis = build_vorbis_comments(tags);
+    if (!vorbis) {
+        err = "Failed to build Vorbis comments";
+        FLAC__metadata_iterator_delete(it);
+        FLAC__metadata_chain_delete(chain);
+        return false;
+    }
+    if (!FLAC__metadata_iterator_insert_block_after(it, vorbis)) {
+        FLAC__metadata_object_delete(vorbis);
+        err = "Failed to insert Vorbis comment block";
+        FLAC__metadata_iterator_delete(it);
+        FLAC__metadata_chain_delete(chain);
+        return false;
+    }
+
+    if (replace_picture) {
+        FLAC__StreamMetadata* picture = build_picture_block(entry->cover_art);
+        if (!picture) {
+            FLAC__metadata_object_delete(vorbis);
+            err = "Failed to build picture block";
+            FLAC__metadata_iterator_delete(it);
+            FLAC__metadata_chain_delete(chain);
+            return false;
+        }
+        if (!FLAC__metadata_iterator_insert_block_after(it, picture)) {
+            FLAC__metadata_object_delete(vorbis);
+            FLAC__metadata_object_delete(picture);
+            err = "Failed to insert picture block";
+            FLAC__metadata_iterator_delete(it);
+            FLAC__metadata_chain_delete(chain);
+            return false;
+        }
+    }
+
+    if (!FLAC__metadata_chain_write(chain, true, true)) {
+        err = "Failed to write FLAC metadata";
+        FLAC__metadata_iterator_delete(it);
+        FLAC__metadata_chain_delete(chain);
+        return false;
+    }
+
+    FLAC__metadata_iterator_delete(it);
+    FLAC__metadata_chain_delete(chain);
+    return true;
+}
+
+}  // namespace cdrip::detail
+
 extern "C" {
 
 CdRipTaggedTocList* cdrip_collect_cddb_queries_from_path(
@@ -321,163 +476,18 @@ int cdrip_update_flac_with_cddb_entry(
         return 0;
     }
 
-    const std::string path = to_string_or_empty(tagged->path);
-    const CdRipDiscToc* toc = tagged->toc;
-    const int track_number = tagged->track_number > 0 ? tagged->track_number : 0;
-    const int track_total = static_cast<int>(toc->tracks_count);
-    const bool replace_picture = has_cover_art_data(entry->cover_art);
-
-    std::string fetched_at = to_string_or_empty(entry->fetched_at);
-    if (fetched_at.empty()) {
-        char* ts = cdrip_current_timestamp_iso();
-        fetched_at = to_string_or_empty(ts);
-        cdrip_release_timestamp(ts);
-    }
-
-    std::string track_title;
-    if (track_number > 0) {
-        track_title = track_tag(entry, static_cast<size_t>(track_number - 1), "TITLE");
-    }
-    if (track_title.empty()) {
-        int tn = (track_number > 0) ? track_number : 1;
-        track_title = "Track " + std::to_string(tn);
-    }
-
-    std::map<std::string, std::string> tags = {
-        {"TITLE", track_title},
-        {"ARTIST", album_tag(entry, "ARTIST")},
-        {"ALBUM", album_tag(entry, "ALBUM")},
-        {"GENRE", album_tag(entry, "GENRE")},
-        {"DATE", album_tag(entry, "DATE")},
-        {"CDDB", to_string_or_empty(entry->source_label)},
-        {"CDDB_DATE", fetched_at},
-        //{"CDDB_URL", to_string_or_empty(entry->source_url)},  // Ignored
-    };
-    append_requery_seed_tags(
-        tags,
-        toc,
-        to_string_or_empty(entry->cddb_discid),
-        track_number,
-        track_total);
-
-    auto apply_tags = [&](const CdRipTagKV* kvs, size_t count) {
-        for (size_t i = 0; i < count; ++i) {
-            std::string key = to_upper(to_string_or_empty(kvs[i].key));
-            std::string val = to_string_or_empty(kvs[i].value);
-            if (!key.empty() && !val.empty()) {
-                tags[key] = val;
-            }
-        }
-    };
-
-    if (entry->album_tags && entry->album_tags_count > 0) {
-        apply_tags(entry->album_tags, entry->album_tags_count);
-    }
-    if (track_number > 0 &&
-        entry->tracks &&
-        static_cast<size_t>(track_number - 1) < entry->tracks_count) {
-        const auto& tt = entry->tracks[static_cast<size_t>(track_number - 1)];
-        if (tt.tags && tt.tags_count > 0) {
-            apply_tags(tt.tags, tt.tags_count);
-        }
-    }
-
-    auto prune_empty = [](std::map<std::string, std::string>& m) {
-        for (auto it = m.begin(); it != m.end();) {
-            if (it->second.empty()) it = m.erase(it);
-            else ++it;
-        }
-    };
-    prune_empty(tags);
-    drop_format_only_tags(tags);
-
-    FLAC__Metadata_Chain* chain = FLAC__metadata_chain_new();
-    if (!chain) {
-        set_error(error, "Failed to create FLAC metadata chain");
+    std::string err;
+    if (!update_flac_tags(
+            to_string_or_empty(tagged->path),
+            tagged->toc,
+            tagged->track_number,
+            entry,
+            {},
+            /*preserve_replaygain_tags=*/true,
+            err)) {
+        set_error(error, err);
         return 0;
     }
-    if (!FLAC__metadata_chain_read(chain, path.c_str())) {
-        set_error(error, "Failed to read FLAC metadata: " + path);
-        FLAC__metadata_chain_delete(chain);
-        return 0;
-    }
-    FLAC__Metadata_Iterator* it = FLAC__metadata_iterator_new();
-    if (!it) {
-        set_error(error, "Failed to create FLAC metadata iterator");
-        FLAC__metadata_chain_delete(chain);
-        return 0;
-    }
-    FLAC__metadata_iterator_init(it, chain);
-    while (true) {
-        FLAC__StreamMetadata* block = FLAC__metadata_iterator_get_block(it);
-        if (block && block->type == FLAC__METADATA_TYPE_VORBIS_COMMENT) {
-            FLAC__metadata_iterator_delete_block(it, true);
-            // iterator now points to previous block; move forward if possible
-            if (!FLAC__metadata_iterator_get_block(it) &&
-                !FLAC__metadata_iterator_next(it)) {
-                break;
-            }
-            continue;
-        }
-        if (replace_picture && block && block->type == FLAC__METADATA_TYPE_PICTURE) {
-            FLAC__metadata_iterator_delete_block(it, true);
-            if (!FLAC__metadata_iterator_get_block(it) &&
-                !FLAC__metadata_iterator_next(it)) {
-                break;
-            }
-            continue;
-        }
-        if (!FLAC__metadata_iterator_next(it)) break;
-    }
-
-    FLAC__metadata_iterator_init(it, chain);
-    while (FLAC__metadata_iterator_next(it)) {
-        // move to last block
-    }
-
-    FLAC__StreamMetadata* vorbis = build_vorbis_comments(tags);
-    FLAC__StreamMetadata* picture = nullptr;
-    if (!vorbis) {
-        set_error(error, "Failed to build Vorbis comments");
-        FLAC__metadata_iterator_delete(it);
-        FLAC__metadata_chain_delete(chain);
-        return 0;
-    }
-    if (!FLAC__metadata_iterator_insert_block_after(it, vorbis)) {
-        FLAC__metadata_object_delete(vorbis);
-        set_error(error, "Failed to insert Vorbis comment block");
-        FLAC__metadata_iterator_delete(it);
-        FLAC__metadata_chain_delete(chain);
-        return 0;
-    }
-    if (replace_picture) {
-        picture = build_picture_block(entry->cover_art);
-        if (!picture) {
-            FLAC__metadata_object_delete(vorbis);
-            set_error(error, "Failed to build picture block");
-            FLAC__metadata_iterator_delete(it);
-            FLAC__metadata_chain_delete(chain);
-            return 0;
-        }
-        if (!FLAC__metadata_iterator_insert_block_after(it, picture)) {
-            FLAC__metadata_object_delete(vorbis);
-            FLAC__metadata_object_delete(picture);
-            set_error(error, "Failed to insert picture block");
-            FLAC__metadata_iterator_delete(it);
-            FLAC__metadata_chain_delete(chain);
-            return 0;
-        }
-    }
-
-    if (!FLAC__metadata_chain_write(chain, true, true)) {
-        set_error(error, "Failed to write FLAC metadata");
-        FLAC__metadata_iterator_delete(it);
-        FLAC__metadata_chain_delete(chain);
-        return 0;
-    }
-
-    FLAC__metadata_iterator_delete(it);
-    FLAC__metadata_chain_delete(chain);
     return 1;
 }
 

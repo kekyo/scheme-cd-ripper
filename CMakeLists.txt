@@ -36,6 +36,7 @@ pkg_check_modules(JSONGLIB REQUIRED json-glib-1.0)
 pkg_check_modules(PNG REQUIRED libpng)
 pkg_check_modules(JPEG REQUIRED libjpeg)
 pkg_check_modules(LCMS2 REQUIRED lcms2)
+pkg_check_modules(EBUR128 REQUIRED libebur128)
 pkg_check_modules(CHAFA REQUIRED chafa)
 
 set(VERSION_HEADER ${CMAKE_BINARY_DIR}/generated/version.h)
@@ -58,6 +59,7 @@ set(COMMON_INCLUDES
     ${PNG_INCLUDE_DIRS}
     ${JPEG_INCLUDE_DIRS}
     ${LCMS2_INCLUDE_DIRS}
+    ${EBUR128_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${VERSION_DIR}
 )
@@ -72,6 +74,7 @@ set(COMMON_LIB_DIRS
     ${PNG_LIBRARY_DIRS}
     ${JPEG_LIBRARY_DIRS}
     ${LCMS2_LIBRARY_DIRS}
+    ${EBUR128_LIBRARY_DIRS}
 )
 
 set(COMMON_LIBS
@@ -84,6 +87,7 @@ set(COMMON_LIBS
     ${PNG_LIBRARIES}
     ${JPEG_LIBRARIES}
     ${LCMS2_LIBRARIES}
+    ${EBUR128_LIBRARIES}
 )
 
 set(COMMON_CFLAGS
@@ -96,6 +100,7 @@ set(COMMON_CFLAGS
     ${PNG_CFLAGS_OTHER}
     ${JPEG_CFLAGS_OTHER}
     ${LCMS2_CFLAGS_OTHER}
+    ${EBUR128_CFLAGS_OTHER}
     -Wall
     -Wextra
     -pedantic
@@ -112,6 +117,8 @@ set(CDRIP_SOURCES
     src/cdrip/rip.cpp
     src/cdrip/error.cpp
     src/cdrip/cover_art.cpp
+    src/cdrip/replaygain.cpp
+    src/cdrip/track_tags.cpp
     src/cdrip/timestamp.cpp
 )
 
@@ -156,3 +163,12 @@ target_link_directories(cdrip_test_requery_seed_tags PRIVATE ${COMMON_LIB_DIRS})
 target_compile_options(cdrip_test_requery_seed_tags PRIVATE ${COMMON_CFLAGS})
 target_link_libraries(cdrip_test_requery_seed_tags PRIVATE cdrip_static)
 add_dependencies(cdrip_test_requery_seed_tags version_header)
+
+add_executable(cdrip_test_replaygain
+    tests/test_replaygain.cpp
+)
+target_include_directories(cdrip_test_replaygain PRIVATE ${COMMON_INCLUDES})
+target_link_directories(cdrip_test_replaygain PRIVATE ${COMMON_LIB_DIRS})
+target_compile_options(cdrip_test_replaygain PRIVATE ${COMMON_CFLAGS})
+target_link_libraries(cdrip_test_replaygain PRIVATE cdrip_static)
+add_dependencies(cdrip_test_replaygain version_header)

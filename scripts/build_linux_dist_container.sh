@@ -179,6 +179,7 @@ apt-get install -y --no-install-recommends \
 	dpkg-dev \
 	libcdio-paranoia-dev \
 	libcddb2-dev \
+	libebur128-dev \
 	libchafa-dev \
 	libflac++-dev \
 	libglib2.0-dev \

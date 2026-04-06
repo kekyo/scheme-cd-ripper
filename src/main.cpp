@@ -4,6 +4,7 @@
 // https://github.com/kekyo/scheme-cd-ripper
 
 #include "cdrip/cdrip.h"
+#include "cdrip/internal.h"
 #include "version.h"
 
 #include <algorithm>
@@ -14,6 +15,7 @@
 #include <chrono>
 #include <thread>
 #include <memory>
+#include <filesystem>
 #include <sstream>
 #include <string>
 #include <cstdlib>
@@ -37,6 +39,38 @@
 namespace {
 
 constexpr int kDefaultMusicBrainzRecrawlTrackLengthTolerancePercent = 2;
+constexpr int kCdChannels = 2;
+constexpr unsigned long kCdSampleRate = 44100;
+
+struct AlbumTrackStage {
+    int track_number{0};
+    std::string staged_path;
+    std::string final_path;
+    cdrip::detail::ReplayGainScanResult replaygain{};
+};
+
+void destroy_ebur128_state(
+    ebur128_state* state) {
+
+    if (!state) return;
+    ebur128_destroy(&state);
+}
+
+std::string create_temp_album_directory(
+    std::string& err) {
+
+    err.clear();
+    GError* gerr = nullptr;
+    char* dir = g_dir_make_tmp("cdrip-replaygain-XXXXXX", &gerr);
+    if (!dir) {
+        err = gerr && gerr->message ? gerr->message : "Failed to create temporary directory";
+        if (gerr) g_error_free(gerr);
+        return {};
+    }
+    std::string out = dir;
+    g_free(dir);
+    return out;
+}
 
 std::string view_string(const char* s) {
     return s ? std::string{s} : std::string{};
@@ -1692,6 +1726,7 @@ struct Options {
     std::optional<std::string> filter_title;
     std::optional<bool> auto_mode;
     std::optional<bool> speed_fast;
+    std::optional<bool> replaygain;
     std::optional<std::string> discogs;
     std::string config_file;
     bool no_eject = false;
@@ -1747,6 +1782,10 @@ Options parse_args(int argc, char** argv) {
             opts.speed_fast = false;
         } else if (arg == "-sf" || arg == "--speed-fast") {
             opts.speed_fast = true;
+        } else if (arg == "-g" || arg == "--replaygain") {
+            opts.replaygain = true;
+        } else if (arg == "-ng" || arg == "--no-replaygain") {
+            opts.replaygain = false;
         } else if ((arg == "-dc" || arg == "--discogs") && i + 1 < argc) {
             opts.discogs = argv[++i];
         } else if (arg == "-na" || arg == "--no-aa") {
@@ -1768,7 +1807,7 @@ Options parse_args(int argc, char** argv) {
                 std::exit(1);
             }
         } else if (arg == "-?" || arg == "-h" || arg == "--help") {
-            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-dc no|always|fallback] [-na] [-i config] [-u file|dir ...]\n";
+            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-g|-ng] [-dc no|always|fallback] [-na] [-i config] [-u file|dir ...]\n";
             std::cout << "  -d  / --device: CD device path (default: auto-detect)\n";
             std::cout << "  -f  / --format: FLAC destination path format (default: \"{album:n/medium:n/tracknumber:02d}_{title:n}.flac\")\n";
             std::cout << "  -m  / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disabled any checks)\n";
@@ -1782,6 +1821,8 @@ Options parse_args(int argc, char** argv) {
             std::cout << "  -a  / --auto: Enable fully automatic mode (without any prompts)\n";
             std::cout << "  -ss / --speed-slow: Request 1x drive read speed when ripping starts (default)\n";
             std::cout << "  -sf / --speed-fast: Request maximum drive read speed when ripping starts\n";
+            std::cout << "  -g  / --replaygain: Enable ReplayGain tagging (default)\n";
+            std::cout << "  -ng / --no-replaygain: Disable ReplayGain tagging and save each track immediately\n";
             std::cout << "  -dc / --discogs: Cover art preference for Discogs: no, always (default), fallback\n";
             std::cout << "  -na / --no-aa: Disable cover art ANSI/ASCII art output\n";
             std::cout << "  -l  / --logs: Print debug logs for MusicBrainz recrawl and selected metadata\n";
@@ -1981,6 +2022,17 @@ int main(int argc, char** argv) {
         }
     }
     if (cli_opts.speed_fast.has_value()) speed_fast = *cli_opts.speed_fast;
+
+    std::string replaygain_err;
+    bool replaygain = true;
+    if (cfg->config_path && cfg->config_path[0]) {
+        replaygain = get_config_bool(cfg->config_path, "cdrip", "replaygain", /*default_value=*/true, replaygain_err);
+        if (!replaygain_err.empty()) {
+            std::cerr << "Failed to parse cdrip.replaygain from \"" << view_string(cfg->config_path) << "\": " << replaygain_err << "\n";
+            return 1;
+        }
+    }
+    if (cli_opts.replaygain.has_value()) replaygain = *cli_opts.replaygain;
 
     std::string discogs_err;
     std::string discogs_value = "always";
@@ -2190,6 +2242,7 @@ int main(int argc, char** argv) {
     }
     std::cout << "\n";
     std::cout << "  speed       : " << (speed_fast ? "fast (max)" : "slow (1x)") << "\n";
+    std::cout << "  replaygain  : " << (replaygain ? "enabled (save after full album rip)" : "disabled (save each track immediately)") << "\n";
     std::cout << "  auto        : " << (auto_mode ? "enabled" : "disabled");
     std::cout << "\n\n";
 
@@ -2275,23 +2328,155 @@ int main(int argc, char** argv) {
         bool success = true;
         double completed_before = 0.0;
         int total_tracks = static_cast<int>(audio_tracks.size());
+        std::vector<AlbumTrackStage> staged_tracks;
+        std::string staged_album_dir;
+        using Ebur128Ptr = std::unique_ptr<ebur128_state, decltype(&destroy_ebur128_state)>;
+        Ebur128Ptr album_replaygain_state(nullptr, &destroy_ebur128_state);
+        if (replaygain) {
+            std::string temp_dir_err;
+            staged_album_dir = create_temp_album_directory(temp_dir_err);
+            if (staged_album_dir.empty()) {
+                std::cerr << "Failed to prepare ReplayGain staging directory: " << temp_dir_err << "\n";
+                success = false;
+            } else {
+                album_replaygain_state.reset(
+                    ebur128_init(kCdChannels, kCdSampleRate, EBUR128_MODE_I | EBUR128_MODE_SAMPLE_PEAK));
+                if (!album_replaygain_state) {
+                    std::cerr << "Failed to create ReplayGain album state\n";
+                    success = false;
+                }
+            }
+        }
         double wall_start = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now().time_since_epoch())
                 .count() /
             1000.0;
-        for (size_t idx = 0; idx < audio_tracks.size(); ++idx) {
-            const auto* track = audio_tracks[idx];
-            const char* rip_err = nullptr;
-            if (!cdrip_rip_track(drive, track, meta, toc, progress, &rip_err, total_tracks, completed_before, total_album_sec, wall_start)) {
-                success = false;
-                if (rip_err) {
-                    std::cerr << "Rip error: " << view_string(rip_err) << "\n";
+        if (success) {
+            for (size_t idx = 0; idx < audio_tracks.size(); ++idx) {
+                const auto* track = audio_tracks[idx];
+                if (replaygain) {
+                    std::string title;
+                    std::string track_name;
+                    std::string safe_title;
+                    std::string final_path;
+                    const auto tags = cdrip::detail::build_track_vorbis_tags(
+                        track,
+                        meta,
+                        toc,
+                        total_tracks,
+                        title,
+                        track_name,
+                        safe_title);
+                    std::string resolve_err;
+                    if (!cdrip::detail::resolve_track_output_path(format, tags, final_path, resolve_err)) {
+                        success = false;
+                        std::cerr << "Rip error: Failed to resolve output path: " << resolve_err << "\n";
+                        break;
+                    }
+
+                    std::ostringstream staged_name;
+                    staged_name << std::setw(2) << std::setfill('0') << track->number << ".flac";
+                    const std::filesystem::path staged_path =
+                        std::filesystem::path(staged_album_dir) / staged_name.str();
+
+                    Ebur128Ptr track_replaygain_state(
+                        ebur128_init(kCdChannels, kCdSampleRate, EBUR128_MODE_I | EBUR128_MODE_SAMPLE_PEAK),
+                        &destroy_ebur128_state);
+                    if (!track_replaygain_state) {
+                        success = false;
+                        std::cerr << "Rip error: Failed to create ReplayGain track state\n";
+                        break;
+                    }
+
+                    cdrip::detail::RipTrackWriteOptions write_options{};
+                    const std::string staged_path_str = staged_path.string();
+                    write_options.output_path = staged_path_str.c_str();
+                    write_options.display_path = final_path.c_str();
+                    write_options.track_replaygain_state = track_replaygain_state.get();
+                    write_options.album_replaygain_state = album_replaygain_state.get();
+
+                    cdrip::detail::ReplayGainScanResult track_replaygain;
+                    std::string rip_err;
+                    if (!cdrip::detail::rip_track_with_options(
+                            drive,
+                            track,
+                            meta,
+                            toc,
+                            progress,
+                            total_tracks,
+                            completed_before,
+                            total_album_sec,
+                            wall_start,
+                            &write_options,
+                            &track_replaygain,
+                            rip_err)) {
+                        success = false;
+                        std::cerr << "Rip error: " << rip_err << "\n";
+                        break;
+                    }
+
+                    staged_tracks.push_back(AlbumTrackStage{
+                        track->number,
+                        staged_path_str,
+                        final_path,
+                        track_replaygain,
+                    });
+                } else {
+                    const char* rip_err = nullptr;
+                    if (!cdrip_rip_track(drive, track, meta, toc, progress, &rip_err, total_tracks, completed_before, total_album_sec, wall_start)) {
+                        success = false;
+                        if (rip_err) {
+                            std::cerr << "Rip error: " << view_string(rip_err) << "\n";
+                            cdrip_release_error(rip_err);
+                        }
+                        break;
+                    }
                     cdrip_release_error(rip_err);
                 }
-                break;
+                completed_before += track_secs[idx];
             }
-            cdrip_release_error(rip_err);
-            completed_before += track_secs[idx];
+        }
+
+        if (success && replaygain) {
+            cdrip::detail::ReplayGainScanResult album_replaygain;
+            std::string replaygain_err;
+            if (!cdrip::detail::finalize_replaygain_scan(
+                    album_replaygain_state.get(),
+                    album_replaygain,
+                    replaygain_err)) {
+                success = false;
+                std::cerr << "ReplayGain error: " << replaygain_err << "\n";
+            } else {
+                for (const auto& staged_track : staged_tracks) {
+                    const auto replaygain_tags =
+                        cdrip::detail::build_replaygain_tags(staged_track.replaygain, album_replaygain);
+                    if (!cdrip::detail::update_flac_tags(
+                            staged_track.staged_path,
+                            toc,
+                            staged_track.track_number,
+                            meta,
+                            replaygain_tags,
+                            /*preserve_replaygain_tags=*/false,
+                            replaygain_err)) {
+                        success = false;
+                        std::cerr << "ReplayGain error: " << replaygain_err << "\n";
+                        break;
+                    }
+                    if (!cdrip::detail::publish_local_file_to_destination(
+                            staged_track.staged_path,
+                            staged_track.final_path,
+                            replaygain_err)) {
+                        success = false;
+                        std::cerr << "ReplayGain error: " << replaygain_err << "\n";
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!staged_album_dir.empty()) {
+            std::error_code ec;
+            std::filesystem::remove_all(staged_album_dir, ec);
         }
 
         if (success) {

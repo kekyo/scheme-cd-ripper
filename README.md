@@ -74,6 +74,8 @@ The following are the options:
   It picks the first drive that already has media, chooses the first CDDB match, and loops in repeat mode without prompts.
 - `-ss`, `--speed-slow`: Request 1x drive read speed when ripping starts (default).
 - `-sf`, `--speed-fast`: Request maximum drive read speed when ripping starts.
+- `-g`, `--replaygain`: Enable ReplayGain tagging (default).
+- `-ng`, `--no-replaygain`: Disable ReplayGain tagging and save each track immediately as before.
 - `-dc`, `--discogs`: Discogs cover art preference: `no`, `always` (default), `fallback`.
 - `-na`, `--no-aa`: Disable cover art ANSI/ASCII art output.
 - `-l`, `--logs`: Print debug logs.
@@ -81,6 +83,8 @@ The following are the options:
 - `-u`, `--update <file|dir> [more ...]`: Update existing FLAC tags from CDDB using embedded tags (other options ignored)
 
 All command-line options (except `-u` and `-i`) can override the contents of the config file specified with `-i`.
+
+When ReplayGain is enabled, all tracks are ripped into a temporary directory first. The final `.flac` files do not appear in the destination until the whole album has finished ripping and ReplayGain tags have been written.
 
 TIPS: If you want to import a large number of CDs continuously with MusicBrainz tagging, you can do so by specifying the `cdrip -a -r` option.
 Additionally, when ripping CDs from the same series, using the `-ft` option to narrow down the titles somewhat can reduce mistakes in selecting CDDB candidates.
@@ -156,6 +160,10 @@ The following Vorbis comments are inserted:
 |`musicbrainz_discid`|MusicBrainz disc ID (Partial use, will remove when fetch succeed)|internal|
 |`musicbrainz_leadout`|MusicBrainz CD leadout time (Partial use, will remove when fetch succeed)|internal|
 |`discogs_release`|Discogs release ID (numeric)|MusicBrainz|
+|`replaygain_track_gain`|ReplayGain track gain|internal|
+|`replaygain_track_peak`|ReplayGain track peak|internal|
+|`replaygain_album_gain`|ReplayGain album gain|internal|
+|`replaygain_album_peak`|ReplayGain album peak|internal|
 
 When obtaining information from CDDB or MusicBrainz, not all of this tag information may be available.
 
@@ -247,6 +255,7 @@ max_width=512        # cover art max width in pixels (> 0)
 speed=slow           # slow or fast (default: slow)
 aa=true              # show cover art as ANSI/ASCII art (TTY only)
 discogs=always       # no / always / fallback (cover art preference order, default: always)
+replaygain=true      # true / false (default: true; false = save each track immediately)
 recrawl_percent=2    # Per-track length tolerance for MusicBrainz candidates (default: 2)
 mode=best            # best / fast / default
 repeat=false
@@ -294,6 +303,7 @@ A special server id `musicbrainz` is not required `[cddb.musicbrainz]` section d
 - libFLAC++
 - GNOME GIO
 - libsoup 3.0
+- libebur128
 - json-glib
 - libpng
 - libjpeg
@@ -315,7 +325,7 @@ In Ubuntu noble/jammy:
 
 ```bash
 sudo apt-get install build-essential cmake dpkg-dev nodejs \
-  libcdio-paranoia-dev libcddb2-dev libflac++-dev libglib2.0-dev libsoup-3.0-dev libjson-glib-dev libchafa-dev libpng-dev libjpeg-dev liblcms2-dev
+  libcdio-paranoia-dev libcddb2-dev libebur128-dev libflac++-dev libglib2.0-dev libsoup-3.0-dev libjson-glib-dev libchafa-dev libpng-dev libjpeg-dev liblcms2-dev
 npm install -g screw-up
 
 ./build.sh

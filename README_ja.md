@@ -73,6 +73,8 @@ cdrip -d /dev/sr1 -f "{artist:n/title:n}.flac" -r
   メディアが挿入されている最初のドライブを選択し、CDDBの先頭エントリを選び、リピートモードではプロンプトなしでループする。
 - `-ss`, `--speed-slow`: リッピング開始時にドライブの読込速度を等速(1x)へ要求する（デフォルト）。
 - `-sf`, `--speed-fast`: リッピング開始時にドライブの読込速度を最大へ要求する。
+- `-g`, `--replaygain`: ReplayGain タグ付与を有効化する（デフォルト）。
+- `-ng`, `--no-replaygain`: ReplayGain タグ付与を無効化し、従来どおりトラック単位で即時保存する。
 - `-dc`, `--discogs`: Discogsのカバーアートの使用方法（`no`,`always`,`fallback`、デフォルト: `always`）。
 - `-na`, `--no-aa`: カバーアートのANSI/ASCIIアート表示を無効化する。
 - `-l`, `--logs`: デバッグログを出力する。
@@ -80,6 +82,8 @@ cdrip -d /dev/sr1 -f "{artist:n/title:n}.flac" -r
 - `-u`, `--update <file|dir> [more ...]`: 埋め込みタグを使用してCDDBから既存のFLACタグを更新（他のオプションは無視）
 
 すべてのコマンドラインオプション（`-u` および `-i` を除く）は、`-i` で指定された設定ファイルの内容を上書きできます。
+
+ReplayGain が有効な場合、すべてのトラックは一度テンポラリディレクトリへリッピングされます。最終保存先に `.flac` が現れるのは、アルバム全体のリッピング完了後に ReplayGain タグを書き込んでからです。
 
 TIPS: MusicBrainzタグ付けで大量のCDを連続してインポートしたい場合は、`cdrip -a -r` オプションを指定することで実現できます。また、同じシリーズのCDをリッピングする場合は、 `-ft` オプションでタイトルをある程度絞り込んでおけば、CDDB候補の選択ミスを減らすことができます。
 
@@ -154,6 +158,10 @@ Select match [0-15] (comma/space separated, default 1): 3,12
 |`musicbrainz_discid`|MusicBrainzディスクID（MusicBrainzからの情報取得に成功したら削除）|internal|
 |`musicbrainz_leadout`|MusicBrainz CDリードアウト時間（MusicBrainzからの情報取得に成功したら削除）|internal|
 |`discogs_release`|DiscogsリリースID（数値）|MusicBrainz|
+|`replaygain_track_gain`|ReplayGain トラックゲイン|internal|
+|`replaygain_track_peak`|ReplayGain トラックピーク|internal|
+|`replaygain_album_gain`|ReplayGain アルバムゲイン|internal|
+|`replaygain_album_peak`|ReplayGain アルバムピーク|internal|
 
 CDDBやMusicBrainzから情報を得る場合、これらのすべてのタグ情報が得られるとは限りません。
 
@@ -244,6 +252,7 @@ max_width=512        # カバーアート最大幅(px、1以上)
 speed=slow           # slow または fast（デフォルト: slow）
 aa=true              # カバーアートをANSI/ASCIIアートで表示（TTYのみ）
 discogs=always       # no / always / fallback（カバーアートの優先順。デフォルト: always）
+replaygain=true      # true / false（デフォルト: true。false ならトラック単位で即時保存）
 recrawl_percent=2    # MusicBrainz候補のトラック長許容差(%)（デフォルト: 2）
 mode=best            # best / fast / default
 repeat=false
