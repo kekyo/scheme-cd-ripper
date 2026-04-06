@@ -172,3 +172,12 @@ target_link_directories(cdrip_test_replaygain PRIVATE ${COMMON_LIB_DIRS})
 target_compile_options(cdrip_test_replaygain PRIVATE ${COMMON_CFLAGS})
 target_link_libraries(cdrip_test_replaygain PRIVATE cdrip_static)
 add_dependencies(cdrip_test_replaygain version_header)
+
+add_executable(cdrip_test_activity_observer
+    tests/test_activity_observer.cpp
+)
+target_include_directories(cdrip_test_activity_observer PRIVATE ${COMMON_INCLUDES})
+target_link_directories(cdrip_test_activity_observer PRIVATE ${COMMON_LIB_DIRS})
+target_compile_options(cdrip_test_activity_observer PRIVATE ${COMMON_CFLAGS})
+target_link_libraries(cdrip_test_activity_observer PRIVATE cdrip_static)
+add_dependencies(cdrip_test_activity_observer version_header)

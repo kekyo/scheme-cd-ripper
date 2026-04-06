@@ -298,6 +298,127 @@ typedef struct CdRipCddbEntryList {
     size_t count;
 } CdRipCddbEntryList;
 
+/** Activity phase for long-running metadata/network work. */
+typedef enum CdRipActivityPhases {
+    /** Fetching album/track metadata from CDDB or MusicBrainz. */
+    CDRIP_ACTIVITY_PHASE_METADATA_FETCH = 0,
+    /** Fetching cover art from external services. */
+    CDRIP_ACTIVITY_PHASE_COVER_ART_FETCH = 1,
+} CdRipActivityPhases;
+
+/** Activity state within a long-running phase. */
+typedef enum CdRipActivityStates {
+    /** Phase has started. */
+    CDRIP_ACTIVITY_STATE_PHASE_STARTED = 0,
+    /** A source within the phase has started work. */
+    CDRIP_ACTIVITY_STATE_SOURCE_STARTED = 1,
+    /** A source within the phase has finished work. */
+    CDRIP_ACTIVITY_STATE_SOURCE_FINISHED = 2,
+    /** Phase has finished. */
+    CDRIP_ACTIVITY_STATE_PHASE_FINISHED = 3,
+} CdRipActivityStates;
+
+/** Activity information delivered to observers during metadata/network work. */
+typedef struct CdRipActivityInfo {
+    /** Activity phase being reported. */
+    CdRipActivityPhases phase;
+    /** Activity state within the phase. */
+    CdRipActivityStates state;
+    /** Source label (server/service name); nullable and valid only during the callback. */
+    const char* source_label;
+    /** Number of completed sources in the current phase snapshot. */
+    size_t completed_sources;
+    /**
+     * Total number of sources currently known for the phase.
+     * @remarks This value may grow when follow-up work is discovered dynamically.
+     */
+    size_t total_sources;
+} CdRipActivityInfo;
+
+/**
+ * Activity callback signature.
+ * @param info Activity snapshot.
+ * @param state Per-call opaque state supplied to the triggering API.
+ * @param user_data Observer-owned opaque context.
+ */
+typedef void (*CdRipActivityCallback)(
+    const CdRipActivityInfo* info,
+    void* state,
+    void* user_data);
+
+/** Observer configuration for metadata/network activity notifications. */
+typedef struct CdRipActivityObserver {
+    /** Callback invoked when activity state changes; nullable. */
+    CdRipActivityCallback callback;
+    /** Opaque caller-owned context passed back to callback; nullable. */
+    void* user_data;
+} CdRipActivityObserver;
+
+/** Diagnostic severity for optional verbose library messages. */
+typedef enum CdRipDiagnosticSeverities {
+    /** Verbose debug detail. */
+    CDRIP_DIAGNOSTIC_SEVERITY_DEBUG = 0,
+    /** Informational notice. */
+    CDRIP_DIAGNOSTIC_SEVERITY_INFO = 1,
+    /** Warning that does not abort the operation. */
+    CDRIP_DIAGNOSTIC_SEVERITY_WARNING = 2,
+    /** Error detail associated with a failed operation. */
+    CDRIP_DIAGNOSTIC_SEVERITY_ERROR = 3,
+} CdRipDiagnosticSeverities;
+
+/** Diagnostic information delivered to verbose observers. */
+typedef struct CdRipDiagnosticInfo {
+    /** Severity of the diagnostic message. */
+    CdRipDiagnosticSeverities severity;
+    /** Source label (for example `musicbrainz`); nullable and valid only during the callback. */
+    const char* source_label;
+    /** Human-readable message text; valid only during the callback. */
+    const char* message;
+} CdRipDiagnosticInfo;
+
+/**
+ * Diagnostic callback signature.
+ * @param info Diagnostic snapshot.
+ * @param state Per-call opaque state supplied to the triggering API.
+ * @param user_data Observer-owned opaque context.
+ */
+typedef void (*CdRipDiagnosticCallback)(
+    const CdRipDiagnosticInfo* info,
+    void* state,
+    void* user_data);
+
+/** Observer configuration for optional verbose diagnostic messages. */
+typedef struct CdRipDiagnosticObserver {
+    /** Callback invoked when diagnostics are emitted; nullable. */
+    CdRipDiagnosticCallback callback;
+    /** Opaque caller-owned context passed back to callback; nullable. */
+    void* user_data;
+} CdRipDiagnosticObserver;
+
+/**
+ * Query multiple CDDB servers with the provided disc TOC and optional activity observer.
+ * @param toc Disc TOC.
+ * @param servers Server list to query.
+ * @param allow_recrawl When true, always re-search MusicBrainz by title if CDDB candidates exist.
+ *                      When false, only re-search when MusicBrainz returned no entries.
+ * @param recrawl_track_length_tolerance_percent Allowed per-track length drift for MusicBrainz candidates.
+ * @param log_recrawl When true, emit debug logs for recrawl queries.
+ * @param observer Optional activity observer for long-running work.
+ * @param diagnostic_observer Optional verbose diagnostic observer.
+ * @param state Optional opaque per-call state passed back to the activity callback.
+ * @param error Optional error string out-parameter.
+ * @return Aggregated entry list; free with cdrip_release_cddbentry_list.
+ */
+CdRipCddbEntryList* cdrip_fetch_cddb_entries_ex(
+    const CdRipDiscToc* toc,
+    const CdRipCddbServerList* servers,
+    bool allow_recrawl,
+    int recrawl_track_length_tolerance_percent,
+    bool log_recrawl,
+    const CdRipActivityObserver* observer /* nullable */,
+    const CdRipDiagnosticObserver* diagnostic_observer /* nullable */,
+    void* state /* nullable */,
+    const char** error /* nullable */);
 /**
  * Query multiple CDDB servers with the provided disc TOC.
  * @param toc Disc TOC.
@@ -308,6 +429,7 @@ typedef struct CdRipCddbEntryList {
  * @param log_recrawl When true, emit debug logs for recrawl queries.
  * @param error Optional error string out-parameter.
  * @return Aggregated entry list; free with cdrip_release_cddbentry_list.
+ * @remarks Equivalent to cdrip_fetch_cddb_entries_ex with a null observer.
  */
 CdRipCddbEntryList* cdrip_fetch_cddb_entries(
     const CdRipDiscToc* toc,
@@ -317,16 +439,50 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
     bool log_recrawl,
     const char** error /* nullable */);
 /**
+ * Fetch front cover art from Cover Art Archive using MusicBrainz metadata and optional activity observer.
+ * On success, stores image bytes and MIME type into the entry's cover_art field.
+ * @param entry Target CDDB entry (must come from MusicBrainz to be effective).
+ * @param toc Disc TOC (used for fallback IDs, nullable).
+ * @param observer Optional activity observer for long-running work.
+ * @param state Optional opaque per-call state passed back to the activity callback.
+ * @param error Optional error string out-parameter.
+ * @return Non-zero on success (image obtained), zero on failure or not applicable.
+ */
+int cdrip_fetch_cover_art_ex(
+    CdRipCddbEntry* entry,
+    const CdRipDiscToc* toc /* nullable */,
+    const CdRipActivityObserver* observer /* nullable */,
+    void* state /* nullable */,
+    const char** error /* nullable */);
+/**
  * Fetch front cover art from Cover Art Archive using MusicBrainz metadata.
  * On success, stores image bytes and MIME type into the entry's cover_art field.
  * @param entry Target CDDB entry (must come from MusicBrainz to be effective).
  * @param toc Disc TOC (used for fallback IDs, nullable).
  * @param error Optional error string out-parameter.
  * @return Non-zero on success (image obtained), zero on failure or not applicable.
+ * @remarks Equivalent to cdrip_fetch_cover_art_ex with a null observer.
  */
 int cdrip_fetch_cover_art(
     CdRipCddbEntry* entry,
     const CdRipDiscToc* toc /* nullable */,
+    const char** error /* nullable */);
+/**
+ * Fetch front cover art from Discogs using DISCOGS_RELEASE tag (Discogs release ID)
+ * and optional activity observer.
+ * On success, stores image bytes and MIME type into the entry's cover_art field.
+ * @param entry Target CDDB entry (must come from MusicBrainz and contain DISCOGS_RELEASE).
+ * @param toc Disc TOC (reserved for future use, nullable).
+ * @param observer Optional activity observer for long-running work.
+ * @param state Optional opaque per-call state passed back to the activity callback.
+ * @param error Optional error string out-parameter.
+ * @return Non-zero on success (image obtained), zero on failure or not applicable.
+ */
+int cdrip_fetch_discogs_cover_art_ex(
+    CdRipCddbEntry* entry,
+    const CdRipDiscToc* toc /* nullable */,
+    const CdRipActivityObserver* observer /* nullable */,
+    void* state /* nullable */,
     const char** error /* nullable */);
 /**
  * Fetch front cover art from Discogs using DISCOGS_RELEASE tag (Discogs release ID).
@@ -335,6 +491,7 @@ int cdrip_fetch_cover_art(
  * @param toc Disc TOC (reserved for future use, nullable).
  * @param error Optional error string out-parameter.
  * @return Non-zero on success (image obtained), zero on failure or not applicable.
+ * @remarks Equivalent to cdrip_fetch_discogs_cover_art_ex with a null observer.
  */
 int cdrip_fetch_discogs_cover_art(
     CdRipCddbEntry* entry,

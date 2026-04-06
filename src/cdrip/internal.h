@@ -125,6 +125,36 @@ static inline void clear_error(const char** error) {
     *error = nullptr;
 }
 
+static inline bool has_activity_observer(
+    const CdRipActivityObserver* observer) {
+
+    return observer && observer->callback;
+}
+
+static inline void notify_activity(
+    const CdRipActivityObserver* observer,
+    void* state,
+    const CdRipActivityInfo& info) {
+
+    if (!has_activity_observer(observer)) return;
+    observer->callback(&info, state, observer->user_data);
+}
+
+static inline bool has_diagnostic_observer(
+    const CdRipDiagnosticObserver* observer) {
+
+    return observer && observer->callback;
+}
+
+static inline void notify_diagnostic(
+    const CdRipDiagnosticObserver* observer,
+    void* state,
+    const CdRipDiagnosticInfo& info) {
+
+    if (!has_diagnostic_observer(observer)) return;
+    observer->callback(&info, state, observer->user_data);
+}
+
 static inline CdRipTagKV make_kv(const std::string& key, const std::string& value) {
     CdRipTagKV kv{};
     kv.key = make_cstr_copy(to_upper(key));

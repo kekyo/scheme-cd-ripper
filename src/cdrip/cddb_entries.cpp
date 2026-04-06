@@ -4,6 +4,7 @@
 // https://github.com/kekyo/scheme-cd-ripper
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cctype>
 #include <cmath>
@@ -67,6 +68,23 @@ static const char* kMusicBrainzInc = "recordings+artists+release-groups+genres+t
 // Note: cover-art-archive is not a valid inc for release lookup; cover art is fetched separately.
 static const char* kMusicBrainzReleaseInc = "recordings+artists+artist-credits+media+discids+labels+release-groups+genres+tags+url-rels";
 
+static void emit_metadata_activity(
+    const CdRipActivityObserver* observer,
+    void* callback_state,
+    CdRipActivityStates activity_state,
+    const char* source_label,
+    size_t completed_sources,
+    size_t total_sources) {
+
+    CdRipActivityInfo info{};
+    info.phase = CDRIP_ACTIVITY_PHASE_METADATA_FETCH;
+    info.state = activity_state;
+    info.source_label = source_label;
+    info.completed_sources = completed_sources;
+    info.total_sources = total_sources;
+    notify_activity(observer, callback_state, info);
+}
+
 static std::string musicbrainz_user_agent() {
     std::string ua = "SchemeCDRipper/";
     ua += VERSION;
@@ -87,7 +105,23 @@ struct MusicBrainzRecrawlMatchOptions {
     bool enabled{false};
     int track_length_tolerance_percent{kDefaultRecrawlTrackLengthTolerancePercent};
     bool log_rejections{false};
+    const CdRipDiagnosticObserver* diagnostic_observer{nullptr};
+    void* diagnostic_state{nullptr};
 };
+
+static void emit_musicbrainz_diagnostic(
+    const CdRipDiagnosticObserver* observer,
+    void* state,
+    CdRipDiagnosticSeverities severity,
+    const std::string& message) {
+
+    if (!has_diagnostic_observer(observer)) return;
+    CdRipDiagnosticInfo info{};
+    info.severity = severity;
+    info.source_label = kMusicBrainzLabel;
+    info.message = message.c_str();
+    notify_diagnostic(observer, state, info);
+}
 
 static void release_cddb_entry(CdRipCddbEntry& e) {
     release_cstr(e.cddb_discid);
@@ -925,12 +959,18 @@ static bool build_entries_from_release(
         if (recrawl_options && recrawl_options->enabled && recrawl_options->log_rejections) {
             const std::string release_id = get_string_member(release_obj, "id");
             const std::string release_title = get_string_member(release_obj, "title");
-            std::cerr << "  reject release: "
-                      << (release_title.empty() ? "(untitled)" : release_title);
+            std::ostringstream oss;
+            oss << "  reject release: "
+                << (release_title.empty() ? "(untitled)" : release_title);
             if (!release_id.empty()) {
-                std::cerr << " [" << release_id << "]";
+                oss << " [" << release_id << "]";
             }
-            std::cerr << " (track count/length mismatch)\n";
+            oss << " (track count/length mismatch)";
+            emit_musicbrainz_diagnostic(
+                recrawl_options->diagnostic_observer,
+                recrawl_options->diagnostic_state,
+                CDRIP_DIAGNOSTIC_SEVERITY_DEBUG,
+                oss.str());
         }
         return false;
     }
@@ -1103,6 +1143,8 @@ static bool fetch_musicbrainz_entries(
         true,
         kDefaultRecrawlTrackLengthTolerancePercent,
         false,
+        nullptr,
+        nullptr,
     };
 
     std::string url;
@@ -1207,6 +1249,8 @@ static bool fetch_musicbrainz_entries_by_title(
     const std::string& album_title,
     int recrawl_track_length_tolerance_percent,
     bool log_recrawl,
+    const CdRipDiagnosticObserver* diagnostic_observer,
+    void* diagnostic_state,
     std::vector<CdRipCddbEntry>& results,
     std::string& err) {
 
@@ -1259,6 +1303,8 @@ static bool fetch_musicbrainz_entries_by_title(
         true,
         sanitize_recrawl_track_length_tolerance_percent(recrawl_track_length_tolerance_percent),
         log_recrawl,
+        diagnostic_observer,
+        diagnostic_state,
     };
     if (releases) {
         const guint len = json_array_get_length(releases);
@@ -1439,12 +1485,15 @@ static ServerFetchResult fetch_entries_from_cddb_server(
 
 extern "C" {
 
-CdRipCddbEntryList* cdrip_fetch_cddb_entries(
+CdRipCddbEntryList* cdrip_fetch_cddb_entries_ex(
     const CdRipDiscToc* toc,
     const CdRipCddbServerList* servers,
     bool allow_recrawl,
     int recrawl_track_length_tolerance_percent,
     bool log_recrawl,
+    const CdRipActivityObserver* observer,
+    const CdRipDiagnosticObserver* diagnostic_observer,
+    void* state,
     const char** error) {
 
     clear_error(error);
@@ -1460,6 +1509,15 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
     }
 
     std::string toc_discid = to_string_or_empty(toc->cddb_discid);
+    const size_t initial_total_sources = servers->count;
+    std::atomic<size_t> completed_sources{0};
+    emit_metadata_activity(
+        observer,
+        state,
+        CDRIP_ACTIVITY_STATE_PHASE_STARTED,
+        nullptr,
+        0,
+        initial_total_sources);
 
     std::vector<std::future<ServerFetchResult>> futures;
     futures.reserve(servers->count);
@@ -1476,29 +1534,54 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
             has_musicbrainz_server = true;
             is_musicbrainz_server[si] = true;
         }
-        futures.push_back(std::async(std::launch::async, [toc, server, toc_discid]() -> ServerFetchResult {
+        futures.push_back(std::async(std::launch::async, [
+            toc,
+            server,
+            toc_discid,
+            observer,
+            state,
+            initial_total_sources,
+            &completed_sources
+        ]() -> ServerFetchResult {
             const std::string label = to_string_or_empty(server.label);
-            if (to_lower(label) == kMusicBrainzLabel) {
-                return fetch_entries_from_musicbrainz(toc);
+            const char* source_label = server.label;
+            emit_metadata_activity(
+                observer,
+                state,
+                CDRIP_ACTIVITY_STATE_SOURCE_STARTED,
+                source_label,
+                completed_sources.load(std::memory_order_relaxed),
+                initial_total_sources);
+
+            ServerFetchResult result;
+            try {
+                if (to_lower(label) == kMusicBrainzLabel) {
+                    result = fetch_entries_from_musicbrainz(toc);
+                } else {
+                    result = fetch_entries_from_cddb_server(toc, server, toc_discid);
+                }
+            } catch (const std::exception& ex) {
+                result.error = std::string{"CDDB fetch failed: "} + ex.what();
+            } catch (...) {
+                result.error = "CDDB fetch failed: unknown error";
             }
-            return fetch_entries_from_cddb_server(toc, server, toc_discid);
+
+            const size_t completed = completed_sources.fetch_add(1, std::memory_order_relaxed) + 1;
+            emit_metadata_activity(
+                observer,
+                state,
+                CDRIP_ACTIVITY_STATE_SOURCE_FINISHED,
+                source_label,
+                completed,
+                initial_total_sources);
+            return result;
         }));
     }
 
     std::vector<ServerFetchResult> per_server;
     per_server.reserve(futures.size());
     for (auto& fut : futures) {
-        try {
-            per_server.push_back(fut.get());
-        } catch (const std::exception& ex) {
-            ServerFetchResult r;
-            r.error = std::string{"CDDB fetch failed: "} + ex.what();
-            per_server.push_back(std::move(r));
-        } catch (...) {
-            ServerFetchResult r;
-            r.error = "CDDB fetch failed: unknown error";
-            per_server.push_back(std::move(r));
-        }
+        per_server.push_back(fut.get());
     }
 
     std::string mb_title_err;
@@ -1528,10 +1611,23 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
             const std::vector<std::string> candidates =
                 extract_album_title_candidates(other_entries);
             if (!candidates.empty()) {
+                const size_t total_sources = initial_total_sources + candidates.size();
                 if (log_recrawl) {
-                    std::cerr << "MusicBrainz recrawl candidates (" << candidates.size() << "):\n";
+                    std::ostringstream oss;
+                    oss << "MusicBrainz recrawl candidates (" << candidates.size() << "):";
+                    emit_musicbrainz_diagnostic(
+                        diagnostic_observer,
+                        state,
+                        CDRIP_DIAGNOSTIC_SEVERITY_DEBUG,
+                        oss.str());
                     for (size_t i = 0; i < candidates.size(); ++i) {
-                        std::cerr << "  [" << (i + 1) << "] " << candidates[i] << "\n";
+                        std::ostringstream item;
+                        item << "  [" << (i + 1) << "] " << candidates[i];
+                        emit_musicbrainz_diagnostic(
+                            diagnostic_observer,
+                            state,
+                            CDRIP_DIAGNOSTIC_SEVERITY_DEBUG,
+                            item.str());
                     }
                 }
                 std::unordered_set<std::string> seen_mb_keys;
@@ -1544,13 +1640,30 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
                 for (const auto& candidate : candidates) {
                     const auto variants = build_recrawl_title_variants(candidate);
                     bool added_any = false;
+                    emit_metadata_activity(
+                        observer,
+                        state,
+                        CDRIP_ACTIVITY_STATE_SOURCE_STARTED,
+                        "musicbrainz recrawl",
+                        completed_sources.load(std::memory_order_relaxed),
+                        total_sources);
                     if (log_recrawl) {
-                        std::cerr << "MusicBrainz recrawl target: \"" << candidate
-                                  << "\" (" << variants.size() << " variants)\n";
+                        std::ostringstream oss;
+                        oss << "MusicBrainz recrawl target: \"" << candidate
+                            << "\" (" << variants.size() << " variants)";
+                        emit_musicbrainz_diagnostic(
+                            diagnostic_observer,
+                            state,
+                            CDRIP_DIAGNOSTIC_SEVERITY_DEBUG,
+                            oss.str());
                     }
                     for (const auto& variant : variants) {
                         if (log_recrawl) {
-                            std::cerr << "  try: " << variant << "\n";
+                            emit_musicbrainz_diagnostic(
+                                diagnostic_observer,
+                                state,
+                                CDRIP_DIAGNOSTIC_SEVERITY_DEBUG,
+                                "  try: " + variant);
                         }
                         std::vector<CdRipCddbEntry> mb_entries;
                         std::string candidate_err;
@@ -1559,6 +1672,8 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
                                 variant,
                                 recrawl_track_length_tolerance_percent,
                                 log_recrawl,
+                                diagnostic_observer,
+                                state,
                                 mb_entries,
                                 candidate_err)) {
                             if (!candidate_err.empty()) {
@@ -1579,6 +1694,14 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
                         }
                         if (added_any) break;
                     }
+                    const size_t completed = completed_sources.fetch_add(1, std::memory_order_relaxed) + 1;
+                    emit_metadata_activity(
+                        observer,
+                        state,
+                        CDRIP_ACTIVITY_STATE_SOURCE_FINISHED,
+                        "musicbrainz recrawl",
+                        completed,
+                        total_sources);
                 }
             }
         }
@@ -1600,7 +1723,34 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
             list->entries[i] = results[i];
         }
     }
+    emit_metadata_activity(
+        observer,
+        state,
+        CDRIP_ACTIVITY_STATE_PHASE_FINISHED,
+        nullptr,
+        completed_sources.load(std::memory_order_relaxed),
+        completed_sources.load(std::memory_order_relaxed));
     return list;
+}
+
+CdRipCddbEntryList* cdrip_fetch_cddb_entries(
+    const CdRipDiscToc* toc,
+    const CdRipCddbServerList* servers,
+    bool allow_recrawl,
+    int recrawl_track_length_tolerance_percent,
+    bool log_recrawl,
+    const char** error) {
+
+    return cdrip_fetch_cddb_entries_ex(
+        toc,
+        servers,
+        allow_recrawl,
+        recrawl_track_length_tolerance_percent,
+        log_recrawl,
+        nullptr,
+        nullptr,
+        nullptr,
+        error);
 }
 
 void cdrip_release_cddbentry_list(
@@ -1699,6 +1849,8 @@ bool build_musicbrainz_entries_from_release_json(
         strict_title_recrawl_match,
         sanitize_recrawl_track_length_tolerance_percent(track_length_tolerance_percent),
         log_rejections,
+        nullptr,
+        nullptr,
     };
     const std::string discid = to_string_or_empty(toc ? toc->mb_discid : nullptr);
     build_entries_from_release(

@@ -8,6 +8,7 @@
 #include "version.h"
 
 #include <algorithm>
+#include <atomic>
 #include <iomanip>
 #include <iostream>
 #include <cctype>
@@ -23,6 +24,7 @@
 #include <cerrno>
 #include <vector>
 #include <map>
+#include <mutex>
 #include <unordered_set>
 
 #include <glib.h>
@@ -240,8 +242,224 @@ void progress_cb(const CdRipProgressInfo* info) {
     std::cout << "\rTrack " << std::setw(2) << info->track_number << "/" << std::setw(2) << info->total_tracks
               << " [ETA: " << (show_eta ? fmt_time_fn(remaining_total) : "--:--") << " " << bar << "]: "
               << "\"" << track_name << "\"";
-    std::cout.flush();
-        if (info->percent >= 100.0) std::cout << "\n";
+	    std::cout.flush();
+	        if (info->percent >= 100.0) std::cout << "\n";
+}
+
+struct ActivitySnapshot {
+    CdRipActivityPhases phase{CDRIP_ACTIVITY_PHASE_METADATA_FETCH};
+    CdRipActivityStates state{CDRIP_ACTIVITY_STATE_PHASE_STARTED};
+    std::string source_label{};
+    size_t completed_sources{0};
+    size_t total_sources{0};
+};
+
+std::string activity_phase_message(
+    CdRipActivityPhases phase) {
+
+    switch (phase) {
+        case CDRIP_ACTIVITY_PHASE_COVER_ART_FETCH:
+            return "Fetching cover art...";
+        case CDRIP_ACTIVITY_PHASE_METADATA_FETCH:
+        default:
+            return "Fetching music tags from servers...";
+    }
+}
+
+std::string activity_source_message(
+    const std::string& source_label) {
+
+    if (source_label.empty()) return {};
+    const std::string lower = cdrip::detail::to_lower(source_label);
+    if (lower == "coverartarchive") return "Cover Art Archive";
+    if (lower == "discogs") return "Discogs";
+    if (lower == "musicbrainz") return "MusicBrainz";
+    if (lower == "musicbrainz recrawl") return "MusicBrainz recrawl";
+    if (lower == "gnudb") return "GnuDB";
+    if (lower == "dbpoweramp") return "dBpoweramp";
+    return source_label;
+}
+
+std::string build_activity_spinner_line(
+    const ActivitySnapshot& snapshot,
+    char frame,
+    double elapsed_sec) {
+
+    std::ostringstream oss;
+    oss << activity_phase_message(snapshot.phase) << " " << frame;
+    if (snapshot.total_sources > 0) {
+        oss << " [" << snapshot.completed_sources << "/" << snapshot.total_sources << "]";
+    }
+    const std::string source = activity_source_message(snapshot.source_label);
+    if (!source.empty()) {
+        oss << " " << source;
+    }
+    oss << " " << fmt_time_fn(elapsed_sec);
+    return oss.str();
+}
+
+std::string format_diagnostic_message(
+    const CdRipDiagnosticInfo& info) {
+
+    const std::string message = view_string(info.message);
+    if (message.empty()) return {};
+
+    switch (info.severity) {
+        case CDRIP_DIAGNOSTIC_SEVERITY_WARNING:
+            return "Warning: " + message;
+        case CDRIP_DIAGNOSTIC_SEVERITY_ERROR:
+            return "Error: " + message;
+        case CDRIP_DIAGNOSTIC_SEVERITY_INFO:
+        case CDRIP_DIAGNOSTIC_SEVERITY_DEBUG:
+        default:
+            return message;
+    }
+}
+
+class ActivitySpinner {
+public:
+    explicit ActivitySpinner(
+        CdRipActivityPhases phase)
+        : enabled_(::isatty(STDOUT_FILENO) != 0) {
+
+        snapshot_.phase = phase;
+        observer_.callback = &ActivitySpinner::observer_cb;
+        observer_.user_data = this;
+    }
+
+    ~ActivitySpinner() {
+        stop();
+    }
+
+    bool enabled() const {
+        return enabled_;
+    }
+
+    const CdRipActivityObserver* observer() const {
+        return enabled_ ? &observer_ : nullptr;
+    }
+
+    void start() {
+        if (!enabled_ || running_.exchange(true)) return;
+        started_at_ = std::chrono::steady_clock::now();
+        worker_ = std::thread([this]() { render_loop(); });
+    }
+
+    void stop() {
+        if (!enabled_ || !running_.exchange(false)) return;
+        if (worker_.joinable()) worker_.join();
+        if (rendered_) {
+            std::lock_guard<std::mutex> guard(output_mutex_);
+            std::cout << "\r" << std::string(last_render_width_, ' ') << "\r";
+            std::cout.flush();
+        }
+    }
+
+    void print_diagnostic_line(
+        const std::string& line) {
+
+        if (line.empty()) return;
+        if (!enabled_) {
+            std::cerr << line << "\n";
+            std::cerr.flush();
+            return;
+        }
+
+        std::lock_guard<std::mutex> guard(output_mutex_);
+        if (rendered_) {
+            std::cout << "\r" << std::string(last_render_width_, ' ') << "\r";
+            std::cout.flush();
+        }
+        std::cerr << line << "\n";
+        std::cerr.flush();
+    }
+
+private:
+    static void observer_cb(
+        const CdRipActivityInfo* info,
+        void* state,
+        void* user_data) {
+
+        (void)state;
+        if (!info || !user_data) return;
+        static_cast<ActivitySpinner*>(user_data)->update(*info);
+    }
+
+    void update(
+        const CdRipActivityInfo& info) {
+
+        std::lock_guard<std::mutex> guard(mutex_);
+        snapshot_.phase = info.phase;
+        snapshot_.state = info.state;
+        snapshot_.source_label = view_string(info.source_label);
+        snapshot_.completed_sources = info.completed_sources;
+        snapshot_.total_sources = info.total_sources;
+    }
+
+    void render_loop() {
+        static constexpr char kFrames[] = {'|', '/', '-', '\\'};
+        static constexpr auto kTick = std::chrono::milliseconds(100);
+        static constexpr auto kInitialDelay = std::chrono::milliseconds(300);
+
+        size_t frame_index = 0;
+        while (running_.load()) {
+            const auto now = std::chrono::steady_clock::now();
+            if ((now - started_at_) >= kInitialDelay) {
+                ActivitySnapshot snapshot_copy;
+                {
+                    std::lock_guard<std::mutex> guard(mutex_);
+                    snapshot_copy = snapshot_;
+                }
+                const double elapsed_sec = std::chrono::duration<double>(now - started_at_).count();
+                std::string line = build_activity_spinner_line(
+                    snapshot_copy,
+                    kFrames[frame_index % (sizeof(kFrames) / sizeof(kFrames[0]))],
+                    elapsed_sec);
+                if (line.size() < last_render_width_) {
+                    line.append(last_render_width_ - line.size(), ' ');
+                }
+                {
+                    std::lock_guard<std::mutex> guard(output_mutex_);
+                    last_render_width_ = line.size();
+                    std::cout << "\r" << line;
+                    std::cout.flush();
+                    rendered_ = true;
+                }
+                ++frame_index;
+            }
+            std::this_thread::sleep_for(kTick);
+        }
+    }
+
+    bool enabled_{false};
+    std::atomic<bool> running_{false};
+    std::thread worker_{};
+    std::chrono::steady_clock::time_point started_at_{};
+    mutable std::mutex mutex_{};
+    mutable std::mutex output_mutex_{};
+    ActivitySnapshot snapshot_{};
+    CdRipActivityObserver observer_{};
+    bool rendered_{false};
+    size_t last_render_width_{0};
+};
+
+void metadata_diagnostic_cb(
+    const CdRipDiagnosticInfo* info,
+    void* state,
+    void* user_data) {
+
+    (void)user_data;
+    if (!info) return;
+    const std::string line = format_diagnostic_message(*info);
+    if (line.empty()) return;
+
+    auto* spinner = static_cast<ActivitySpinner*>(state);
+    if (spinner) {
+        spinner->print_diagnostic_line(line);
+        return;
+    }
+    std::cerr << line << "\n";
+    std::cerr.flush();
 }
 
 struct TerminalSize {
@@ -591,7 +809,7 @@ void maybe_print_cover_art_ascii(const CdRipCoverArt& art) {
 
     GString* out = chafa_canvas_print(canvas, term_info);
     if (out) {
-        std::cout << "\n" << out->str << "\x1b[0m\n";
+        std::cout << "\n\n" << out->str << "\x1b[0m\n";
         g_string_free(out, TRUE);
     }
 
@@ -1144,11 +1362,18 @@ bool ensure_cover_art_merged(
 
     auto try_phase = [&](auto fetch_fn, CoverArtFetchSource phase_source) -> PhaseResult {
         PhaseResult result{};
+        ActivitySpinner phase_spinner{CDRIP_ACTIVITY_PHASE_COVER_ART_FETCH};
+        const CdRipActivityObserver* observer = nullptr;
+        if (phase_spinner.enabled()) {
+            phase_spinner.start();
+            observer = phase_spinner.observer();
+        }
+        void* observer_state = static_cast<void*>(&phase_spinner);
         for (CdRipCddbEntry* e : effective) {
             if (!e) continue;
             const bool had_data = (e->cover_art.data && e->cover_art.size > 0);
             const char* cover_err = nullptr;
-            const int ok = fetch_fn(e, toc, &cover_err);
+            const int ok = fetch_fn(e, toc, observer, observer_state, &cover_err);
             if (ok && e->cover_art.data && e->cover_art.size > 0) {
                 if (e != target) {
                     clear_cover_art(target->cover_art);
@@ -1162,6 +1387,7 @@ bool ensure_cover_art_merged(
                 }
                 if (cover_err) cdrip_release_error(cover_err);
                 result.success = true;
+                phase_spinner.stop();
                 return result;
             }
             if (cover_err) {
@@ -1170,34 +1396,35 @@ bool ensure_cover_art_merged(
                 cdrip_release_error(cover_err);
             }
         }
+        phase_spinner.stop();
         return result;
     };
 
     if (discogs_mode == DiscogsMode::Always) {
-        PhaseResult discogs_result = try_phase(&cdrip_fetch_discogs_cover_art, CoverArtFetchSource::Discogs);
+        PhaseResult discogs_result = try_phase(&cdrip_fetch_discogs_cover_art_ex, CoverArtFetchSource::Discogs);
         if (discogs_result.success) return true;
         // Keep any existing cover art if Discogs did not succeed.
         if (target_has_cover) return true;
-        PhaseResult caa_result = try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive);
+        PhaseResult caa_result = try_phase(&cdrip_fetch_cover_art_ex, CoverArtFetchSource::CoverArtArchive);
         if (caa_result.success) return true;
         if (caa_result.had_error) {
-            PhaseResult retry_discogs = try_phase(&cdrip_fetch_discogs_cover_art, CoverArtFetchSource::Discogs);
+            PhaseResult retry_discogs = try_phase(&cdrip_fetch_discogs_cover_art_ex, CoverArtFetchSource::Discogs);
             if (retry_discogs.success) return true;
         }
         return false;
     }
     if (discogs_mode == DiscogsMode::Fallback) {
-        PhaseResult caa_result = try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive);
+        PhaseResult caa_result = try_phase(&cdrip_fetch_cover_art_ex, CoverArtFetchSource::CoverArtArchive);
         if (caa_result.success) return true;
-        PhaseResult discogs_result = try_phase(&cdrip_fetch_discogs_cover_art, CoverArtFetchSource::Discogs);
+        PhaseResult discogs_result = try_phase(&cdrip_fetch_discogs_cover_art_ex, CoverArtFetchSource::Discogs);
         if (discogs_result.success) return true;
         if (discogs_result.had_error) {
-            PhaseResult retry_caa = try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive);
+            PhaseResult retry_caa = try_phase(&cdrip_fetch_cover_art_ex, CoverArtFetchSource::CoverArtArchive);
             if (retry_caa.success) return true;
         }
         return false;
     }
-    return try_phase(&cdrip_fetch_cover_art, CoverArtFetchSource::CoverArtArchive).success;
+    return try_phase(&cdrip_fetch_cover_art_ex, CoverArtFetchSource::CoverArtArchive).success;
 }
 
 struct CddbSelection {
@@ -1246,7 +1473,6 @@ CddbSelection select_cddb_entry_for_toc(
     }
     std::cout << "\n";
 
-    std::cout << "Fetcing music tags from servers ...\n";
     const char* fetch_err = nullptr;
     CdRipCddbEntryList* entries = nullptr;
     std::string cache_key;
@@ -1260,13 +1486,40 @@ CddbSelection select_cddb_entry_for_toc(
         }
     }
     if (!entries) {
-        entries = cdrip_fetch_cddb_entries(
-            toc,
-            servers,
-            allow_recrawl,
-            recrawl_track_length_tolerance_percent,
-            log_recrawl,
-            &fetch_err);
+        ActivitySpinner fetch_spinner{CDRIP_ACTIVITY_PHASE_METADATA_FETCH};
+        CdRipDiagnosticObserver diagnostic_observer{};
+        const CdRipDiagnosticObserver* diagnostic = nullptr;
+        if (log_recrawl) {
+            diagnostic_observer.callback = &metadata_diagnostic_cb;
+            diagnostic_observer.user_data = nullptr;
+            diagnostic = &diagnostic_observer;
+        }
+        if (fetch_spinner.enabled()) {
+            fetch_spinner.start();
+            entries = cdrip_fetch_cddb_entries_ex(
+                toc,
+                servers,
+                allow_recrawl,
+                recrawl_track_length_tolerance_percent,
+                log_recrawl,
+                fetch_spinner.observer(),
+                diagnostic,
+                static_cast<void*>(&fetch_spinner),
+                &fetch_err);
+            fetch_spinner.stop();
+        } else {
+            std::cout << "Fetcing music tags from servers ...\n";
+            entries = cdrip_fetch_cddb_entries_ex(
+                toc,
+                servers,
+                allow_recrawl,
+                recrawl_track_length_tolerance_percent,
+                log_recrawl,
+                nullptr,
+                diagnostic,
+                nullptr,
+                &fetch_err);
+        }
         if (entries && metadata_cache && !cache_key.empty()) {
             (*metadata_cache)[cache_key] = EntryListPtr(
                 clone_cddb_entry_list(entries));
