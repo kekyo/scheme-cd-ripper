@@ -343,48 +343,22 @@ int cdrip_update_flac_with_cddb_entry(
         track_title = "Track " + std::to_string(tn);
     }
 
-    std::ostringstream offsets_oss;
-    if (toc->tracks && toc->tracks_count > 0) {
-        for (size_t i = 0; i < toc->tracks_count; ++i) {
-            if (i > 0) offsets_oss << ",";
-            offsets_oss << toc->tracks[i].start;
-        }
-    }
-
     std::map<std::string, std::string> tags = {
         {"TITLE", track_title},
         {"ARTIST", album_tag(entry, "ARTIST")},
         {"ALBUM", album_tag(entry, "ALBUM")},
         {"GENRE", album_tag(entry, "GENRE")},
         {"DATE", album_tag(entry, "DATE")},
-        {"TRACKNUMBER", (track_number > 0) ? std::to_string(track_number) : std::string{}},
-        {"TRACKTOTAL", std::to_string(track_total)},
-        {"CDDB_DISCID", to_string_or_empty(entry->cddb_discid)},
-        {"CDDB_OFFSETS", offsets_oss.str()},
-        {"CDDB_TOTAL_SECONDS", std::to_string(toc->length_seconds)},
         {"CDDB", to_string_or_empty(entry->source_label)},
         {"CDDB_DATE", fetched_at},
         //{"CDDB_URL", to_string_or_empty(entry->source_url)},  // Ignored
     };
-
-    const std::string mb_discid = to_string_or_empty(toc->mb_discid);
-    if (!mb_discid.empty()) {
-        tags["MUSICBRAINZ_DISCID"] = mb_discid;
-        long mb_leadout = toc->leadout_sector > 0
-            ? toc->leadout_sector + 150
-            : 0;
-        if (mb_leadout > 0) {
-            tags["MUSICBRAINZ_LEADOUT"] = std::to_string(mb_leadout);
-        }
-    }
-    const std::string mb_release = to_string_or_empty(toc->mb_release_id);
-    const std::string mb_medium = to_string_or_empty(toc->mb_medium_id);
-    if (!mb_release.empty() && tags.find("MUSICBRAINZ_RELEASE") == tags.end()) {
-        tags["MUSICBRAINZ_RELEASE"] = mb_release;
-    }
-    if (!mb_medium.empty() && tags.find("MUSICBRAINZ_MEDIUM") == tags.end()) {
-        tags["MUSICBRAINZ_MEDIUM"] = mb_medium;
-    }
+    append_requery_seed_tags(
+        tags,
+        toc,
+        to_string_or_empty(entry->cddb_discid),
+        track_number,
+        track_total);
 
     auto apply_tags = [&](const CdRipTagKV* kvs, size_t count) {
         for (size_t i = 0; i < count; ++i) {

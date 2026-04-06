@@ -317,4 +317,63 @@ bool compute_musicbrainz_discid(
     const CdRipDiscToc* toc,
     std::string& out_discid,
     long& out_leadout);
+
+static inline std::string build_cddb_offsets_tag(
+    const CdRipDiscToc* toc) {
+
+    if (!toc || !toc->tracks || toc->tracks_count == 0) return {};
+    std::ostringstream oss;
+    for (size_t i = 0; i < toc->tracks_count; ++i) {
+        if (i > 0) oss << ",";
+        oss << toc->tracks[i].start;
+    }
+    return oss.str();
+}
+
+static inline void append_requery_seed_tags(
+    std::map<std::string, std::string>& tags,
+    const CdRipDiscToc* toc,
+    const std::string& cddb_discid,
+    int track_number,
+    int track_total) {
+
+    if (track_number > 0) {
+        tags["TRACKNUMBER"] = std::to_string(track_number);
+    }
+    if (track_total > 0) {
+        tags["TRACKTOTAL"] = std::to_string(track_total);
+    }
+    if (!cddb_discid.empty()) {
+        tags["CDDB_DISCID"] = cddb_discid;
+    }
+
+    const std::string offsets = build_cddb_offsets_tag(toc);
+    if (!offsets.empty()) {
+        tags["CDDB_OFFSETS"] = offsets;
+    }
+    if (toc && toc->length_seconds > 0) {
+        tags["CDDB_TOTAL_SECONDS"] = std::to_string(toc->length_seconds);
+    }
+    if (!toc) return;
+
+    const std::string mb_discid = to_string_or_empty(toc->mb_discid);
+    if (!mb_discid.empty()) {
+        tags["MUSICBRAINZ_DISCID"] = mb_discid;
+        const long mb_leadout = (toc->leadout_sector > 0)
+            ? (toc->leadout_sector + 150)
+            : 0;
+        if (mb_leadout > 0) {
+            tags["MUSICBRAINZ_LEADOUT"] = std::to_string(mb_leadout);
+        }
+    }
+
+    const std::string mb_release = to_string_or_empty(toc->mb_release_id);
+    if (!mb_release.empty() && tags.find("MUSICBRAINZ_RELEASE") == tags.end()) {
+        tags["MUSICBRAINZ_RELEASE"] = mb_release;
+    }
+    const std::string mb_medium = to_string_or_empty(toc->mb_medium_id);
+    if (!mb_medium.empty() && tags.find("MUSICBRAINZ_MEDIUM") == tags.end()) {
+        tags["MUSICBRAINZ_MEDIUM"] = mb_medium;
+    }
+}
 }

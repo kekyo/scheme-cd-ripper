@@ -256,18 +256,6 @@ int cdrip_rip_track(
     const std::string cddb_discid = !meta_discid.empty()
         ? meta_discid
         : to_string_or_empty(toc->cddb_discid);
-    std::string cddb_offsets;
-    if (toc->tracks && toc->tracks_count > 0) {
-        std::ostringstream oss;
-        for (size_t i = 0; i < toc->tracks_count; ++i) {
-            if (i > 0) oss << ",";
-            oss << toc->tracks[i].start;
-        }
-        cddb_offsets = oss.str();
-    }
-    const std::string cddb_total_seconds = (toc->length_seconds > 0)
-        ? std::to_string(toc->length_seconds)
-        : std::string{};
 
     std::map<std::string, std::string> tags = {
         {"TITLE", title},
@@ -275,12 +263,8 @@ int cdrip_rip_track(
         {"ALBUM", meta_album},
         {"GENRE", meta_genre},
         {"DATE", meta_year},
-        {"TRACKNUMBER", std::to_string(track->number)},
-        {"TRACKTOTAL", std::to_string(total_tracks)},
-        {"CDDB_DISCID", cddb_discid},
-        {"CDDB_OFFSETS", cddb_offsets},
-        {"CDDB_TOTAL_SECONDS", cddb_total_seconds},
     };
+    append_requery_seed_tags(tags, toc, cddb_discid, track->number, total_tracks);
     if (!ignore_source) {
         tags["CDDB"] = meta_source_label;
         tags["CDDB_DATE"] = fetched_for_tag;
@@ -305,19 +289,6 @@ int cdrip_rip_track(
         const auto& tt = meta->tracks[static_cast<size_t>(track->number - 1)];
         if (tt.tags && tt.tags_count > 0) {
             apply_tags(tt.tags, tt.tags_count);
-        }
-    }
-
-    if (ignore_source) {
-        const std::string mb_discid = to_string_or_empty(toc->mb_discid);
-        if (!mb_discid.empty()) {
-            tags["MUSICBRAINZ_DISCID"] = mb_discid;
-            long mb_leadout = toc->leadout_sector > 0
-                ? toc->leadout_sector + 150
-                : 0;
-            if (mb_leadout > 0) {
-                tags["MUSICBRAINZ_LEADOUT"] = std::to_string(mb_leadout);
-            }
         }
     }
 

@@ -147,3 +147,12 @@ target_link_directories(cdrip_test_musicbrainz_recrawl_filter PRIVATE ${COMMON_L
 target_compile_options(cdrip_test_musicbrainz_recrawl_filter PRIVATE ${COMMON_CFLAGS})
 target_link_libraries(cdrip_test_musicbrainz_recrawl_filter PRIVATE cdrip_static)
 add_dependencies(cdrip_test_musicbrainz_recrawl_filter version_header)
+
+add_executable(cdrip_test_requery_seed_tags
+    tests/test_requery_seed_tags.cpp
+)
+target_include_directories(cdrip_test_requery_seed_tags PRIVATE ${COMMON_INCLUDES})
+target_link_directories(cdrip_test_requery_seed_tags PRIVATE ${COMMON_LIB_DIRS})
+target_compile_options(cdrip_test_requery_seed_tags PRIVATE ${COMMON_CFLAGS})
+target_link_libraries(cdrip_test_requery_seed_tags PRIVATE cdrip_static)
+add_dependencies(cdrip_test_requery_seed_tags version_header)
