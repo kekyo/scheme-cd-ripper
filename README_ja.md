@@ -244,6 +244,7 @@ max_width=512        # カバーアート最大幅(px、1以上)
 speed=slow           # slow または fast（デフォルト: slow）
 aa=true              # カバーアートをANSI/ASCIIアートで表示（TTYのみ）
 discogs=always       # no / always / fallback（カバーアートの優先順。デフォルト: always）
+recrawl_percent=2    # MusicBrainz候補のトラック長許容差(%)（デフォルト: 2）
 mode=best            # best / fast / default
 repeat=false
 sort=false

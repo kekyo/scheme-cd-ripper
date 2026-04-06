@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <future>
 #include <iostream>
@@ -56,6 +57,8 @@ constexpr int kMusicBrainzTimeoutSec = 10;
 constexpr int kMusicBrainzRetryDelayMs = 1200;
 constexpr int kMusicBrainzMaxAttempts = 3;
 constexpr int kMusicBrainzSearchLimit = 10;
+constexpr int kDefaultRecrawlTrackLengthTolerancePercent = 2;
+constexpr long long kMinimumTrackLengthToleranceMs = 1000;
 
 static const char* kMusicBrainzLabel = "musicbrainz";
 // Includes kept minimal but must contain genres/tags so we can populate GENRE.
@@ -79,6 +82,12 @@ static std::string get_string_member(JsonObject* obj, const char* name) {
     const gchar* value = json_object_get_string_member(obj, name);
     return value ? std::string{value} : std::string{};
 }
+
+struct MusicBrainzRecrawlMatchOptions {
+    bool enabled{false};
+    int track_length_tolerance_percent{kDefaultRecrawlTrackLengthTolerancePercent};
+    bool log_rejections{false};
+};
 
 static void release_cddb_entry(CdRipCddbEntry& e) {
     release_cstr(e.cddb_discid);
@@ -248,6 +257,139 @@ static bool offsets_match(JsonArray* arr, const std::vector<long>& expected) {
     return true;
 }
 
+static int sanitize_recrawl_track_length_tolerance_percent(int value) {
+    return value >= 0 ? value : kDefaultRecrawlTrackLengthTolerancePercent;
+}
+
+static bool has_matching_track_count_for_recrawl(
+    JsonObject* medium,
+    const CdRipDiscToc* toc) {
+
+    if (!medium || !toc) return false;
+    JsonArray* tracks = get_array_member(medium, "tracks");
+    if (!tracks) return false;
+    if (json_array_get_length(tracks) != toc->tracks_count) return false;
+
+    const int track_count = get_int_member(medium, "track-count", -1);
+    if (track_count > 0 && static_cast<size_t>(track_count) != toc->tracks_count) {
+        return false;
+    }
+    return true;
+}
+
+static int get_track_length_ms(JsonObject* track_obj) {
+    if (!track_obj) return -1;
+
+    const int track_length = get_int_member(track_obj, "length", -1);
+    if (track_length > 0) return track_length;
+
+    JsonObject* recording = get_object_member(track_obj, "recording");
+    return get_int_member(recording, "length", -1);
+}
+
+static bool extract_medium_track_lengths_for_recrawl(
+    JsonObject* medium,
+    size_t expected_count,
+    std::vector<int>& track_lengths_ms) {
+
+    track_lengths_ms.clear();
+    if (!medium || expected_count == 0) return false;
+
+    JsonArray* tracks = get_array_member(medium, "tracks");
+    if (!tracks) return false;
+    if (json_array_get_length(tracks) != expected_count) return false;
+
+    track_lengths_ms.assign(expected_count, -1);
+    std::vector<bool> assigned(expected_count, false);
+    size_t fallback_index = 0;
+    const guint track_len = json_array_get_length(tracks);
+    for (guint ti = 0; ti < track_len; ++ti) {
+        JsonObject* track_obj = json_array_get_object_element(tracks, ti);
+        if (!track_obj) return false;
+
+        int position = get_int_member(track_obj, "position", -1);
+        if (position <= 0) {
+            const std::string number = get_string_member(track_obj, "number");
+            if (!number.empty()) {
+                try {
+                    position = std::stoi(number);
+                } catch (...) {
+                    position = -1;
+                }
+            }
+        }
+
+        size_t index = 0;
+        if (position > 0) {
+            index = static_cast<size_t>(position - 1);
+        } else {
+            while (fallback_index < expected_count && assigned[fallback_index]) {
+                ++fallback_index;
+            }
+            if (fallback_index >= expected_count) return false;
+            index = fallback_index;
+        }
+        if (index >= expected_count || assigned[index]) return false;
+
+        const int track_length_ms = get_track_length_ms(track_obj);
+        if (track_length_ms <= 0) return false;
+
+        track_lengths_ms[index] = track_length_ms;
+        assigned[index] = true;
+    }
+
+    return std::all_of(
+        assigned.begin(),
+        assigned.end(),
+        [](bool value) { return value; });
+}
+
+static bool track_lengths_match_for_recrawl(
+    const CdRipDiscToc* toc,
+    const std::vector<int>& track_lengths_ms,
+    int tolerance_percent) {
+
+    if (!toc || !toc->tracks || toc->tracks_count == 0) return false;
+    if (track_lengths_ms.size() != toc->tracks_count) return false;
+
+    const int safe_tolerance_percent =
+        sanitize_recrawl_track_length_tolerance_percent(tolerance_percent);
+    for (size_t i = 0; i < toc->tracks_count; ++i) {
+        const auto& track = toc->tracks[i];
+        const long track_frames = track.end - track.start + 1;
+        if (track_frames <= 0) return false;
+
+        const long long expected_ms = static_cast<long long>(std::llround(
+            (static_cast<long double>(track_frames) * 1000.0L) / CDIO_CD_FRAMES_PER_SEC));
+        const long long actual_ms = track_lengths_ms[i];
+        const long long percent_tolerance_ms = static_cast<long long>(std::ceil(
+            (expected_ms * static_cast<long double>(safe_tolerance_percent)) / 100.0L));
+        // Update-mode TOCs may reconstruct the last track only at whole-second precision.
+        const long long allowed_ms = std::max(kMinimumTrackLengthToleranceMs, percent_tolerance_ms);
+        const long long diff_ms = std::llabs(actual_ms - expected_ms);
+        if (diff_ms > allowed_ms) return false;
+    }
+    return true;
+}
+
+static bool medium_matches_for_recrawl(
+    JsonObject* medium,
+    const CdRipDiscToc* toc,
+    const MusicBrainzRecrawlMatchOptions& options) {
+
+    if (!options.enabled) return false;
+    if (!has_matching_track_count_for_recrawl(medium, toc)) return false;
+
+    std::vector<int> track_lengths_ms;
+    if (!extract_medium_track_lengths_for_recrawl(medium, toc->tracks_count, track_lengths_ms)) {
+        return false;
+    }
+    return track_lengths_match_for_recrawl(
+        toc,
+        track_lengths_ms,
+        options.track_length_tolerance_percent);
+}
+
 static bool medium_matches(
     JsonObject* medium,
     const CdRipDiscToc* toc,
@@ -289,10 +431,10 @@ static std::vector<JsonObject*> select_matching_media(
     const CdRipDiscToc* toc,
     const std::vector<long>& offsets,
     const std::string& discid,
-    const std::string& preferred_medium) {
+    const std::string& preferred_medium,
+    const MusicBrainzRecrawlMatchOptions* recrawl_options) {
 
     std::vector<JsonObject*> matches;
-    std::vector<JsonObject*> same_tracks;
     if (!media_array) return matches;
     const guint len = json_array_get_length(media_array);
 
@@ -314,7 +456,19 @@ static std::vector<JsonObject*> select_matching_media(
                 }
             }
         }
-        if (!discid_matches.empty()) return discid_matches;
+        if (!discid_matches.empty()) {
+            if (recrawl_options && recrawl_options->enabled) {
+                std::vector<JsonObject*> strict_matches;
+                strict_matches.reserve(discid_matches.size());
+                for (JsonObject* medium : discid_matches) {
+                    if (medium_matches_for_recrawl(medium, toc, *recrawl_options)) {
+                        strict_matches.push_back(medium);
+                    }
+                }
+                return strict_matches;
+            }
+            return discid_matches;
+        }
     }
 
     for (guint i = 0; i < len; ++i) {
@@ -322,15 +476,22 @@ static std::vector<JsonObject*> select_matching_media(
         if (!medium) continue;
         if (medium_matches(medium, toc, offsets, discid, preferred_medium)) {
             matches.push_back(medium);
-        } else {
-            const int track_count = get_int_member(medium, "track-count", -1);
-            if (track_count > 0 && static_cast<size_t>(track_count) == toc->tracks_count) {
-                same_tracks.push_back(medium);
-            }
         }
     }
-    if (!matches.empty()) return matches;
-    if (!same_tracks.empty()) return same_tracks;
+    if (!matches.empty()) {
+        if (recrawl_options && recrawl_options->enabled) {
+            std::vector<JsonObject*> strict_matches;
+            strict_matches.reserve(matches.size());
+            for (JsonObject* medium : matches) {
+                if (medium_matches_for_recrawl(medium, toc, *recrawl_options)) {
+                    strict_matches.push_back(medium);
+                }
+            }
+            return strict_matches;
+        }
+        return matches;
+    }
+    if (recrawl_options && recrawl_options->enabled) return matches;
     if (len > 0) {
         JsonObject* first_medium = json_array_get_object_element(media_array, 0);
         if (first_medium) matches.push_back(first_medium);
@@ -608,6 +769,7 @@ static bool build_entries_from_release(
     JsonObject* release_obj,
     const std::vector<long>& offsets,
     const std::string& discid,
+    const MusicBrainzRecrawlMatchOptions* recrawl_options,
     std::vector<CdRipCddbEntry>& results);
 
 static bool fetch_release_details_and_build(
@@ -615,6 +777,7 @@ static bool fetch_release_details_and_build(
     const std::string& release_id,
     const std::vector<long>& offsets,
     const std::string& discid,
+    const MusicBrainzRecrawlMatchOptions* recrawl_options,
     std::vector<CdRipCddbEntry>& results,
     std::string& err) {
 
@@ -642,7 +805,7 @@ static bool fetch_release_details_and_build(
         return false;
     }
     JsonObject* root_obj = json_node_get_object(root);
-    bool ok = build_entries_from_release(toc, url, root_obj, offsets, discid, results);
+    bool ok = build_entries_from_release(toc, url, root_obj, offsets, discid, recrawl_options, results);
     g_object_unref(parser);
     return ok;
 }
@@ -748,6 +911,7 @@ static bool build_entries_from_release(
     JsonObject* release_obj,
     const std::vector<long>& offsets,
     const std::string& discid,
+    const MusicBrainzRecrawlMatchOptions* recrawl_options,
     std::vector<CdRipCddbEntry>& results) {
 
     if (!release_obj || !toc) return false;
@@ -756,8 +920,20 @@ static bool build_entries_from_release(
 
     const std::string preferred_medium = to_string_or_empty(toc->mb_medium_id);
     std::vector<JsonObject*> media = select_matching_media(
-        media_array, toc, offsets, discid, preferred_medium);
-    if (media.empty()) return false;
+        media_array, toc, offsets, discid, preferred_medium, recrawl_options);
+    if (media.empty()) {
+        if (recrawl_options && recrawl_options->enabled && recrawl_options->log_rejections) {
+            const std::string release_id = get_string_member(release_obj, "id");
+            const std::string release_title = get_string_member(release_obj, "title");
+            std::cerr << "  reject release: "
+                      << (release_title.empty() ? "(untitled)" : release_title);
+            if (!release_id.empty()) {
+                std::cerr << " [" << release_id << "]";
+            }
+            std::cerr << " (track count/length mismatch)\n";
+        }
+        return false;
+    }
 
     const std::string release_id = get_string_member(release_obj, "id");
     const std::string release_title = get_string_member(release_obj, "title");
@@ -923,6 +1099,11 @@ static bool fetch_musicbrainz_entries(
         }
     }
     const std::string release_id = to_string_or_empty(toc->mb_release_id);
+    const MusicBrainzRecrawlMatchOptions match_options{
+        true,
+        kDefaultRecrawlTrackLengthTolerancePercent,
+        false,
+    };
 
     std::string url;
     bool use_release_endpoint = false;
@@ -968,7 +1149,7 @@ static bool fetch_musicbrainz_entries(
     JsonObject* root_obj = json_node_get_object(root);
 
     if (use_release_endpoint) {
-        build_entries_from_release(toc, url, root_obj, offsets, discid, results);
+        build_entries_from_release(toc, url, root_obj, offsets, discid, &match_options, results);
     } else {
         JsonArray* releases = get_array_member(root_obj, "releases");
         if (releases) {
@@ -981,7 +1162,14 @@ static bool fetch_musicbrainz_entries(
                 const std::string rid = get_string_member(release_obj, "id");
                 if (rid.empty()) continue;
                 std::string rel_err;
-                if (fetch_release_details_and_build(toc, rid, offsets, discid, results, rel_err)) {
+                if (fetch_release_details_and_build(
+                        toc,
+                        rid,
+                        offsets,
+                        discid,
+                        &match_options,
+                        results,
+                        rel_err)) {
                     any_success = true;
                 } else if (!rel_err.empty()) {
                     last_err = rel_err;
@@ -992,7 +1180,14 @@ static bool fetch_musicbrainz_entries(
                 for (guint i = 0; i < len; ++i) {
                     JsonObject* release_obj = json_array_get_object_element(releases, i);
                     if (!release_obj) continue;
-                    build_entries_from_release(toc, url, release_obj, offsets, discid, results);
+                    build_entries_from_release(
+                        toc,
+                        url,
+                        release_obj,
+                        offsets,
+                        discid,
+                        &match_options,
+                        results);
                 }
                 if (results.empty() && !last_err.empty()) {
                     err = last_err;
@@ -1010,6 +1205,8 @@ static bool fetch_musicbrainz_entries(
 static bool fetch_musicbrainz_entries_by_title(
     const CdRipDiscToc* toc,
     const std::string& album_title,
+    int recrawl_track_length_tolerance_percent,
+    bool log_recrawl,
     std::vector<CdRipCddbEntry>& results,
     std::string& err) {
 
@@ -1058,6 +1255,11 @@ static bool fetch_musicbrainz_entries_by_title(
     }
     JsonObject* root_obj = json_node_get_object(root);
     JsonArray* releases = get_array_member(root_obj, "releases");
+    const MusicBrainzRecrawlMatchOptions recrawl_options{
+        true,
+        sanitize_recrawl_track_length_tolerance_percent(recrawl_track_length_tolerance_percent),
+        log_recrawl,
+    };
     if (releases) {
         const guint len = json_array_get_length(releases);
         bool any_success = false;
@@ -1068,7 +1270,14 @@ static bool fetch_musicbrainz_entries_by_title(
             const std::string rid = get_string_member(release_obj, "id");
             if (rid.empty()) continue;
             std::string rel_err;
-            if (fetch_release_details_and_build(toc, rid, offsets, discid, results, rel_err)) {
+            if (fetch_release_details_and_build(
+                    toc,
+                    rid,
+                    offsets,
+                    discid,
+                    &recrawl_options,
+                    results,
+                    rel_err)) {
                 any_success = true;
             } else if (!rel_err.empty()) {
                 last_err = rel_err;
@@ -1234,6 +1443,7 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
     const CdRipDiscToc* toc,
     const CdRipCddbServerList* servers,
     bool allow_recrawl,
+    int recrawl_track_length_tolerance_percent,
     bool log_recrawl,
     const char** error) {
 
@@ -1344,7 +1554,13 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
                         }
                         std::vector<CdRipCddbEntry> mb_entries;
                         std::string candidate_err;
-                        if (!fetch_musicbrainz_entries_by_title(toc, variant, mb_entries, candidate_err)) {
+                        if (!fetch_musicbrainz_entries_by_title(
+                                toc,
+                                variant,
+                                recrawl_track_length_tolerance_percent,
+                                log_recrawl,
+                                mb_entries,
+                                candidate_err)) {
                             if (!candidate_err.empty()) {
                                 mb_title_err = candidate_err;
                             }
@@ -1441,3 +1657,69 @@ void cdrip_release_cddbentry_list(
 }
 
 };
+
+namespace cdrip::detail {
+
+bool build_musicbrainz_entries_from_release_json(
+    const CdRipDiscToc* toc,
+    const std::string& request_url,
+    const std::string& release_json,
+    bool strict_title_recrawl_match,
+    int track_length_tolerance_percent,
+    bool log_rejections,
+    std::vector<CdRipCddbEntry>& results,
+    std::string& err) {
+
+    err.clear();
+    JsonParser* parser = json_parser_new();
+    GError* gerr = nullptr;
+    if (!json_parser_load_from_data(parser, release_json.c_str(), release_json.size(), &gerr)) {
+        err = gerr && gerr->message ? std::string{gerr->message} : "MusicBrainz release parse error";
+        if (gerr) g_error_free(gerr);
+        g_object_unref(parser);
+        return false;
+    }
+
+    JsonNode* root = json_parser_get_root(parser);
+    if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
+        err = "MusicBrainz release response is not a JSON object";
+        g_object_unref(parser);
+        return false;
+    }
+
+    long mb_leadout = 0;
+    std::vector<long> offsets = build_mb_offsets(toc, mb_leadout);
+    if (offsets.empty()) {
+        err = "MusicBrainz query failed: unable to build TOC";
+        g_object_unref(parser);
+        return false;
+    }
+
+    const MusicBrainzRecrawlMatchOptions options{
+        strict_title_recrawl_match,
+        sanitize_recrawl_track_length_tolerance_percent(track_length_tolerance_percent),
+        log_rejections,
+    };
+    const std::string discid = to_string_or_empty(toc ? toc->mb_discid : nullptr);
+    build_entries_from_release(
+        toc,
+        request_url,
+        json_node_get_object(root),
+        offsets,
+        discid,
+        strict_title_recrawl_match ? &options : nullptr,
+        results);
+    g_object_unref(parser);
+    return true;
+}
+
+void release_cddb_entries(
+    std::vector<CdRipCddbEntry>& entries) {
+
+    for (auto& entry : entries) {
+        release_cddb_entry(entry);
+    }
+    entries.clear();
+}
+
+}  // namespace cdrip::detail

@@ -304,6 +304,7 @@ typedef struct CdRipCddbEntryList {
  * @param servers Server list to query.
  * @param allow_recrawl When true, always re-search MusicBrainz by title if CDDB candidates exist.
  *                      When false, only re-search when MusicBrainz returned no entries.
+ * @param recrawl_track_length_tolerance_percent Allowed per-track length drift for MusicBrainz candidates.
  * @param log_recrawl When true, emit debug logs for recrawl queries.
  * @param error Optional error string out-parameter.
  * @return Aggregated entry list; free with cdrip_release_cddbentry_list.
@@ -312,6 +313,7 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
     const CdRipDiscToc* toc,
     const CdRipCddbServerList* servers,
     bool allow_recrawl,
+    int recrawl_track_length_tolerance_percent,
     bool log_recrawl,
     const char** error /* nullable */);
 /**

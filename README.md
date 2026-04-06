@@ -247,6 +247,7 @@ max_width=512        # cover art max width in pixels (> 0)
 speed=slow           # slow or fast (default: slow)
 aa=true              # show cover art as ANSI/ASCII art (TTY only)
 discogs=always       # no / always / fallback (cover art preference order, default: always)
+recrawl_percent=2    # Per-track length tolerance for MusicBrainz candidates (default: 2)
 mode=best            # best / fast / default
 repeat=false
 sort=false

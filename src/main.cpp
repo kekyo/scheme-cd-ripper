@@ -36,6 +36,8 @@
 
 namespace {
 
+constexpr int kDefaultMusicBrainzRecrawlTrackLengthTolerancePercent = 2;
+
 std::string view_string(const char* s) {
     return s ? std::string{s} : std::string{};
 }
@@ -271,6 +273,24 @@ bool parse_bool_value(
     return false;
 }
 
+bool parse_int_value(
+    const std::string& raw,
+    int& out) {
+
+    const std::string value = strip_inline_comment_value(raw);
+    if (value.empty()) return false;
+
+    size_t index = 0;
+    try {
+        const int parsed = std::stoi(value, &index);
+        if (index != value.size()) return false;
+        out = parsed;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 bool get_config_bool(
     const char* config_path,
     const char* group,
@@ -346,6 +366,48 @@ std::string get_config_string(
         }
         value = strip_inline_comment_value(raw);
         g_free(raw);
+    }
+
+    g_key_file_unref(key_file);
+    return value;
+}
+
+int get_config_int(
+    const char* config_path,
+    const char* group,
+    const char* key,
+    int default_value,
+    std::string& err_out) {
+
+    err_out.clear();
+    if (!config_path || !group || !key) return default_value;
+
+    GKeyFile* key_file = g_key_file_new();
+    GError* gerr = nullptr;
+    if (!g_key_file_load_from_file(key_file, config_path, G_KEY_FILE_NONE, &gerr)) {
+        err_out = (gerr && gerr->message) ? gerr->message : "Failed to load config file";
+        if (gerr) g_error_free(gerr);
+        g_key_file_unref(key_file);
+        return default_value;
+    }
+
+    int value = default_value;
+    if (g_key_file_has_key(key_file, group, key, nullptr)) {
+        gerr = nullptr;
+        char* raw = g_key_file_get_string(key_file, group, key, &gerr);
+        if (!raw) {
+            err_out = (gerr && gerr->message) ? gerr->message : "Failed to parse integer value";
+            if (gerr) g_error_free(gerr);
+            g_key_file_unref(key_file);
+            return default_value;
+        }
+        const std::string cleaned = raw;
+        g_free(raw);
+        if (!parse_int_value(cleaned, value)) {
+            err_out = "Failed to parse integer value";
+            g_key_file_unref(key_file);
+            return default_value;
+        }
     }
 
     g_key_file_unref(key_file);
@@ -1120,6 +1182,7 @@ CddbSelection select_cddb_entry_for_toc(
     bool auto_mode = false,
     bool allow_fallback = true,
     bool allow_recrawl = true,
+    int recrawl_track_length_tolerance_percent = kDefaultMusicBrainzRecrawlTrackLengthTolerancePercent,
     bool log_recrawl = false,
     EntryListCache* metadata_cache = nullptr,
     const GRegex* title_filter = nullptr) {
@@ -1163,7 +1226,13 @@ CddbSelection select_cddb_entry_for_toc(
         }
     }
     if (!entries) {
-        entries = cdrip_fetch_cddb_entries(toc, servers, allow_recrawl, log_recrawl, &fetch_err);
+        entries = cdrip_fetch_cddb_entries(
+            toc,
+            servers,
+            allow_recrawl,
+            recrawl_track_length_tolerance_percent,
+            log_recrawl,
+            &fetch_err);
         if (entries && metadata_cache && !cache_key.empty()) {
             (*metadata_cache)[cache_key] = EntryListPtr(
                 clone_cddb_entry_list(entries));
@@ -1730,6 +1799,7 @@ int run_update_mode(
     bool sort,
     bool auto_mode,
     bool allow_recrawl,
+    int recrawl_track_length_tolerance_percent,
     bool log_recrawl,
     DiscogsMode discogs_mode,
     bool allow_aa,
@@ -1779,7 +1849,12 @@ int run_update_mode(
             const std::string cache_key = build_metadata_cache_key(item.toc);
             auto selection = select_cddb_entry_for_toc(
                 item.toc, servers, sort, view_string(item.path), auto_mode,
-                /*allow_fallback=*/false, allow_recrawl, log_recrawl, &metadata_cache, title_filter);
+                /*allow_fallback=*/false,
+                allow_recrawl,
+                recrawl_track_length_tolerance_percent,
+                log_recrawl,
+                &metadata_cache,
+                title_filter);
             if (!selection.entries || !selection.selected) {
                 std::cout << "  Skipped: no metadata selected\n";
                 if (selection.entries) cdrip_release_cddbentry_list(selection.entries);
@@ -1932,12 +2007,36 @@ int main(int argc, char** argv) {
         discogs_mode = DiscogsMode::No;
     }
 
+    int recrawl_track_length_tolerance_percent =
+        kDefaultMusicBrainzRecrawlTrackLengthTolerancePercent;
+    std::string recrawl_tolerance_err;
+    if (cfg->config_path && cfg->config_path[0]) {
+        recrawl_track_length_tolerance_percent = get_config_int(
+            cfg->config_path,
+            "cdrip",
+            "recrawl_percent",
+            kDefaultMusicBrainzRecrawlTrackLengthTolerancePercent,
+            recrawl_tolerance_err);
+        if (!recrawl_tolerance_err.empty()) {
+            std::cerr << "Failed to parse cdrip.recrawl_percent from \""
+                      << view_string(cfg->config_path) << "\": " << recrawl_tolerance_err << "\n";
+            return 1;
+        }
+        if (recrawl_track_length_tolerance_percent < 0) {
+            std::cerr << "Invalid cdrip.recrawl_percent in \""
+                      << view_string(cfg->config_path) << "\": "
+                      << recrawl_track_length_tolerance_percent << " (expected: >= 0)\n";
+            return 1;
+        }
+    }
+
     cdrip_set_cover_art_max_width(max_width);
 
     if (!cli_opts.update_paths.empty()) {
         // Ignore other options when update mode is specified.
         return run_update_mode(cli_opts.update_paths, servers_from_config, cfg->sort, auto_mode,
-                               allow_recrawl, log_recrawl, discogs_mode, allow_aa, title_filter.get());
+                               allow_recrawl, recrawl_track_length_tolerance_percent, log_recrawl,
+                               discogs_mode, allow_aa, title_filter.get());
     }
 
     const char* err = nullptr;
@@ -2121,7 +2220,8 @@ int main(int argc, char** argv) {
 
         auto selection = select_cddb_entry_for_toc(
             toc, servers, sort, std::string{}, auto_mode, /*allow_fallback=*/true,
-            allow_recrawl, log_recrawl, /*metadata_cache=*/nullptr, title_filter.get());
+            allow_recrawl, recrawl_track_length_tolerance_percent, log_recrawl,
+            /*metadata_cache=*/nullptr, title_filter.get());
         const bool ignore_meta = (selection.selected == nullptr);
         if (!selection.entries) {
             std::cerr << "Failed to obtain CDDB entries\n";

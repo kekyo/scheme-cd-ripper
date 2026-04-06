@@ -138,3 +138,12 @@ target_link_directories(cdrip_app PRIVATE ${COMMON_LIB_DIRS} ${CHAFA_LIBRARY_DIR
 target_compile_options(cdrip_app PRIVATE ${COMMON_CFLAGS} ${CHAFA_CFLAGS_OTHER})
 target_link_libraries(cdrip_app PRIVATE cdrip_static ${CHAFA_LIBRARIES})
 add_dependencies(cdrip_app version_header)
+
+add_executable(cdrip_test_musicbrainz_recrawl_filter
+    tests/test_musicbrainz_recrawl_filter.cpp
+)
+target_include_directories(cdrip_test_musicbrainz_recrawl_filter PRIVATE ${COMMON_INCLUDES})
+target_link_directories(cdrip_test_musicbrainz_recrawl_filter PRIVATE ${COMMON_LIB_DIRS})
+target_compile_options(cdrip_test_musicbrainz_recrawl_filter PRIVATE ${COMMON_CFLAGS})
+target_link_libraries(cdrip_test_musicbrainz_recrawl_filter PRIVATE cdrip_static)
+add_dependencies(cdrip_test_musicbrainz_recrawl_filter version_header)

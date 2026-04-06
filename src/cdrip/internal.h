@@ -153,6 +153,36 @@ static inline std::string track_tag(
 std::vector<std::string> extract_album_title_candidates(
     const std::vector<const CdRipCddbEntry*>& entries);
 
+/**
+ * Build MusicBrainz entries from a release JSON payload using the same
+ * media-selection path as runtime code.
+ * @param toc Disc TOC used for medium matching.
+ * @param request_url Source URL used for diagnostics.
+ * @param release_json Raw MusicBrainz release JSON.
+ * @param strict_title_recrawl_match True to enable the stricter recrawl-only filter.
+ * @param track_length_tolerance_percent Allowed per-track length drift in percent.
+ * @param log_rejections True to emit rejection diagnostics.
+ * @param results Output entries.
+ * @param err Output error text on failure.
+ * @return True if JSON parsing succeeded; false on parse/shape failure.
+ */
+bool build_musicbrainz_entries_from_release_json(
+    const CdRipDiscToc* toc,
+    const std::string& request_url,
+    const std::string& release_json,
+    bool strict_title_recrawl_match,
+    int track_length_tolerance_percent,
+    bool log_rejections,
+    std::vector<CdRipCddbEntry>& results,
+    std::string& err);
+
+/**
+ * Release entries allocated by build_musicbrainz_entries_from_release_json.
+ * @param entries Entry vector to clear.
+ */
+void release_cddb_entries(
+    std::vector<CdRipCddbEntry>& entries);
+
 static inline FLAC__StreamMetadata* build_vorbis_comments(
     const std::map<std::string, std::string>& tags) {
 
