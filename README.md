@@ -342,7 +342,8 @@ Notes:
 - Arch aliases: `x86_64|amd64`, `i686|i386`, `armv7|armhf`, `aarch64|arm64`
 - Debug build: add `--debug` (passes `-d` to `build.sh`)
 - Refresh chroot: add `--refresh-base`
-- Outputs: `artifacts/<distro>-<release>-<arch>/*.deb`
+- Outputs: `artifacts/<package>-<version>-<distro>-<release>-<arch>.deb`
+- Build log: `artifacts/build-<distro>-<release>-<arch>.log`
 
 Batch build for all predefined combos:
 

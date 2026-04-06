@@ -56,6 +56,38 @@ require_cmd() {
     fi
 }
 
+build_target_suffix() {
+    printf '%s-%s-%s' "$1" "$2" "$3"
+}
+
+build_output_dir() {
+    printf '%s/artifacts' "${SCRIPT_DIR}"
+}
+
+build_logfile_path() {
+    local distro="$1"
+    local release="$2"
+    local arch="$3"
+    local target_suffix
+    target_suffix="$(build_target_suffix "${distro}" "${release}" "${arch}")"
+    printf '%s/build-%s.log' "$(build_output_dir)" "${target_suffix}"
+}
+
+build_artifact_path() {
+    local pkg_name="$1"
+    local pkg_version="$2"
+    local distro="$3"
+    local release="$4"
+    local arch="$5"
+    local target_suffix
+    target_suffix="$(build_target_suffix "${distro}" "${release}" "${arch}")"
+    printf '%s/%s-%s-%s.deb' "$(build_output_dir)" "${pkg_name}" "${pkg_version}" "${target_suffix}"
+}
+
+if [[ "${BUILD_PACKAGE_SOURCE_ONLY:-0}" == "1" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
+
 DISTRO=""
 RELEASE=""
 ARCH_INPUT=""
@@ -176,8 +208,8 @@ fi
 BASE_DIR="${PBUILDER_BASE_DIR:-${HOME}/.pbuilder}"
 BASE_PATH="${BASE_DIR}/${DISTRO}-${RELEASE}-${DEB_ARCH}.cow"
 BUILD_DIR_IN_CHROOT="/tmp/scheme-cd-ripper-${DISTRO}-${RELEASE}-${DEB_ARCH}-build"
-OUTPUT_DIR="${SCRIPT_DIR}/artifacts/${DISTRO}-${RELEASE}-${DEB_ARCH}"
-LOGFILE="${OUTPUT_DIR}/build.log"
+OUTPUT_DIR="$(build_output_dir)"
+LOGFILE="$(build_logfile_path "${DISTRO}" "${RELEASE}" "${DEB_ARCH}")"
 
 init_logging() {
     mkdir -p "${OUTPUT_DIR}"
@@ -346,7 +378,7 @@ for pkg in "${BUILD_DIR}/deb/"*.deb; do
     if [[ -z "${pkg_version}" ]]; then
         pkg_version="unknown"
     fi
-    renamed="${OUTPUT_DIR}/${pkg_name}-${TARGET_SUFFIX}-${pkg_version}.deb"
+    renamed="${OUTPUT_DIR}/${pkg_name}-${pkg_version}-${TARGET_SUFFIX}.deb"
     cp -v "${pkg}" "${renamed}"
 done
 EOS
