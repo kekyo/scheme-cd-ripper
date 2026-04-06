@@ -4,9 +4,25 @@ project(cd_ripper LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_program(SCREW_UP_EXE screw-up)
-if(NOT SCREW_UP_EXE)
-    message(FATAL_ERROR "screw-up not found; install it (e.g., npm install -g screw-up) or ensure it is on PATH.")
+set(CDRIP_VERSION_VALUE "$ENV{CDRIP_PACKAGE_VERSION}")
+set(CDRIP_COMMIT_VALUE "$ENV{CDRIP_PACKAGE_COMMIT}")
+
+if(CDRIP_VERSION_VALUE STREQUAL "")
+    find_program(SCREW_UP_EXE screw-up)
+    if(NOT SCREW_UP_EXE)
+        message(FATAL_ERROR "screw-up not found; install it or set CDRIP_PACKAGE_VERSION in the environment.")
+    endif()
+
+    execute_process(
+        COMMAND /bin/bash -lc "set -euo pipefail; printf '%s\n' '{version}' | \"${SCREW_UP_EXE}\" format | head -n 1"
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE CDRIP_VERSION_VALUE
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+endif()
+
+if(CDRIP_COMMIT_VALUE STREQUAL "")
+    set(CDRIP_COMMIT_VALUE "unknown")
 endif()
 
 find_package(PkgConfig REQUIRED)
@@ -25,14 +41,11 @@ pkg_check_modules(CHAFA REQUIRED chafa)
 set(VERSION_HEADER ${CMAKE_BINARY_DIR}/generated/version.h)
 get_filename_component(VERSION_DIR ${VERSION_HEADER} DIRECTORY)
 
+file(MAKE_DIRECTORY ${VERSION_DIR})
+configure_file(${CMAKE_SOURCE_DIR}/version.h.in ${VERSION_HEADER} @ONLY)
+
 add_custom_target(version_header ALL
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${VERSION_DIR}
-    COMMAND /bin/bash -c "set -euo pipefail; \"${SCREW_UP_EXE}\" format -f -i \"${CMAKE_SOURCE_DIR}/version.h.in\" \"${VERSION_HEADER}\" >/dev/null"
-    COMMAND /bin/bash -c "set -euo pipefail; sed -i 's/{version}/0.1.0/g; s/{git.commit.hash}/unknown/g' \"${VERSION_HEADER}\""
-    BYPRODUCTS ${VERSION_HEADER}
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMENT "Generating version header with screw-up format"
-    VERBATIM
+    DEPENDS ${VERSION_HEADER}
 )
 
 set(COMMON_INCLUDES

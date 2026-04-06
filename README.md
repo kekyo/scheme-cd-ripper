@@ -36,7 +36,7 @@ This workflow is designed for processing large numbers of CDs continuously, for 
 
 ## Installation
 
-For Debian (trixie, bookworm) / Ubuntu (noble, jammy), [prebuilt binaries are available here](https://github.com/kekyo/scheme-cd-ripper/releases).
+For Debian (trixie, bookworm) / Ubuntu (24.04, 22.04), [prebuilt binaries are available here](https://github.com/kekyo/scheme-cd-ripper/releases).
 There are two packages available (`cdrip.deb`, `libcdrip-dev.deb`), but if you only need to use `cdrip` command, installing just the first one is sufficient.
 The second one is an API library for C language when you want to use this feature.
 
@@ -301,10 +301,12 @@ A special server id `musicbrainz` is not required `[cddb.musicbrainz]` section d
 - CMake and a C++17 compiler
 - Node.js and [screw-up](https://github.com/kekyo/screw-up) (Automated-versioning tool)
 
-`build-package.sh`:
+`build_package.sh`:
 
 - dpkg-dev (for `dpkg-shlibdeps` when building packages)
-- cowbuilder (deb package building)
+- binutils (for `readelf` validation)
+- podman
+- qemu-user-static (for cross-architecture container execution)
 
 ### Build
 
@@ -320,38 +322,42 @@ npm install -g screw-up
 
 ### Build packages
 
-`build_package.sh` runs `build.sh` inside a cowbuilder chroot with qemu-user-static to target one distro/arch per call. Run it repeatedly for all combinations you need.
+`build_package.sh` runs package builds inside distro-specific podman containers and can schedule the full matrix in one invocation.
 
 Prerequisites:
 
 ```bash
-sudo apt-get install cowbuilder qemu-user-static debootstrap systemd-container
+sudo apt-get install podman qemu-user-static dpkg-dev binutils
 ```
 
 Build examples:
 
 ```bash
-# Ubuntu noble / amd64
-./build_package.sh --distro ubuntu --release noble --arch x86_64
+# Ubuntu 24.04 / amd64
+./build_package.sh --target deb --distro ubuntu --release 24.04 --arch x86_64
 
 # Debian bookworm / arm64
-./build_package.sh --distro debian --release bookworm --arch arm64
+./build_package.sh --target deb --distro debian --release bookworm --arch arm64
+
+# Full matrix
+./build_package.sh --target all
 ```
 
 Notes:
-- Arch aliases: `x86_64|amd64`, `i686|i386`, `armv7|armhf`, `aarch64|arm64`
-- Debug build: add `--debug` (passes `-d` to `build.sh`)
-- Refresh chroot: add `--refresh-base`
-- Outputs: `artifacts/<package>-<version>-<distro>-<release>-<arch>.deb`
-- Build log: `artifacts/build-<distro>-<release>-<arch>.log`
+- Supported targets match the libbounce packaging matrix:
+  Debian `bookworm` (`x86_64`, `i686`, `arm64`, `armv7l`),
+  Debian `trixie` (`x86_64`, `i686`, `arm64`, `armv7l`, `riscv64`),
+  Ubuntu `22.04` (`x86_64`, `arm64`),
+  Ubuntu `24.04` (`x86_64`, `arm64`)
+- Arch aliases: `x86_64|amd64`, `i686|i386`, `armv7l|armv7|armhf`, `arm64|aarch64`
+- Ubuntu release aliases: `24.04|noble`, `22.04|jammy`
+- Debug build: add `--debug`
+- Outputs: `artifacts/deb/<package>-<version>-<distro>-<release>-<deb-arch>.deb`
 
 Batch build for all predefined combos:
 
 ```bash
-# ubuntu noble/jammy × amd64/i386/armhf/arm64
-# debian trixie/bookworm × amd64/i386/armhf/arm64
-./build_package_all.sh            # reuse existing bases
-./build_package_all.sh --refresh-base  # rebuild bases then build all
+./build_package_all.sh
 ```
 
 -----

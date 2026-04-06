@@ -35,7 +35,7 @@ done
 shift $((OPTIND - 1))
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="$(printf '{version}\n' | screw-up format -f 2>/dev/null | head -n 1)"
+VERSION="$(printf '{version}\n' | screw-up format 2>/dev/null | head -n 1)"
 ARCH="${ARCH:-$(dpkg --print-architecture)}"
 BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build}"
 
