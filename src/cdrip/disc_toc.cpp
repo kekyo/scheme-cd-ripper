@@ -102,10 +102,13 @@ CdRipDiscToc* cdrip_build_disc_toc(
         set_error(error, "Drive handle is null");
         return nullptr;
     }
+    const DriveBackend& backend =
+        drive->backend ? *drive->backend : current_drive_backend();
     CdRipDiscToc* toc = new CdRipDiscToc{};
-    const int raw_track_count = cdda_tracks(drive->drive);
-    if (raw_track_count <= 0) {
-        set_error(error, "No tracks found on disc");
+    int raw_track_count = 0;
+    std::string backend_err;
+    if (!backend.get_track_count(drive->drive, raw_track_count, backend_err)) {
+        set_error(error, backend_err);
         delete toc;
         return nullptr;
     }
@@ -118,9 +121,11 @@ CdRipDiscToc* cdrip_build_disc_toc(
     long max_audio_end = -1;
     for (int i = 1; i <= raw_track_count; ++i) {
         CdRipTrackInfo info{};
-        info.start = cdda_track_firstsector(drive->drive, i);
-        info.end = cdda_track_lastsector(drive->drive, i);
-        info.is_audio = cdda_track_audiop(drive->drive, i);
+        if (!backend.get_track_info(drive->drive, i, info, backend_err)) {
+            set_error(error, backend_err);
+            delete toc;
+            return nullptr;
+        }
         if (!info.is_audio) {
             continue;
         }
@@ -134,9 +139,9 @@ CdRipDiscToc* cdrip_build_disc_toc(
         return nullptr;
     }
 
-    const long last_sector = cdda_disc_lastsector(drive->drive);
-    if (last_sector < 0) {
-        set_error(error, "Failed to read disc last sector");
+    long last_sector = 0;
+    if (!backend.get_disc_last_sector(drive->drive, last_sector, backend_err)) {
+        set_error(error, backend_err);
         delete toc;
         return nullptr;
     }

@@ -4,9 +4,25 @@ project(cd_ripper LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_program(SCREW_UP_EXE screw-up)
-if(NOT SCREW_UP_EXE)
-    message(FATAL_ERROR "screw-up not found; install it (e.g., npm install -g screw-up) or ensure it is on PATH.")
+set(CDRIP_VERSION_VALUE "$ENV{CDRIP_PACKAGE_VERSION}")
+set(CDRIP_COMMIT_VALUE "$ENV{CDRIP_PACKAGE_COMMIT}")
+
+if(CDRIP_VERSION_VALUE STREQUAL "")
+    find_program(SCREW_UP_EXE screw-up)
+    if(NOT SCREW_UP_EXE)
+        message(FATAL_ERROR "screw-up not found; install it or set CDRIP_PACKAGE_VERSION in the environment.")
+    endif()
+
+    execute_process(
+        COMMAND /bin/bash -lc "set -euo pipefail; printf '%s\n' '{version}' | \"${SCREW_UP_EXE}\" format | head -n 1"
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE CDRIP_VERSION_VALUE
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+endif()
+
+if(CDRIP_COMMIT_VALUE STREQUAL "")
+    set(CDRIP_COMMIT_VALUE "unknown")
 endif()
 
 find_package(PkgConfig REQUIRED)
@@ -20,19 +36,17 @@ pkg_check_modules(JSONGLIB REQUIRED json-glib-1.0)
 pkg_check_modules(PNG REQUIRED libpng)
 pkg_check_modules(JPEG REQUIRED libjpeg)
 pkg_check_modules(LCMS2 REQUIRED lcms2)
+pkg_check_modules(EBUR128 REQUIRED libebur128)
 pkg_check_modules(CHAFA REQUIRED chafa)
 
 set(VERSION_HEADER ${CMAKE_BINARY_DIR}/generated/version.h)
 get_filename_component(VERSION_DIR ${VERSION_HEADER} DIRECTORY)
 
+file(MAKE_DIRECTORY ${VERSION_DIR})
+configure_file(${CMAKE_SOURCE_DIR}/version.h.in ${VERSION_HEADER} @ONLY)
+
 add_custom_target(version_header ALL
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${VERSION_DIR}
-    COMMAND /bin/bash -c "set -euo pipefail; \"${SCREW_UP_EXE}\" format -f -i \"${CMAKE_SOURCE_DIR}/version.h.in\" \"${VERSION_HEADER}\" >/dev/null"
-    COMMAND /bin/bash -c "set -euo pipefail; sed -i 's/{version}/0.1.0/g; s/{git.commit.hash}/unknown/g' \"${VERSION_HEADER}\""
-    BYPRODUCTS ${VERSION_HEADER}
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMENT "Generating version header with screw-up format"
-    VERBATIM
+    DEPENDS ${VERSION_HEADER}
 )
 
 set(COMMON_INCLUDES
@@ -45,6 +59,7 @@ set(COMMON_INCLUDES
     ${PNG_INCLUDE_DIRS}
     ${JPEG_INCLUDE_DIRS}
     ${LCMS2_INCLUDE_DIRS}
+    ${EBUR128_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${VERSION_DIR}
 )
@@ -59,6 +74,7 @@ set(COMMON_LIB_DIRS
     ${PNG_LIBRARY_DIRS}
     ${JPEG_LIBRARY_DIRS}
     ${LCMS2_LIBRARY_DIRS}
+    ${EBUR128_LIBRARY_DIRS}
 )
 
 set(COMMON_LIBS
@@ -71,6 +87,7 @@ set(COMMON_LIBS
     ${PNG_LIBRARIES}
     ${JPEG_LIBRARIES}
     ${LCMS2_LIBRARIES}
+    ${EBUR128_LIBRARIES}
 )
 
 set(COMMON_CFLAGS
@@ -83,6 +100,7 @@ set(COMMON_CFLAGS
     ${PNG_CFLAGS_OTHER}
     ${JPEG_CFLAGS_OTHER}
     ${LCMS2_CFLAGS_OTHER}
+    ${EBUR128_CFLAGS_OTHER}
     -Wall
     -Wextra
     -pedantic
@@ -95,10 +113,13 @@ set(CDRIP_SOURCES
     src/cdrip/flac_metadata.cpp
     src/cdrip/drives.cpp
     src/cdrip/drive_handle.cpp
+    src/cdrip/drive_backend.cpp
     src/cdrip/disc_toc.cpp
     src/cdrip/rip.cpp
     src/cdrip/error.cpp
     src/cdrip/cover_art.cpp
+    src/cdrip/replaygain.cpp
+    src/cdrip/track_tags.cpp
     src/cdrip/timestamp.cpp
 )
 
@@ -125,3 +146,66 @@ target_link_directories(cdrip_app PRIVATE ${COMMON_LIB_DIRS} ${CHAFA_LIBRARY_DIR
 target_compile_options(cdrip_app PRIVATE ${COMMON_CFLAGS} ${CHAFA_CFLAGS_OTHER})
 target_link_libraries(cdrip_app PRIVATE cdrip_static ${CHAFA_LIBRARIES})
 add_dependencies(cdrip_app version_header)
+
+add_executable(cdrip_test_musicbrainz_recrawl_filter
+    tests/test_musicbrainz_recrawl_filter.cpp
+)
+target_include_directories(cdrip_test_musicbrainz_recrawl_filter PRIVATE ${COMMON_INCLUDES})
+target_link_directories(cdrip_test_musicbrainz_recrawl_filter PRIVATE ${COMMON_LIB_DIRS})
+target_compile_options(cdrip_test_musicbrainz_recrawl_filter PRIVATE ${COMMON_CFLAGS})
+target_link_libraries(cdrip_test_musicbrainz_recrawl_filter PRIVATE cdrip_static)
+add_dependencies(cdrip_test_musicbrainz_recrawl_filter version_header)
+
+add_executable(cdrip_test_requery_seed_tags
+    tests/test_requery_seed_tags.cpp
+)
+target_include_directories(cdrip_test_requery_seed_tags PRIVATE ${COMMON_INCLUDES})
+target_link_directories(cdrip_test_requery_seed_tags PRIVATE ${COMMON_LIB_DIRS})
+target_compile_options(cdrip_test_requery_seed_tags PRIVATE ${COMMON_CFLAGS})
+target_link_libraries(cdrip_test_requery_seed_tags PRIVATE cdrip_static)
+add_dependencies(cdrip_test_requery_seed_tags version_header)
+
+add_executable(cdrip_test_replaygain
+    tests/test_replaygain.cpp
+)
+target_include_directories(cdrip_test_replaygain PRIVATE ${COMMON_INCLUDES})
+target_link_directories(cdrip_test_replaygain PRIVATE ${COMMON_LIB_DIRS})
+target_compile_options(cdrip_test_replaygain PRIVATE ${COMMON_CFLAGS})
+target_link_libraries(cdrip_test_replaygain PRIVATE cdrip_static)
+add_dependencies(cdrip_test_replaygain version_header)
+
+add_executable(cdrip_test_activity_observer
+    tests/test_activity_observer.cpp
+)
+target_include_directories(cdrip_test_activity_observer PRIVATE ${COMMON_INCLUDES})
+target_link_directories(cdrip_test_activity_observer PRIVATE ${COMMON_LIB_DIRS})
+target_compile_options(cdrip_test_activity_observer PRIVATE ${COMMON_CFLAGS})
+target_link_libraries(cdrip_test_activity_observer PRIVATE cdrip_static)
+add_dependencies(cdrip_test_activity_observer version_header)
+
+add_executable(cdrip_test_cover_art_selection
+    tests/test_cover_art_selection.cpp
+)
+target_include_directories(cdrip_test_cover_art_selection PRIVATE ${COMMON_INCLUDES} ${CHAFA_INCLUDE_DIRS} ${VERSION_DIR})
+target_link_directories(cdrip_test_cover_art_selection PRIVATE ${COMMON_LIB_DIRS} ${CHAFA_LIBRARY_DIRS})
+target_compile_options(cdrip_test_cover_art_selection PRIVATE ${COMMON_CFLAGS} ${CHAFA_CFLAGS_OTHER})
+target_link_libraries(cdrip_test_cover_art_selection PRIVATE cdrip_static ${CHAFA_LIBRARIES})
+add_dependencies(cdrip_test_cover_art_selection version_header)
+
+add_executable(cdrip_test_drive_backend
+    tests/test_drive_backend.cpp
+)
+target_include_directories(cdrip_test_drive_backend PRIVATE ${COMMON_INCLUDES})
+target_link_directories(cdrip_test_drive_backend PRIVATE ${COMMON_LIB_DIRS})
+target_compile_options(cdrip_test_drive_backend PRIVATE ${COMMON_CFLAGS})
+target_link_libraries(cdrip_test_drive_backend PRIVATE cdrip_static)
+add_dependencies(cdrip_test_drive_backend version_header)
+
+add_executable(cdrip_test_real_rip_tags
+    tests/test_real_rip_tags.cpp
+)
+target_include_directories(cdrip_test_real_rip_tags PRIVATE ${COMMON_INCLUDES})
+target_link_directories(cdrip_test_real_rip_tags PRIVATE ${COMMON_LIB_DIRS})
+target_compile_options(cdrip_test_real_rip_tags PRIVATE ${COMMON_CFLAGS})
+target_link_libraries(cdrip_test_real_rip_tags PRIVATE cdrip_static)
+add_dependencies(cdrip_test_real_rip_tags version_header)

@@ -19,15 +19,21 @@
 #include <vector>
 
 #include <cdio/cdio.h>
-#include <cdio/paranoia/cdda.h>
-#include <cdio/paranoia/paranoia.h>
+#include <cdio/cd_types.h>
+#include <ebur128.h>
 #include <FLAC/metadata.h>
 
 #include "cdrip/cdrip.h"
 
+namespace cdrip::detail {
+struct BackendDetectedDrive;
+struct DriveBackend;
+}
+
 struct CdRip {
-    cdrom_drive_t* drive{nullptr};
-    cdrom_paranoia* paranoia{nullptr};
+    const cdrip::detail::DriveBackend* backend{nullptr};
+    void* drive{nullptr};
+    void* reader{nullptr};
     CdRipRipModes mode{RIP_MODES_BEST};
     std::string device;
     std::string format;
@@ -38,6 +44,61 @@ struct CdRip {
 /* ------------------------------------------------------------------- */
 
 namespace cdrip::detail {
+
+struct BackendDetectedDrive {
+    std::string device{};
+    bool has_media{false};
+};
+
+// Thin indirection layer for all drive and reader interactions so tests can
+// replace the live libcdio/cd-paranoia backend without changing public APIs.
+struct DriveBackend {
+    std::vector<BackendDetectedDrive> (*detect_drives)();
+    bool (*open_drive)(
+        const std::string& device,
+        void*& out_drive,
+        std::string& err);
+    void (*close_drive)(void* drive);
+    bool (*set_drive_speed)(
+        void* drive,
+        bool speed_fast,
+        std::string& err);
+    bool (*create_reader)(
+        void* drive,
+        CdRipRipModes mode,
+        void*& out_reader,
+        std::string& err);
+    void (*destroy_reader)(void* reader);
+    bool (*eject_drive)(
+        const std::string& device,
+        std::string& err);
+    bool (*get_track_count)(
+        void* drive,
+        int& out_track_count,
+        std::string& err);
+    bool (*get_track_info)(
+        void* drive,
+        int track_number,
+        CdRipTrackInfo& out_track,
+        std::string& err);
+    bool (*get_disc_last_sector)(
+        void* drive,
+        long& out_last_sector,
+        std::string& err);
+    bool (*seek_reader)(
+        void* reader,
+        long sector,
+        std::string& err);
+    bool (*read_sector)(
+        void* reader,
+        const int16_t*& out_buffer,
+        std::string& err);
+};
+
+const DriveBackend& current_drive_backend();
+void set_drive_backend_for_tests(
+    const DriveBackend* backend);
+void reset_drive_backend_for_tests();
 
 // Helpers were previously static in the monolithic TU; keep internal linkage by
 // providing inline definitions scoped to this header.
@@ -80,6 +141,16 @@ static inline void drop_format_only_tags(std::map<std::string, std::string>& tag
     tags.erase("MUSICBRAINZ_MEDIUMTITLE_RAW");
 }
 
+static inline bool is_replaygain_tag_key(
+    const std::string& key_upper) {
+
+    return key_upper == "REPLAYGAIN_TRACK_GAIN"
+        || key_upper == "REPLAYGAIN_TRACK_PEAK"
+        || key_upper == "REPLAYGAIN_ALBUM_GAIN"
+        || key_upper == "REPLAYGAIN_ALBUM_PEAK"
+        || key_upper == "REPLAYGAIN_REFERENCE_LOUDNESS";
+}
+
 static inline bool parse_int(const std::string& s, int& out) {
     try {
         out = std::stoi(s);
@@ -112,6 +183,36 @@ static inline void clear_error(const char** error) {
     if (!error) return;
     cdrip_release_error(*error);
     *error = nullptr;
+}
+
+static inline bool has_activity_observer(
+    const CdRipActivityObserver* observer) {
+
+    return observer && observer->callback;
+}
+
+static inline void notify_activity(
+    const CdRipActivityObserver* observer,
+    void* state,
+    const CdRipActivityInfo& info) {
+
+    if (!has_activity_observer(observer)) return;
+    observer->callback(&info, state, observer->user_data);
+}
+
+static inline bool has_diagnostic_observer(
+    const CdRipDiagnosticObserver* observer) {
+
+    return observer && observer->callback;
+}
+
+static inline void notify_diagnostic(
+    const CdRipDiagnosticObserver* observer,
+    void* state,
+    const CdRipDiagnosticInfo& info) {
+
+    if (!has_diagnostic_observer(observer)) return;
+    observer->callback(&info, state, observer->user_data);
 }
 
 static inline CdRipTagKV make_kv(const std::string& key, const std::string& value) {
@@ -152,6 +253,36 @@ static inline std::string track_tag(
 
 std::vector<std::string> extract_album_title_candidates(
     const std::vector<const CdRipCddbEntry*>& entries);
+
+/**
+ * Build MusicBrainz entries from a release JSON payload using the same
+ * media-selection path as runtime code.
+ * @param toc Disc TOC used for medium matching.
+ * @param request_url Source URL used for diagnostics.
+ * @param release_json Raw MusicBrainz release JSON.
+ * @param strict_title_recrawl_match True to enable the stricter recrawl-only filter.
+ * @param track_length_tolerance_percent Allowed per-track length drift in percent.
+ * @param log_rejections True to emit rejection diagnostics.
+ * @param results Output entries.
+ * @param err Output error text on failure.
+ * @return True if JSON parsing succeeded; false on parse/shape failure.
+ */
+bool build_musicbrainz_entries_from_release_json(
+    const CdRipDiscToc* toc,
+    const std::string& request_url,
+    const std::string& release_json,
+    bool strict_title_recrawl_match,
+    int track_length_tolerance_percent,
+    bool log_rejections,
+    std::vector<CdRipCddbEntry>& results,
+    std::string& err);
+
+/**
+ * Release entries allocated by build_musicbrainz_entries_from_release_json.
+ * @param entries Entry vector to clear.
+ */
+void release_cddb_entries(
+    std::vector<CdRipCddbEntry>& entries);
 
 static inline FLAC__StreamMetadata* build_vorbis_comments(
     const std::map<std::string, std::string>& tags) {
@@ -279,6 +410,32 @@ static inline FLAC__StreamMetadata* build_picture_block(
     return pic;
 }
 
+static inline void apply_tag_kvs(
+    std::map<std::string, std::string>& tags,
+    const CdRipTagKV* kvs,
+    size_t count) {
+
+    for (size_t i = 0; i < count; ++i) {
+        std::string key = to_upper(to_string_or_empty(kvs[i].key));
+        std::string val = to_string_or_empty(kvs[i].value);
+        if (!key.empty() && !val.empty()) {
+            tags[key] = val;
+        }
+    }
+}
+
+static inline void prune_empty_tags(
+    std::map<std::string, std::string>& tags) {
+
+    for (auto it = tags.begin(); it != tags.end();) {
+        if (it->second.empty()) {
+            it = tags.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 }  // namespace cdrip::detail
 
 // Helpers shared across translation units.
@@ -287,4 +444,129 @@ bool compute_musicbrainz_discid(
     const CdRipDiscToc* toc,
     std::string& out_discid,
     long& out_leadout);
+
+struct ReplayGainScanResult {
+    double loudness_lufs{0.0};
+    double peak{0.0};
+    bool loudness_ok{false};
+    bool peak_ok{false};
+};
+
+struct RipTrackWriteOptions {
+    const char* output_path{nullptr};
+    const char* display_path{nullptr};
+    ebur128_state* track_replaygain_state{nullptr};
+    ebur128_state* album_replaygain_state{nullptr};
+};
+
+static inline std::string build_cddb_offsets_tag(
+    const CdRipDiscToc* toc) {
+
+    if (!toc || !toc->tracks || toc->tracks_count == 0) return {};
+    std::ostringstream oss;
+    for (size_t i = 0; i < toc->tracks_count; ++i) {
+        if (i > 0) oss << ",";
+        oss << toc->tracks[i].start;
+    }
+    return oss.str();
+}
+
+static inline void append_requery_seed_tags(
+    std::map<std::string, std::string>& tags,
+    const CdRipDiscToc* toc,
+    const std::string& cddb_discid,
+    int track_number,
+    int track_total) {
+
+    if (track_number > 0) {
+        tags["TRACKNUMBER"] = std::to_string(track_number);
+    }
+    if (track_total > 0) {
+        tags["TRACKTOTAL"] = std::to_string(track_total);
+    }
+    if (!cddb_discid.empty()) {
+        tags["CDDB_DISCID"] = cddb_discid;
+    }
+
+    const std::string offsets = build_cddb_offsets_tag(toc);
+    if (!offsets.empty()) {
+        tags["CDDB_OFFSETS"] = offsets;
+    }
+    if (toc && toc->length_seconds > 0) {
+        tags["CDDB_TOTAL_SECONDS"] = std::to_string(toc->length_seconds);
+    }
+    if (!toc) return;
+
+    const std::string mb_discid = to_string_or_empty(toc->mb_discid);
+    if (!mb_discid.empty()) {
+        tags["MUSICBRAINZ_DISCID"] = mb_discid;
+        const long mb_leadout = (toc->leadout_sector > 0)
+            ? (toc->leadout_sector + 150)
+            : 0;
+        if (mb_leadout > 0) {
+            tags["MUSICBRAINZ_LEADOUT"] = std::to_string(mb_leadout);
+        }
+    }
+
+    const std::string mb_release = to_string_or_empty(toc->mb_release_id);
+    if (!mb_release.empty() && tags.find("MUSICBRAINZ_RELEASE") == tags.end()) {
+        tags["MUSICBRAINZ_RELEASE"] = mb_release;
+    }
+    const std::string mb_medium = to_string_or_empty(toc->mb_medium_id);
+    if (!mb_medium.empty() && tags.find("MUSICBRAINZ_MEDIUM") == tags.end()) {
+        tags["MUSICBRAINZ_MEDIUM"] = mb_medium;
+    }
+}
+
+std::map<std::string, std::string> build_track_vorbis_tags(
+    const CdRipTrackInfo* track,
+    const CdRipCddbEntry* meta,
+    const CdRipDiscToc* toc,
+    int total_tracks,
+    std::string& title_out,
+    std::string& track_name_out,
+    std::string& safe_title_out);
+
+bool resolve_track_output_path(
+    const std::string& format,
+    const std::map<std::string, std::string>& tags,
+    std::string& out_path,
+    std::string& err);
+
+bool publish_local_file_to_destination(
+    const std::string& local_path,
+    const std::string& destination_path,
+    std::string& err);
+
+bool finalize_replaygain_scan(
+    ebur128_state* state,
+    ReplayGainScanResult& out,
+    std::string& err);
+
+std::map<std::string, std::string> build_replaygain_tags(
+    const ReplayGainScanResult& track,
+    const ReplayGainScanResult& album);
+
+bool update_flac_tags(
+    const std::string& path,
+    const CdRipDiscToc* toc,
+    int track_number,
+    const CdRipCddbEntry* entry,
+    const std::map<std::string, std::string>& extra_tags,
+    bool preserve_replaygain_tags,
+    std::string& err);
+
+bool rip_track_with_options(
+    CdRip* rip,
+    const CdRipTrackInfo* track,
+    const CdRipCddbEntry* meta,
+    const CdRipDiscToc* toc,
+    CdRipProgressCallback progress,
+    int total_tracks,
+    double completed_before_sec,
+    double total_album_sec,
+    double wall_start_sec,
+    const RipTrackWriteOptions* options,
+    ReplayGainScanResult* replaygain_result,
+    std::string& err);
 }

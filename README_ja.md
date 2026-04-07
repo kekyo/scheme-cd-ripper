@@ -35,7 +35,7 @@ Scheme CD Ripperは、オーディオCDをFLAC形式でリッピングするLinu
 
 ## インストール
 
-Debian (trixie, bookworm) / Ubuntu (noble, jammy) では、[ビルド済みバイナリがここにあります](https://github.com/kekyo/scheme-cd-ripper/releases)。
+Debian (trixie, bookworm) / Ubuntu (24.04, 22.04) では、[ビルド済みバイナリがここにあります](https://github.com/kekyo/scheme-cd-ripper/releases)。
 パッケージは環境ごとに2種類 (`cdrip.deb`, `libcdrip-dev.deb`) がありますが、`cdrip`コマンドを使うだけなら前者のみインストールすればOKです。
 後者はこの機能を使いたい場合の、C言語向けAPIライブラリです。
 
@@ -73,13 +73,18 @@ cdrip -d /dev/sr1 -f "{artist:n/title:n}.flac" -r
   メディアが挿入されている最初のドライブを選択し、CDDBの先頭エントリを選び、リピートモードではプロンプトなしでループする。
 - `-ss`, `--speed-slow`: リッピング開始時にドライブの読込速度を等速(1x)へ要求する（デフォルト）。
 - `-sf`, `--speed-fast`: リッピング開始時にドライブの読込速度を最大へ要求する。
+- `-g`, `--replaygain`: ReplayGain タグ付与を有効化する（デフォルト）。
+- `-ng`, `--no-replaygain`: ReplayGain タグ付与を無効化し、従来どおりトラック単位で即時保存する。
 - `-dc`, `--discogs`: Discogsのカバーアートの使用方法（`no`,`always`,`fallback`、デフォルト: `always`）。
+  対話モードでは、DiscogsとCAAの両方が候補になったときのデフォルト選択にも使われます。
 - `-na`, `--no-aa`: カバーアートのANSI/ASCIIアート表示を無効化する。
 - `-l`, `--logs`: デバッグログを出力する。
 - `-i`, `--input`: cdrip設定ファイルのパス（デフォルト検索: `./cdrip.conf` --> `~/.cdrip.conf`）
 - `-u`, `--update <file|dir> [more ...]`: 埋め込みタグを使用してCDDBから既存のFLACタグを更新（他のオプションは無視）
 
 すべてのコマンドラインオプション（`-u` および `-i` を除く）は、`-i` で指定された設定ファイルの内容を上書きできます。
+
+ReplayGain が有効な場合、すべてのトラックは一度テンポラリディレクトリへリッピングされます。最終保存先に `.flac` が現れるのは、アルバム全体のリッピング完了後に ReplayGain タグを書き込んでからです。
 
 TIPS: MusicBrainzタグ付けで大量のCDを連続してインポートしたい場合は、`cdrip -a -r` オプションを指定することで実現できます。また、同じシリーズのCDをリッピングする場合は、 `-ft` オプションでタイトルをある程度絞り込んでおけば、CDDB候補の選択ミスを減らすことができます。
 
@@ -154,6 +159,10 @@ Select match [0-15] (comma/space separated, default 1): 3,12
 |`musicbrainz_discid`|MusicBrainzディスクID（MusicBrainzからの情報取得に成功したら削除）|internal|
 |`musicbrainz_leadout`|MusicBrainz CDリードアウト時間（MusicBrainzからの情報取得に成功したら削除）|internal|
 |`discogs_release`|DiscogsリリースID（数値）|MusicBrainz|
+|`replaygain_track_gain`|ReplayGain トラックゲイン|internal|
+|`replaygain_track_peak`|ReplayGain トラックピーク|internal|
+|`replaygain_album_gain`|ReplayGain アルバムゲイン|internal|
+|`replaygain_album_peak`|ReplayGain アルバムピーク|internal|
 
 CDDBやMusicBrainzから情報を得る場合、これらのすべてのタグ情報が得られるとは限りません。
 
@@ -173,11 +182,18 @@ MusicBrainzから情報を取得した場合は、追加でカバーアート画
 ![Cover art](./images/aa.png)
 
 - カバーアートの取得と埋め込みは、MusicBrainzのマッチングが使用された場合のみ可能です。他のCDDBサーバーはカバーアートを提供しません。
-- `-dc`/`--discogs` で優先順を指定できます: `always`（デフォルト: Discogsを優先し失敗時にCAA）、`fallback`（CAA優先で失敗時にDiscogs）、`no`（Discogsを使用しない）。
-- Discogsのカバーアートは、MusicBrainz release から `discogs_release` タグが取得できた場合のみ試行します。
+- 通常の対話モードでは、Cover Art Archive と Discogs の両方の画像が取得できた場合、両方の候補を表示して `1` または `2` で選択できます。
+  TTY 上で ANSI/ASCII アート表示が有効な場合は、2つのプレビューが左右のカラムで並んで表示されます。
+  デフォルト選択は `-dc`/`--discogs` に従い、`always` は Discogs、`fallback` と `no` は Cover Art Archive が既定になります。
+
+  ![Cover art selection](./images/aa-2.png)
+
 - カバーアートは常にPNGフォーマットに再変換されます。
   これは、CAAから提供される画像フォーマットに特殊なメタデータ（ICCプロファイルなど）が含まれている場合があり、これがハードウェアメディアプレーヤーで画像を表示できないことに繋がります。
   PNGフォーマットなので、画像が老化することはありません（取り除かれるICCプロファイルでsRGBへの色空間変換が行われるので、その意味での「老化」はあります）。
+- Discogsのカバーアートは、MusicBrainz release から `discogs_release` タグが取得できた場合のみ試行します。
+- `-dc`/`--discogs` で優先順を指定できます: `always`（デフォルト: Discogsを優先し失敗時にCAA）、`fallback`（CAA優先で失敗時にDiscogs）、`no`（Discogsを使用しない）。
+- リピートモードおよび完全自動モードでは、カバーアート選択プロンプトは表示されず、設定された優先順がそのまま使用されます。
 
 ## ファイル名のフォーマット
 
@@ -244,6 +260,8 @@ max_width=512        # カバーアート最大幅(px、1以上)
 speed=slow           # slow または fast（デフォルト: slow）
 aa=true              # カバーアートをANSI/ASCIIアートで表示（TTYのみ）
 discogs=always       # no / always / fallback（カバーアートの優先順。デフォルト: always）
+replaygain=true      # true / false（デフォルト: true。false ならトラック単位で即時保存）
+recrawl_percent=2    # MusicBrainz候補のトラック長許容差(%)（デフォルト: 2）
 mode=best            # best / fast / default
 repeat=false
 sort=false

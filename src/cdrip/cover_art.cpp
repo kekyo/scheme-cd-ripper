@@ -889,6 +889,22 @@ static bool http_get_discogs_image_bytes(
         err);
 }
 
+static void emit_cover_art_activity(
+    const CdRipActivityObserver* observer,
+    void* callback_state,
+    CdRipActivityStates activity_state,
+    const char* source_label) {
+
+    CdRipActivityInfo info{};
+    info.phase = CDRIP_ACTIVITY_PHASE_COVER_ART_FETCH;
+    info.state = activity_state;
+    info.source_label = source_label;
+    info.completed_sources = (activity_state == CDRIP_ACTIVITY_STATE_SOURCE_FINISHED
+        || activity_state == CDRIP_ACTIVITY_STATE_PHASE_FINISHED) ? 1u : 0u;
+    info.total_sources = 1;
+    notify_activity(observer, callback_state, info);
+}
+
 }  // namespace
 
 extern "C" {
@@ -903,6 +919,8 @@ void cdrip_set_cover_art_max_width(
 int cdrip_fetch_cover_art(
     CdRipCddbEntry* entry,
     const CdRipDiscToc* toc,
+    const CdRipActivityObserver* observer,
+    void* state,
     const char** error) {
 
     clear_error(error);
@@ -933,6 +951,17 @@ int cdrip_fetch_cover_art(
         return 0;
     }
 
+    emit_cover_art_activity(
+        observer,
+        state,
+        CDRIP_ACTIVITY_STATE_PHASE_STARTED,
+        nullptr);
+    emit_cover_art_activity(
+        observer,
+        state,
+        CDRIP_ACTIVITY_STATE_SOURCE_STARTED,
+        "coverartarchive");
+
     std::string content_type;
     std::vector<uint8_t> data;
     std::string err_msg;
@@ -961,6 +990,16 @@ int cdrip_fetch_cover_art(
     }
 
     if (!success) {
+        emit_cover_art_activity(
+            observer,
+            state,
+            CDRIP_ACTIVITY_STATE_SOURCE_FINISHED,
+            "coverartarchive");
+        emit_cover_art_activity(
+            observer,
+            state,
+            CDRIP_ACTIVITY_STATE_PHASE_FINISHED,
+            nullptr);
         if (!err_msg.empty()) set_error(error, err_msg);
         return 0;
     }
@@ -969,6 +1008,16 @@ int cdrip_fetch_cover_art(
     std::string norm_err;
     const int max_width_px = g_cover_art_max_width.load(std::memory_order_relaxed);
     if (!normalize_image_to_png(data, max_width_px, normalized, norm_err)) {
+        emit_cover_art_activity(
+            observer,
+            state,
+            CDRIP_ACTIVITY_STATE_SOURCE_FINISHED,
+            "coverartarchive");
+        emit_cover_art_activity(
+            observer,
+            state,
+            CDRIP_ACTIVITY_STATE_PHASE_FINISHED,
+            nullptr);
         set_error(error, "Failed to normalize cover art image: " + norm_err);
         return 0;
     }
@@ -980,12 +1029,24 @@ int cdrip_fetch_cover_art(
     entry->cover_art.mime_type = make_cstr_copy(content_type);
     entry->cover_art.is_front = 1;
     entry->cover_art.available = 1;
+    emit_cover_art_activity(
+        observer,
+        state,
+        CDRIP_ACTIVITY_STATE_SOURCE_FINISHED,
+        "coverartarchive");
+    emit_cover_art_activity(
+        observer,
+        state,
+        CDRIP_ACTIVITY_STATE_PHASE_FINISHED,
+        nullptr);
     return 1;
 }
 
 int cdrip_fetch_discogs_cover_art(
     CdRipCddbEntry* entry,
     const CdRipDiscToc* toc,
+    const CdRipActivityObserver* observer,
+    void* state,
     const char** error) {
 
     (void)toc;
@@ -1011,10 +1072,31 @@ int cdrip_fetch_discogs_cover_art(
         }
     }
 
+    emit_cover_art_activity(
+        observer,
+        state,
+        CDRIP_ACTIVITY_STATE_PHASE_STARTED,
+        nullptr);
+    emit_cover_art_activity(
+        observer,
+        state,
+        CDRIP_ACTIVITY_STATE_SOURCE_STARTED,
+        "discogs");
+
     const std::string api_url = "https://api.discogs.com/releases/" + release_id;
     std::string body;
     std::string err_msg;
     if (!http_get_discogs_json(api_url, body, err_msg)) {
+        emit_cover_art_activity(
+            observer,
+            state,
+            CDRIP_ACTIVITY_STATE_SOURCE_FINISHED,
+            "discogs");
+        emit_cover_art_activity(
+            observer,
+            state,
+            CDRIP_ACTIVITY_STATE_PHASE_FINISHED,
+            nullptr);
         if (!err_msg.empty()) set_error(error, err_msg);
         return 0;
     }
@@ -1025,12 +1107,32 @@ int cdrip_fetch_discogs_cover_art(
         std::string msg = (gerr && gerr->message) ? std::string{gerr->message} : "Discogs response parse error";
         if (gerr) g_error_free(gerr);
         g_object_unref(parser);
+        emit_cover_art_activity(
+            observer,
+            state,
+            CDRIP_ACTIVITY_STATE_SOURCE_FINISHED,
+            "discogs");
+        emit_cover_art_activity(
+            observer,
+            state,
+            CDRIP_ACTIVITY_STATE_PHASE_FINISHED,
+            nullptr);
         set_error(error, msg);
         return 0;
     }
     JsonNode* root = json_parser_get_root(parser);
     if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
         g_object_unref(parser);
+        emit_cover_art_activity(
+            observer,
+            state,
+            CDRIP_ACTIVITY_STATE_SOURCE_FINISHED,
+            "discogs");
+        emit_cover_art_activity(
+            observer,
+            state,
+            CDRIP_ACTIVITY_STATE_PHASE_FINISHED,
+            nullptr);
         set_error(error, "Discogs response is not a JSON object");
         return 0;
     }
@@ -1038,6 +1140,16 @@ int cdrip_fetch_discogs_cover_art(
     const std::string image_url = select_discogs_image_url(root_obj);
     g_object_unref(parser);
     if (image_url.empty()) {
+        emit_cover_art_activity(
+            observer,
+            state,
+            CDRIP_ACTIVITY_STATE_SOURCE_FINISHED,
+            "discogs");
+        emit_cover_art_activity(
+            observer,
+            state,
+            CDRIP_ACTIVITY_STATE_PHASE_FINISHED,
+            nullptr);
         set_error(error, "Discogs release has no images");
         return 0;
     }
@@ -1045,6 +1157,16 @@ int cdrip_fetch_discogs_cover_art(
     std::vector<uint8_t> data;
     std::string content_type;
     if (!http_get_discogs_image_bytes(image_url, data, content_type, err_msg)) {
+        emit_cover_art_activity(
+            observer,
+            state,
+            CDRIP_ACTIVITY_STATE_SOURCE_FINISHED,
+            "discogs");
+        emit_cover_art_activity(
+            observer,
+            state,
+            CDRIP_ACTIVITY_STATE_PHASE_FINISHED,
+            nullptr);
         if (!err_msg.empty()) set_error(error, err_msg);
         return 0;
     }
@@ -1053,6 +1175,16 @@ int cdrip_fetch_discogs_cover_art(
     std::string norm_err;
     const int max_width_px = g_cover_art_max_width.load(std::memory_order_relaxed);
     if (!normalize_image_to_png(data, max_width_px, normalized, norm_err)) {
+        emit_cover_art_activity(
+            observer,
+            state,
+            CDRIP_ACTIVITY_STATE_SOURCE_FINISHED,
+            "discogs");
+        emit_cover_art_activity(
+            observer,
+            state,
+            CDRIP_ACTIVITY_STATE_PHASE_FINISHED,
+            nullptr);
         set_error(error, "Failed to normalize cover art image: " + norm_err);
         return 0;
     }
@@ -1074,6 +1206,16 @@ int cdrip_fetch_discogs_cover_art(
     entry->cover_art.mime_type = make_cstr_copy(content_type);
     entry->cover_art.is_front = 1;
     entry->cover_art.available = 1;
+    emit_cover_art_activity(
+        observer,
+        state,
+        CDRIP_ACTIVITY_STATE_SOURCE_FINISHED,
+        "discogs");
+    emit_cover_art_activity(
+        observer,
+        state,
+        CDRIP_ACTIVITY_STATE_PHASE_FINISHED,
+        nullptr);
     return 1;
 }
 

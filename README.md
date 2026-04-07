@@ -13,6 +13,9 @@ Packages are available in (Debian/Ubuntu): https://github.com/kekyo/scheme-cd-ri
 
 [(Japanese language is here/日本語はこちら)](./README_ja.md)
 
+> Please note that this English version of the document was machine-translated and then partially edited, so it may contain inaccuracies.
+> We welcome pull requests to correct any errors in the text.
+
 ## What is this?
 
 Scheme CD Ripper is a linux CLI tool that rips audio CDs to FLAC, automatic fetches metadata from multiple CDDB servers and inserts tags into FLAC file.
@@ -36,7 +39,7 @@ This workflow is designed for processing large numbers of CDs continuously, for 
 
 ## Installation
 
-For Debian (trixie, bookworm) / Ubuntu (noble, jammy), [prebuilt binaries are available here](https://github.com/kekyo/scheme-cd-ripper/releases).
+For Debian (trixie, bookworm) / Ubuntu (24.04, 22.04), [prebuilt binaries are available here](https://github.com/kekyo/scheme-cd-ripper/releases).
 There are two packages available (`cdrip.deb`, `libcdrip-dev.deb`), but if you only need to use `cdrip` command, installing just the first one is sufficient.
 The second one is an API library for C language when you want to use this feature.
 
@@ -74,13 +77,18 @@ The following are the options:
   It picks the first drive that already has media, chooses the first CDDB match, and loops in repeat mode without prompts.
 - `-ss`, `--speed-slow`: Request 1x drive read speed when ripping starts (default).
 - `-sf`, `--speed-fast`: Request maximum drive read speed when ripping starts.
+- `-g`, `--replaygain`: Enable ReplayGain tagging (default).
+- `-ng`, `--no-replaygain`: Disable ReplayGain tagging and save each track immediately as before.
 - `-dc`, `--discogs`: Discogs cover art preference: `no`, `always` (default), `fallback`.
+  In interactive mode, this also controls the default choice when both Discogs and CAA cover art candidates are available.
 - `-na`, `--no-aa`: Disable cover art ANSI/ASCII art output.
 - `-l`, `--logs`: Print debug logs.
 - `-i`, `--input`: cdrip config file path (default search: `./cdrip.conf` --> `~/.cdrip.conf`)
 - `-u`, `--update <file|dir> [more ...]`: Update existing FLAC tags from CDDB using embedded tags (other options ignored)
 
 All command-line options (except `-u` and `-i`) can override the contents of the config file specified with `-i`.
+
+When ReplayGain is enabled, all tracks are ripped into a temporary directory first. The final `.flac` files do not appear in the destination until the whole album has finished ripping and ReplayGain tags have been written.
 
 TIPS: If you want to import a large number of CDs continuously with MusicBrainz tagging, you can do so by specifying the `cdrip -a -r` option.
 Additionally, when ripping CDs from the same series, using the `-ft` option to narrow down the titles somewhat can reduce mistakes in selecting CDDB candidates.
@@ -156,6 +164,10 @@ The following Vorbis comments are inserted:
 |`musicbrainz_discid`|MusicBrainz disc ID (Partial use, will remove when fetch succeed)|internal|
 |`musicbrainz_leadout`|MusicBrainz CD leadout time (Partial use, will remove when fetch succeed)|internal|
 |`discogs_release`|Discogs release ID (numeric)|MusicBrainz|
+|`replaygain_track_gain`|ReplayGain track gain|internal|
+|`replaygain_track_peak`|ReplayGain track peak|internal|
+|`replaygain_album_gain`|ReplayGain album gain|internal|
+|`replaygain_album_peak`|ReplayGain album peak|internal|
 
 When obtaining information from CDDB or MusicBrainz, not all of this tag information may be available.
 
@@ -175,12 +187,19 @@ If the player supports cover art display, the cover art image will be shown:
 ![Cover art](./images/aa.png)
 
 - Fetching and embedding cover art is only possible when a MusicBrainz match is used; other CDDB servers do not supply cover art.
-- You can choose the preference order with `-dc`/`--discogs`: `always` (default: Discogs first, then CAA), `fallback` (CAA first, then Discogs), `no` (do not use Discogs).
-- Discogs cover art is only attempted when MusicBrainz release provides `discogs_release` tag.
+- In normal interactive mode, when both Cover Art Archive and Discogs images are available, both candidates are shown and you can choose `1` or `2`.
+  When ANSI/ASCII art output is enabled on a TTY, the two previews are displayed side by side in columns.
+  The default choice follows `-dc`/`--discogs` (`always` => Discogs, `fallback`/`no` => Cover Art Archive).
+
+  ![Cover art selection](./images/aa-2.png)
+
 - Cover art is always converted to PNG format.
   This is because images provided by CAA may contain special metadata (such as ICC profiles), which can cause the hardware media player to be unable to display the image.
   Since it's in PNG format, the image itself does not degrade over time
   (though there is a form of “degradation” in the sense that the ICC profile is removed, which performs the color space conversion to sRGB).
+- Discogs cover art is only attempted when MusicBrainz release provides `discogs_release` tag.
+- You can choose the preference order with `-dc`/`--discogs`: `always` (default: Discogs first, then CAA), `fallback` (CAA first, then Discogs), `no` (do not use Discogs).
+- In repeat mode and fully automatic mode, no cover-art choice prompt is shown; the configured preference order is used directly.
 
 ## Filename formatting
 
@@ -247,6 +266,8 @@ max_width=512        # cover art max width in pixels (> 0)
 speed=slow           # slow or fast (default: slow)
 aa=true              # show cover art as ANSI/ASCII art (TTY only)
 discogs=always       # no / always / fallback (cover art preference order, default: always)
+replaygain=true      # true / false (default: true; false = save each track immediately)
+recrawl_percent=2    # Per-track length tolerance for MusicBrainz candidates (default: 2)
 mode=best            # best / fast / default
 repeat=false
 sort=false
@@ -293,6 +314,7 @@ A special server id `musicbrainz` is not required `[cddb.musicbrainz]` section d
 - libFLAC++
 - GNOME GIO
 - libsoup 3.0
+- libebur128
 - json-glib
 - libpng
 - libjpeg
@@ -301,10 +323,12 @@ A special server id `musicbrainz` is not required `[cddb.musicbrainz]` section d
 - CMake and a C++17 compiler
 - Node.js and [screw-up](https://github.com/kekyo/screw-up) (Automated-versioning tool)
 
-`build-package.sh`:
+`build_package.sh`:
 
 - dpkg-dev (for `dpkg-shlibdeps` when building packages)
-- cowbuilder (deb package building)
+- binutils (for `readelf` validation)
+- podman
+- qemu-user-static (for cross-architecture container execution)
 
 ### Build
 
@@ -312,7 +336,7 @@ In Ubuntu noble/jammy:
 
 ```bash
 sudo apt-get install build-essential cmake dpkg-dev nodejs \
-  libcdio-paranoia-dev libcddb2-dev libflac++-dev libglib2.0-dev libsoup-3.0-dev libjson-glib-dev libchafa-dev libpng-dev libjpeg-dev liblcms2-dev
+  libcdio-paranoia-dev libcddb2-dev libebur128-dev libflac++-dev libglib2.0-dev libsoup-3.0-dev libjson-glib-dev libchafa-dev libpng-dev libjpeg-dev liblcms2-dev
 npm install -g screw-up
 
 ./build.sh
@@ -320,37 +344,42 @@ npm install -g screw-up
 
 ### Build packages
 
-`build_package.sh` runs `build.sh` inside a cowbuilder chroot with qemu-user-static to target one distro/arch per call. Run it repeatedly for all combinations you need.
+`build_package.sh` runs package builds inside distro-specific podman containers and can schedule the full matrix in one invocation.
 
 Prerequisites:
 
 ```bash
-sudo apt-get install cowbuilder qemu-user-static debootstrap systemd-container
+sudo apt-get install podman qemu-user-static dpkg-dev binutils
 ```
 
 Build examples:
 
 ```bash
-# Ubuntu noble / amd64
-./build_package.sh --distro ubuntu --release noble --arch x86_64
+# Ubuntu 24.04 / amd64
+./build_package.sh --target deb --distro ubuntu --release 24.04 --arch x86_64
 
 # Debian bookworm / arm64
-./build_package.sh --distro debian --release bookworm --arch arm64
+./build_package.sh --target deb --distro debian --release bookworm --arch arm64
+
+# Full matrix
+./build_package.sh --target all
 ```
 
 Notes:
-- Arch aliases: `x86_64|amd64`, `i686|i386`, `armv7|armhf`, `aarch64|arm64`
-- Debug build: add `--debug` (passes `-d` to `build.sh`)
-- Refresh chroot: add `--refresh-base`
-- Outputs: `artifacts/<distro>-<release>-<arch>/*.deb`
+- Supported targets match the libbounce packaging matrix:
+  Debian `bookworm` (`x86_64`, `i686`, `arm64`, `armv7l`),
+  Debian `trixie` (`x86_64`, `i686`, `arm64`, `armv7l`, `riscv64`),
+  Ubuntu `22.04` (`x86_64`, `arm64`),
+  Ubuntu `24.04` (`x86_64`, `arm64`)
+- Arch aliases: `x86_64|amd64`, `i686|i386`, `armv7l|armv7|armhf`, `arm64|aarch64`
+- Ubuntu release aliases: `24.04|noble`, `22.04|jammy`
+- Debug build: add `--debug`
+- Outputs: `artifacts/deb/<package>-<version>-<distro>-<release>-<deb-arch>.deb`
 
 Batch build for all predefined combos:
 
 ```bash
-# ubuntu noble/jammy × amd64/i386/armhf/arm64
-# debian trixie/bookworm × amd64/i386/armhf/arm64
-./build_package_all.sh            # reuse existing bases
-./build_package_all.sh --refresh-base  # rebuild bases then build all
+./build_package_all.sh
 ```
 
 -----

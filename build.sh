@@ -35,7 +35,7 @@ done
 shift $((OPTIND - 1))
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="$(printf '{version}\n' | screw-up format -f 2>/dev/null | head -n 1)"
+VERSION="$(printf '{version}\n' | screw-up format 2>/dev/null | head -n 1)"
 ARCH="${ARCH:-$(dpkg --print-architecture)}"
 BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build}"
 
@@ -43,7 +43,7 @@ echo "Building for ARCH=${ARCH}, VERSION=${VERSION}, BUILD_TYPE=${BUILD_TYPE}"
 
 rm -rf ${BUILD_DIR}
 cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
-cmake --build "${BUILD_DIR}"
+cmake --build "${BUILD_DIR}" -j 16
 
 PKG_ROOT="${BUILD_DIR}/deb"
 rm -rf "${PKG_ROOT}"
@@ -62,7 +62,7 @@ Section: libs
 Priority: optional
 Architecture: ${ARCH}
 Maintainer: cd-ripper
-Depends: libcdio-paranoia-dev, libcddb2-dev, libflac++-dev, libglib2.0-dev, libsoup-3.0-dev, libjson-glib-dev, libjpeg-dev, libpng-dev, liblcms2-dev
+Depends: libcdio-paranoia-dev, libcddb2-dev, libebur128-dev, libflac++-dev, libglib2.0-dev, libsoup-3.0-dev, libjson-glib-dev, libjpeg-dev, libpng-dev, liblcms2-dev
 Description: C++ CD ripping library (dev package)
 EOF
 
