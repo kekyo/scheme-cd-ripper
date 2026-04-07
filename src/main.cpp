@@ -221,31 +221,88 @@ std::string fmt_time_fn(double sec) {
     return os.str();
 }
 
-void progress_cb(const CdRipProgressInfo* info) {
-    if (!info) return;
+char progress_spinner_frame(
+    double wall_elapsed_sec) {
+
+    static constexpr char kFrames[] = {'|', '/', '-', '\\'};
+
+    if (!std::isfinite(wall_elapsed_sec) || wall_elapsed_sec < 0.0) {
+        wall_elapsed_sec = 0.0;
+    }
+    const auto frame_index = static_cast<size_t>(wall_elapsed_sec * 10.0);
+    return kFrames[frame_index % (sizeof(kFrames) / sizeof(kFrames[0]))];
+}
+
+struct RipProgressSnapshot {
+    int track_number{0};
+    int total_tracks{0};
+    double percent{0.0};
+    double elapsed_total_sec{0.0};
+    double total_album_sec{0.0};
+    double wall_elapsed_sec{0.0};
+    double wall_total_sec{0.0};
+    std::string title{};
+    std::string track_name{};
+};
+
+RipProgressSnapshot make_rip_progress_snapshot(
+    const CdRipProgressInfo& info) {
+
+    RipProgressSnapshot snapshot{};
+    snapshot.track_number = info.track_number;
+    snapshot.total_tracks = info.total_tracks;
+    snapshot.percent = info.percent;
+    snapshot.elapsed_total_sec = info.elapsed_total_sec;
+    snapshot.total_album_sec = info.total_album_sec;
+    snapshot.wall_elapsed_sec = info.wall_elapsed_sec;
+    snapshot.wall_total_sec = info.wall_total_sec;
+    snapshot.title = view_string(info.title);
+    snapshot.track_name = view_string(info.track_name);
+    return snapshot;
+}
+
+std::string build_rip_progress_line(
+    const RipProgressSnapshot& snapshot,
+    char frame) {
+
     // Avoid noisy ETA early in the track: wait for minimal progress/time.
     constexpr double kMinElapsedSec = 10.0;  // wall-clock seconds from album start
-    bool show_eta = info->wall_elapsed_sec >= kMinElapsedSec;
+    const bool show_eta = snapshot.wall_elapsed_sec >= kMinElapsedSec;
 
-    double remaining_total = info->wall_total_sec > 0.0
-        ? info->wall_total_sec - info->wall_elapsed_sec
-        : info->total_album_sec - info->elapsed_total_sec;
-    if (remaining_total < 0) remaining_total = 0;
+    double remaining_total = snapshot.wall_total_sec > 0.0
+        ? snapshot.wall_total_sec - snapshot.wall_elapsed_sec
+        : snapshot.total_album_sec - snapshot.elapsed_total_sec;
+    if (remaining_total < 0.0) remaining_total = 0.0;
+
     const int bar_width = 20;
-    int filled = static_cast<int>(info->percent / 100.0 * bar_width);
+    int filled = static_cast<int>(snapshot.percent / 100.0 * bar_width);
+    if (filled < 0) filled = 0;
     if (filled > bar_width) filled = bar_width;
+
     std::string bar(filled, '=');
     if (filled < bar_width) {
         bar.push_back('>');
         bar.append(bar_width - filled - 1, '-');
     }
-    std::string track_name = view_string(info->track_name);
-    if (track_name.empty()) track_name = view_string(info->title);
-    std::cout << "\rTrack " << std::setw(2) << info->track_number << "/" << std::setw(2) << info->total_tracks
-              << " [ETA: " << (show_eta ? fmt_time_fn(remaining_total) : "--:--") << " " << bar << "]: "
-              << "\"" << track_name << "\"";
-	    std::cout.flush();
-	        if (info->percent >= 100.0) std::cout << "\n";
+
+    std::string track_name = snapshot.track_name;
+    if (track_name.empty()) track_name = snapshot.title;
+
+    std::ostringstream oss;
+    oss << frame
+        << " Track " << std::setw(2) << snapshot.track_number << "/" << std::setw(2) << snapshot.total_tracks
+        << " [ETA: " << (show_eta ? fmt_time_fn(remaining_total) : "--:--") << " " << bar << "]: "
+        << "\"" << track_name << "\"";
+    return oss.str();
+}
+
+void print_rip_progress_line(
+    const CdRipProgressInfo& info) {
+
+    const RipProgressSnapshot snapshot = make_rip_progress_snapshot(info);
+    std::cout << "\r" << build_rip_progress_line(snapshot, progress_spinner_frame(snapshot.wall_elapsed_sec));
+    std::cout.flush();
+    if (info.percent >= 100.0) std::cout << "\n";
 }
 
 struct ActivitySnapshot {
@@ -318,27 +375,20 @@ std::string format_diagnostic_message(
     }
 }
 
-class ActivitySpinner {
+enum class SpinnerStopMode {
+    Clear,
+    Keep,
+    KeepWithNewline,
+};
+
+class SpinnerRenderer {
 public:
-    explicit ActivitySpinner(
-        CdRipActivityPhases phase)
+    SpinnerRenderer()
         : enabled_(::isatty(STDOUT_FILENO) != 0) {
-
-        snapshot_.phase = phase;
-        observer_.callback = &ActivitySpinner::observer_cb;
-        observer_.user_data = this;
-    }
-
-    ~ActivitySpinner() {
-        stop();
     }
 
     bool enabled() const {
         return enabled_;
-    }
-
-    const CdRipActivityObserver* observer() const {
-        return enabled_ ? &observer_ : nullptr;
     }
 
     void start() {
@@ -347,17 +397,17 @@ public:
         worker_ = std::thread([this]() { render_loop(); });
     }
 
-    void stop() {
-        if (!enabled_ || !running_.exchange(false)) return;
-        if (worker_.joinable()) worker_.join();
-        if (rendered_) {
-            std::lock_guard<std::mutex> guard(output_mutex_);
-            std::cout << "\r" << std::string(last_render_width_, ' ') << "\r";
-            std::cout.flush();
-        }
+    void stop(
+        SpinnerStopMode stop_mode) {
+
+        if (!enabled_) return;
+        const bool was_running = running_.exchange(false);
+        if (was_running && worker_.joinable()) worker_.join();
+        finalize_render(stop_mode);
     }
 
-    void print_diagnostic_line(
+protected:
+    void print_external_line(
         const std::string& line) {
 
         if (line.empty()) return;
@@ -369,11 +419,122 @@ public:
 
         std::lock_guard<std::mutex> guard(output_mutex_);
         if (rendered_) {
-            std::cout << "\r" << std::string(last_render_width_, ' ') << "\r";
-            std::cout.flush();
+            clear_rendered_line_locked();
         }
         std::cerr << line << "\n";
         std::cerr.flush();
+        rendered_ = false;
+        last_render_width_ = 0;
+        last_visible_line_.clear();
+    }
+
+private:
+    void clear_rendered_line_locked() {
+        std::cout << "\r" << std::string(last_render_width_, ' ') << "\r";
+        std::cout.flush();
+    }
+
+    void finalize_render(
+        SpinnerStopMode stop_mode) {
+
+        std::lock_guard<std::mutex> guard(output_mutex_);
+        if (!rendered_) return;
+
+        clear_rendered_line_locked();
+        if (stop_mode == SpinnerStopMode::Keep || stop_mode == SpinnerStopMode::KeepWithNewline) {
+            std::cout << "\r" << last_visible_line_;
+            if (stop_mode == SpinnerStopMode::KeepWithNewline) {
+                std::cout << "\n";
+            }
+            std::cout.flush();
+        }
+
+        rendered_ = false;
+        last_render_width_ = 0;
+        last_visible_line_.clear();
+    }
+
+    void render_loop() {
+        static constexpr char kFrames[] = {'|', '/', '-', '\\'};
+        static constexpr auto kTick = std::chrono::milliseconds(100);
+        static constexpr auto kInitialDelay = std::chrono::milliseconds(300);
+
+        size_t frame_index = 0;
+        while (running_.load()) {
+            const auto now = std::chrono::steady_clock::now();
+            if ((now - started_at_) >= kInitialDelay) {
+                const double elapsed_sec = std::chrono::duration<double>(now - started_at_).count();
+                const char frame = kFrames[frame_index % (sizeof(kFrames) / sizeof(kFrames[0]))];
+                const std::string line = build_spinner_line(frame, elapsed_sec);
+                {
+                    std::lock_guard<std::mutex> guard(output_mutex_);
+                    if (line.empty()) {
+                        if (rendered_) {
+                            clear_rendered_line_locked();
+                            rendered_ = false;
+                            last_render_width_ = 0;
+                            last_visible_line_.clear();
+                        }
+                    } else {
+                        std::string render_line = line;
+                        if (render_line.size() < last_render_width_) {
+                            render_line.append(last_render_width_ - render_line.size(), ' ');
+                        }
+                        last_visible_line_ = line;
+                        last_render_width_ = render_line.size();
+                        std::cout << "\r" << render_line;
+                        std::cout.flush();
+                        rendered_ = true;
+                    }
+                }
+                ++frame_index;
+            }
+            std::this_thread::sleep_for(kTick);
+        }
+    }
+
+protected:
+    virtual std::string build_spinner_line(
+        char frame,
+        double elapsed_sec) = 0;
+
+private:
+    bool enabled_{false};
+    std::atomic<bool> running_{false};
+    std::thread worker_{};
+    std::chrono::steady_clock::time_point started_at_{};
+    mutable std::mutex output_mutex_{};
+    std::string last_visible_line_{};
+    size_t last_render_width_{0};
+    bool rendered_{false};
+};
+
+class ActivitySpinner : public SpinnerRenderer {
+public:
+    explicit ActivitySpinner(
+        CdRipActivityPhases phase) {
+
+        snapshot_.phase = phase;
+        observer_.callback = &ActivitySpinner::observer_cb;
+        observer_.user_data = this;
+    }
+
+    ~ActivitySpinner() {
+        stop();
+    }
+
+    const CdRipActivityObserver* observer() const {
+        return enabled() ? &observer_ : nullptr;
+    }
+
+    void stop() {
+        SpinnerRenderer::stop(SpinnerStopMode::Clear);
+    }
+
+    void print_diagnostic_line(
+        const std::string& line) {
+
+        print_external_line(line);
     }
 
 private:
@@ -398,51 +559,83 @@ private:
         snapshot_.total_sources = info.total_sources;
     }
 
-    void render_loop() {
-        static constexpr char kFrames[] = {'|', '/', '-', '\\'};
-        static constexpr auto kTick = std::chrono::milliseconds(100);
-        static constexpr auto kInitialDelay = std::chrono::milliseconds(300);
+    std::string build_spinner_line(
+        char frame,
+        double elapsed_sec) override {
 
-        size_t frame_index = 0;
-        while (running_.load()) {
-            const auto now = std::chrono::steady_clock::now();
-            if ((now - started_at_) >= kInitialDelay) {
-                ActivitySnapshot snapshot_copy;
-                {
-                    std::lock_guard<std::mutex> guard(mutex_);
-                    snapshot_copy = snapshot_;
-                }
-                const double elapsed_sec = std::chrono::duration<double>(now - started_at_).count();
-                std::string line = build_activity_spinner_line(
-                    snapshot_copy,
-                    kFrames[frame_index % (sizeof(kFrames) / sizeof(kFrames[0]))],
-                    elapsed_sec);
-                if (line.size() < last_render_width_) {
-                    line.append(last_render_width_ - line.size(), ' ');
-                }
-                {
-                    std::lock_guard<std::mutex> guard(output_mutex_);
-                    last_render_width_ = line.size();
-                    std::cout << "\r" << line;
-                    std::cout.flush();
-                    rendered_ = true;
-                }
-                ++frame_index;
-            }
-            std::this_thread::sleep_for(kTick);
+        ActivitySnapshot snapshot_copy;
+        {
+            std::lock_guard<std::mutex> guard(mutex_);
+            snapshot_copy = snapshot_;
         }
+        return build_activity_spinner_line(snapshot_copy, frame, elapsed_sec);
     }
 
-    bool enabled_{false};
-    std::atomic<bool> running_{false};
-    std::thread worker_{};
-    std::chrono::steady_clock::time_point started_at_{};
     mutable std::mutex mutex_{};
-    mutable std::mutex output_mutex_{};
     ActivitySnapshot snapshot_{};
     CdRipActivityObserver observer_{};
-    bool rendered_{false};
-    size_t last_render_width_{0};
+};
+
+class RipProgressSpinner : public SpinnerRenderer {
+public:
+    RipProgressSpinner() = default;
+
+    ~RipProgressSpinner() {
+        finish(false);
+    }
+
+    void activate() {
+        if (!enabled()) return;
+        active_.store(this);
+        start();
+    }
+
+    void finish(
+        bool keep_completed_line) {
+
+        if (!enabled()) return;
+        if (active_.load() == this) {
+            active_.store(nullptr);
+        }
+        SpinnerRenderer::stop(
+            keep_completed_line ? SpinnerStopMode::KeepWithNewline : SpinnerStopMode::Clear);
+    }
+
+    static void progress_cb(
+        const CdRipProgressInfo* info) {
+
+        if (!info) return;
+        auto* active = active_.load();
+        if (active && active->enabled()) {
+            active->update(*info);
+            return;
+        }
+        print_rip_progress_line(*info);
+    }
+
+private:
+    void update(
+        const CdRipProgressInfo& info) {
+
+        std::lock_guard<std::mutex> guard(mutex_);
+        snapshot_ = make_rip_progress_snapshot(info);
+        has_snapshot_ = true;
+    }
+
+    std::string build_spinner_line(
+        char frame,
+        double elapsed_sec) override {
+
+        (void)elapsed_sec;
+        std::lock_guard<std::mutex> guard(mutex_);
+        if (!has_snapshot_) return {};
+        return build_rip_progress_line(snapshot_, frame);
+    }
+
+    inline static std::atomic<RipProgressSpinner*> active_{nullptr};
+    mutable std::mutex mutex_{};
+    RipProgressSnapshot snapshot_{};
+    bool has_snapshot_{false};
 };
 
 void metadata_diagnostic_cb(
@@ -2984,7 +3177,7 @@ int main(int argc, char** argv) {
     std::cout << "  auto        : " << (auto_mode ? "enabled" : "disabled");
     std::cout << "\n\n";
 
-    CdRipProgressCallback progress = &progress_cb;
+    CdRipProgressCallback progress = &RipProgressSpinner::progress_cb;
 
     while (true) {
         if (!drive) {
@@ -3143,6 +3336,8 @@ int main(int argc, char** argv) {
 
                     cdrip::detail::ReplayGainScanResult track_replaygain;
                     std::string rip_err;
+                    RipProgressSpinner rip_spinner{};
+                    rip_spinner.activate();
                     if (!cdrip::detail::rip_track_with_options(
                             drive,
                             track,
@@ -3156,10 +3351,12 @@ int main(int argc, char** argv) {
                             &write_options,
                             &track_replaygain,
                             rip_err)) {
+                        rip_spinner.finish(false);
                         success = false;
                         std::cerr << "Rip error: " << rip_err << "\n";
                         break;
                     }
+                    rip_spinner.finish(true);
 
                     staged_tracks.push_back(AlbumTrackStage{
                         track->number,
@@ -3169,7 +3366,10 @@ int main(int argc, char** argv) {
                     });
                 } else {
                     const char* rip_err = nullptr;
+                    RipProgressSpinner rip_spinner{};
+                    rip_spinner.activate();
                     if (!cdrip_rip_track(drive, track, meta, toc, progress, &rip_err, total_tracks, completed_before, total_album_sec, wall_start)) {
+                        rip_spinner.finish(false);
                         success = false;
                         if (rip_err) {
                             std::cerr << "Rip error: " << view_string(rip_err) << "\n";
@@ -3177,6 +3377,7 @@ int main(int argc, char** argv) {
                         }
                         break;
                     }
+                    rip_spinner.finish(true);
                     cdrip_release_error(rip_err);
                 }
                 completed_before += track_secs[idx];

@@ -164,6 +164,69 @@ auto test_prompt_for_cover_art_source_honors_default_and_retries = []() {
     }
 };
 
+auto test_build_rip_progress_line_adds_spinner_and_title_fallback = []() {
+    CdRipProgressInfo info{};
+    info.track_number = 1;
+    info.total_tracks = 12;
+    info.percent = 25.0;
+    info.elapsed_total_sec = 30.0;
+    info.total_album_sec = 120.0;
+    info.wall_elapsed_sec = 0.0;
+    info.wall_total_sec = 0.0;
+    info.title = "Album Title";
+    info.track_name = "";
+    const RipProgressSnapshot snapshot = make_rip_progress_snapshot(info);
+
+    expect_eq(
+        "| Track  1/12 [ETA: --:-- =====>--------------]: \"Album Title\"",
+        build_rip_progress_line(snapshot, '|'),
+        "rip progress line should include an initial spinner frame and fall back to the title");
+};
+
+auto test_build_rip_progress_line_updates_spinner_and_eta_after_threshold = []() {
+    CdRipProgressInfo info{};
+    info.track_number = 2;
+    info.total_tracks = 3;
+    info.percent = 100.0;
+    info.elapsed_total_sec = 45.0;
+    info.total_album_sec = 120.0;
+    info.wall_elapsed_sec = 10.2;
+    info.wall_total_sec = 65.2;
+    info.title = "Ignored Title";
+    info.track_name = "Focused Track";
+    const RipProgressSnapshot snapshot = make_rip_progress_snapshot(info);
+
+    expect_eq(
+        "- Track  2/ 3 [ETA: 00:55 ====================]: \"Focused Track\"",
+        build_rip_progress_line(snapshot, '-'),
+        "rip progress line should rotate the spinner and switch to ETA display after enough elapsed time");
+};
+
+auto test_rip_progress_callback_writes_spinner_line_and_completion_newline = []() {
+    CdRipProgressInfo info{};
+    info.track_number = 2;
+    info.total_tracks = 3;
+    info.percent = 100.0;
+    info.elapsed_total_sec = 45.0;
+    info.total_album_sec = 120.0;
+    info.wall_elapsed_sec = 10.2;
+    info.wall_total_sec = 65.2;
+    info.title = "Ignored Title";
+    info.track_name = "Focused Track";
+
+    std::istringstream input;
+    std::ostringstream output;
+    std::ostringstream error;
+    with_redirected_stdio(input, output, error, [&]() {
+        RipProgressSpinner::progress_cb(&info);
+    });
+
+    expect_eq(
+        "\r- Track  2/ 3 [ETA: 00:55 ====================]: \"Focused Track\"\n",
+        output.str(),
+        "progress callback should emit the spinner-prefixed line and terminate completed tracks");
+};
+
 }  // namespace
 
 int main() {
@@ -172,5 +235,8 @@ int main() {
     test_build_cover_art_choice_header_centers_labels();
     test_compose_rgba_side_by_side_keeps_gap_transparent();
     test_prompt_for_cover_art_source_honors_default_and_retries();
+    test_build_rip_progress_line_adds_spinner_and_title_fallback();
+    test_build_rip_progress_line_updates_spinner_and_eta_after_threshold();
+    test_rip_progress_callback_writes_spinner_line_and_completion_newline();
     return 0;
 }
