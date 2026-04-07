@@ -80,6 +80,16 @@ std::string view_string(const char* s) {
     return s ? std::string{s} : std::string{};
 }
 
+std::string display_version() {
+    std::string version = VERSION;
+    const std::string commit = COMMIT_ID;
+    if (!commit.empty() && commit != "unknown") {
+        version += "-";
+        version += commit;
+    }
+    return version;
+}
+
 std::string trim_ws(const std::string& s);
 
 std::string canonicalize_device_path(const std::string& path) {
@@ -2870,7 +2880,7 @@ int run_update_mode(
 }
 
 int main(int argc, char** argv) {
-    std::cout << "\nScheme CD music/sound ripper [" << VERSION << "-" << COMMIT_ID << "]\n";
+    std::cout << "\nScheme CD music/sound ripper [" << display_version() << "]\n";
     std::cout << "Copyright (c) Kouji Matsui (@kekyo@mi.kekyo.net)\n";
     std::cout << "https://github.com/kekyo/scheme-cd-ripper\n";
     std::cout << "Licence: Under MIT.\n\n";

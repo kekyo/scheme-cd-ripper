@@ -20,6 +20,23 @@ usage() {
     echo "  -d  Debug build (for Valgrind usage)" >&2
 }
 
+fail() {
+    echo "$1" >&2
+    exit 1
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
+}
+
+detect_version() {
+    require_command screw-up
+    local detected_version
+    detected_version="$(printf '%s\n' '{version}' | screw-up format | tr -d '\r' | head -n 1)"
+    [ -n "${detected_version}" ] || fail 'screw-up did not return a version'
+    printf '%s\n' "${detected_version}"
+}
+
 BUILD_TYPE="Release"
 while getopts ":d" opt; do
     case "${opt}" in
@@ -35,13 +52,14 @@ done
 shift $((OPTIND - 1))
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="$(printf '{version}\n' | screw-up format 2>/dev/null | head -n 1)"
+VERSION="$(detect_version)"
 ARCH="${ARCH:-$(dpkg --print-architecture)}"
 BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build}"
 
 echo "Building for ARCH=${ARCH}, VERSION=${VERSION}, BUILD_TYPE=${BUILD_TYPE}"
 
 rm -rf ${BUILD_DIR}
+CDRIP_PACKAGE_VERSION="${VERSION}" \
 cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
 cmake --build "${BUILD_DIR}" -j 16
 
