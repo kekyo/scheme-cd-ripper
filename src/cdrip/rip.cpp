@@ -231,7 +231,14 @@ bool rip_track_with_options(
         compression_level = (rip->mode == RIP_MODES_FAST) ? 1 : 5;
     }
 
-    cdda_speed_set(rip->drive, rip->speed_fast ? 0 : 1);
+    const DriveBackend& backend =
+        rip->backend ? *rip->backend : current_drive_backend();
+    std::string backend_err;
+    if (!backend.set_drive_speed(rip->drive, rip->speed_fast, backend_err)) {
+        err = backend_err;
+        remove_local_file_quietly(temp_path);
+        return false;
+    }
 
     FLAC::Encoder::File encoder;
     encoder.set_verify(false);
@@ -279,7 +286,13 @@ bool rip_track_with_options(
         return false;
     }
 
-    paranoia_seek(rip->paranoia, track->start, SEEK_SET);
+    if (!backend.seek_reader(rip->reader, track->start, backend_err)) {
+        err = backend_err;
+        encoder.finish();
+        cleanup_encoder_state();
+        remove_local_file_quietly(temp_path);
+        return false;
+    }
 
     constexpr int kChunkSectors = 128;
     std::vector<FLAC__int32> left(kChunkSectors * kSamplesPerSector);
@@ -298,8 +311,8 @@ bool rip_track_with_options(
         int read_sectors = 0;
 
         for (int c = 0; c < chunk; ++c) {
-            int16_t* buffer = paranoia_read(rip->paranoia, nullptr);
-            if (!buffer) {
+            const int16_t* buffer = nullptr;
+            if (!backend.read_sector(rip->reader, buffer, backend_err)) {
                 err = "Read error on track " + std::to_string(track->number);
                 encoder.finish();
                 cleanup_encoder_state();

@@ -19,16 +19,21 @@
 #include <vector>
 
 #include <cdio/cdio.h>
-#include <cdio/paranoia/cdda.h>
-#include <cdio/paranoia/paranoia.h>
+#include <cdio/cd_types.h>
 #include <ebur128.h>
 #include <FLAC/metadata.h>
 
 #include "cdrip/cdrip.h"
 
+namespace cdrip::detail {
+struct BackendDetectedDrive;
+struct DriveBackend;
+}
+
 struct CdRip {
-    cdrom_drive_t* drive{nullptr};
-    cdrom_paranoia* paranoia{nullptr};
+    const cdrip::detail::DriveBackend* backend{nullptr};
+    void* drive{nullptr};
+    void* reader{nullptr};
     CdRipRipModes mode{RIP_MODES_BEST};
     std::string device;
     std::string format;
@@ -39,6 +44,61 @@ struct CdRip {
 /* ------------------------------------------------------------------- */
 
 namespace cdrip::detail {
+
+struct BackendDetectedDrive {
+    std::string device{};
+    bool has_media{false};
+};
+
+// Thin indirection layer for all drive and reader interactions so tests can
+// replace the live libcdio/cd-paranoia backend without changing public APIs.
+struct DriveBackend {
+    std::vector<BackendDetectedDrive> (*detect_drives)();
+    bool (*open_drive)(
+        const std::string& device,
+        void*& out_drive,
+        std::string& err);
+    void (*close_drive)(void* drive);
+    bool (*set_drive_speed)(
+        void* drive,
+        bool speed_fast,
+        std::string& err);
+    bool (*create_reader)(
+        void* drive,
+        CdRipRipModes mode,
+        void*& out_reader,
+        std::string& err);
+    void (*destroy_reader)(void* reader);
+    bool (*eject_drive)(
+        const std::string& device,
+        std::string& err);
+    bool (*get_track_count)(
+        void* drive,
+        int& out_track_count,
+        std::string& err);
+    bool (*get_track_info)(
+        void* drive,
+        int track_number,
+        CdRipTrackInfo& out_track,
+        std::string& err);
+    bool (*get_disc_last_sector)(
+        void* drive,
+        long& out_last_sector,
+        std::string& err);
+    bool (*seek_reader)(
+        void* reader,
+        long sector,
+        std::string& err);
+    bool (*read_sector)(
+        void* reader,
+        const int16_t*& out_buffer,
+        std::string& err);
+};
+
+const DriveBackend& current_drive_backend();
+void set_drive_backend_for_tests(
+    const DriveBackend* backend);
+void reset_drive_backend_for_tests();
 
 // Helpers were previously static in the monolithic TU; keep internal linkage by
 // providing inline definitions scoped to this header.

@@ -113,6 +113,7 @@ set(CDRIP_SOURCES
     src/cdrip/flac_metadata.cpp
     src/cdrip/drives.cpp
     src/cdrip/drive_handle.cpp
+    src/cdrip/drive_backend.cpp
     src/cdrip/disc_toc.cpp
     src/cdrip/rip.cpp
     src/cdrip/error.cpp
@@ -190,3 +191,12 @@ target_link_directories(cdrip_test_cover_art_selection PRIVATE ${COMMON_LIB_DIRS
 target_compile_options(cdrip_test_cover_art_selection PRIVATE ${COMMON_CFLAGS} ${CHAFA_CFLAGS_OTHER})
 target_link_libraries(cdrip_test_cover_art_selection PRIVATE cdrip_static ${CHAFA_LIBRARIES})
 add_dependencies(cdrip_test_cover_art_selection version_header)
+
+add_executable(cdrip_test_drive_backend
+    tests/test_drive_backend.cpp
+)
+target_include_directories(cdrip_test_drive_backend PRIVATE ${COMMON_INCLUDES})
+target_link_directories(cdrip_test_drive_backend PRIVATE ${COMMON_LIB_DIRS})
+target_compile_options(cdrip_test_drive_backend PRIVATE ${COMMON_CFLAGS})
+target_link_libraries(cdrip_test_drive_backend PRIVATE cdrip_static)
+add_dependencies(cdrip_test_drive_backend version_header)
