@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <iostream>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -98,9 +99,29 @@ struct FakeBackendState {
     CdRipRipModes last_reader_mode{RIP_MODES_DEFAULT};
     long last_seek_sector{-1};
     std::string last_open_device{};
+    bool fail_open{false};
+    bool fail_set_speed{false};
+    bool fail_create_reader{false};
+    bool fail_get_track_count{false};
+    bool fail_get_track_info{false};
+    bool fail_get_disc_last_sector{false};
+    bool fail_seek{false};
+    int fail_read_call{-1};
+    bool fail_eject{false};
 };
 
 FakeBackendState* g_fake_backend_state = nullptr;
+
+struct RecordedProgress {
+    int track_number{0};
+    int total_tracks{0};
+    double percent{0.0};
+    std::string title{};
+    std::string track_name{};
+    std::string path{};
+};
+
+std::vector<RecordedProgress>* g_recorded_progress = nullptr;
 
 auto fake_detect_drives = []() {
     expect_true(g_fake_backend_state != nullptr, "fake backend state should be installed");
@@ -113,6 +134,11 @@ auto fake_open_drive = [](
     std::string& err) {
 
     expect_true(g_fake_backend_state != nullptr, "fake backend state should be installed");
+    if (g_fake_backend_state->fail_open) {
+        err = "Fake open failure";
+        out_drive = nullptr;
+        return false;
+    }
     err.clear();
     out_drive = new FakeDriveHandle{};
     g_fake_backend_state->open_calls++;
@@ -135,6 +161,10 @@ auto fake_set_drive_speed = [](
 
     expect_true(g_fake_backend_state != nullptr, "fake backend state should be installed");
     expect_true(drive != nullptr, "fake drive handle should be valid");
+    if (g_fake_backend_state->fail_set_speed) {
+        err = "Fake speed failure";
+        return false;
+    }
     err.clear();
     g_fake_backend_state->set_speed_calls++;
     g_fake_backend_state->last_speed_fast = speed_fast;
@@ -149,6 +179,11 @@ auto fake_create_reader = [](
 
     expect_true(g_fake_backend_state != nullptr, "fake backend state should be installed");
     expect_true(drive != nullptr, "fake drive handle should be valid");
+    if (g_fake_backend_state->fail_create_reader) {
+        err = "Fake reader creation failure";
+        out_reader = nullptr;
+        return false;
+    }
     err.clear();
     out_reader = new FakeReaderHandle{};
     g_fake_backend_state->create_reader_calls++;
@@ -169,6 +204,10 @@ auto fake_eject_drive = [](
     std::string& err) {
 
     expect_true(g_fake_backend_state != nullptr, "fake backend state should be installed");
+    if (g_fake_backend_state->fail_eject) {
+        err = "Fake eject failure";
+        return false;
+    }
     err.clear();
     expect_eq("/dev/fake-cdrom", device, "close should eject the selected fake device");
     g_fake_backend_state->eject_calls++;
@@ -182,6 +221,11 @@ auto fake_get_track_count = [](
 
     expect_true(g_fake_backend_state != nullptr, "fake backend state should be installed");
     expect_true(drive != nullptr, "fake drive handle should be valid");
+    if (g_fake_backend_state->fail_get_track_count) {
+        err = "Fake track count failure";
+        out_track_count = 0;
+        return false;
+    }
     err.clear();
     out_track_count = static_cast<int>(g_fake_backend_state->tracks.size());
     return out_track_count > 0;
@@ -195,6 +239,11 @@ auto fake_get_track_info = [](
 
     expect_true(g_fake_backend_state != nullptr, "fake backend state should be installed");
     expect_true(drive != nullptr, "fake drive handle should be valid");
+    if (g_fake_backend_state->fail_get_track_info) {
+        err = "Fake track info failure";
+        out_track = CdRipTrackInfo{};
+        return false;
+    }
     err.clear();
     expect_true(track_number > 0, "track numbers should be one-based");
     const size_t index = static_cast<size_t>(track_number - 1);
@@ -210,6 +259,11 @@ auto fake_get_disc_last_sector = [](
 
     expect_true(g_fake_backend_state != nullptr, "fake backend state should be installed");
     expect_true(drive != nullptr, "fake drive handle should be valid");
+    if (g_fake_backend_state->fail_get_disc_last_sector) {
+        err = "Fake last sector failure";
+        out_last_sector = 0;
+        return false;
+    }
     err.clear();
     out_last_sector = g_fake_backend_state->last_sector;
     return true;
@@ -222,6 +276,10 @@ auto fake_seek_reader = [](
 
     expect_true(g_fake_backend_state != nullptr, "fake backend state should be installed");
     expect_true(reader != nullptr, "fake reader handle should be valid");
+    if (g_fake_backend_state->fail_seek) {
+        err = "Fake seek failure";
+        return false;
+    }
     err.clear();
     expect_true(sector >= 0, "seek sector should be non-negative");
     g_fake_backend_state->seek_calls++;
@@ -237,6 +295,12 @@ auto fake_read_sector = [](
 
     expect_true(g_fake_backend_state != nullptr, "fake backend state should be installed");
     expect_true(reader != nullptr, "fake reader handle should be valid");
+    if (g_fake_backend_state->fail_read_call >= 0 &&
+        g_fake_backend_state->read_calls == g_fake_backend_state->fail_read_call) {
+        out_buffer = nullptr;
+        err = "Fake read failure";
+        return false;
+    }
     err.clear();
     if (g_fake_backend_state->next_sector_index >= g_fake_backend_state->sectors.size()) {
         out_buffer = nullptr;
@@ -276,6 +340,40 @@ struct FakeBackendScope {
         cdrip::detail::reset_drive_backend_for_tests();
         g_fake_backend_state = nullptr;
     }
+};
+
+auto progress_callback = [](
+    const CdRipProgressInfo* info) {
+
+    expect_true(g_recorded_progress != nullptr, "progress capture should be installed");
+    expect_true(info != nullptr, "progress callback payload should be valid");
+    g_recorded_progress->push_back(RecordedProgress{
+        info->track_number,
+        info->total_tracks,
+        info->percent,
+        cdrip::detail::to_string_or_empty(info->title),
+        cdrip::detail::to_string_or_empty(info->track_name),
+        cdrip::detail::to_string_or_empty(info->path),
+    });
+};
+
+struct ProgressCaptureScope {
+    explicit ProgressCaptureScope(
+        std::vector<RecordedProgress>& progress) {
+
+        g_recorded_progress = &progress;
+    }
+
+    ~ProgressCaptureScope() {
+        g_recorded_progress = nullptr;
+    }
+};
+
+auto release_error = [](
+    const char*& err) {
+
+    cdrip_release_error(err);
+    err = nullptr;
 };
 
 auto make_backend_state = []() {
@@ -332,6 +430,17 @@ auto make_test_entry = []() {
     return entry;
 };
 
+auto open_fake_rip = [](
+    const CdRipSettings& settings,
+    const std::string& device = "/dev/fake-cdrom") {
+
+    const char* err = nullptr;
+    CdRip* rip = cdrip_open(device.c_str(), &settings, &err);
+    expect_true(rip != nullptr, err ? err : "fake drive should open");
+    expect_true(err == nullptr, "open should not report an error");
+    return rip;
+};
+
 auto test_detect_cd_drives_uses_swapped_backend = []() {
     auto state = make_backend_state();
     FakeBackendScope scope(state);
@@ -362,9 +471,7 @@ auto test_open_build_toc_rip_and_close_use_swapped_backend = []() {
         true,
     };
     const char* err = nullptr;
-    CdRip* rip = cdrip_open("/dev/fake-cdrom", &settings, &err);
-    expect_true(rip != nullptr, err ? err : "fake drive should open");
-    expect_true(err == nullptr, "open should not report an error");
+    CdRip* rip = open_fake_rip(settings);
     expect_size(1, static_cast<size_t>(state.open_calls), "open should use the fake backend");
     expect_size(1, static_cast<size_t>(state.create_reader_calls), "reader creation should use the fake backend");
     expect_size(1, static_cast<size_t>(state.set_speed_calls), "open should request drive speed once");
@@ -426,10 +533,297 @@ auto test_open_build_toc_rip_and_close_use_swapped_backend = []() {
     std::filesystem::remove_all(temp_dir);
 };
 
+auto test_open_reports_backend_failure = []() {
+    auto state = make_backend_state();
+    state.fail_open = true;
+    FakeBackendScope scope(state);
+
+    const CdRipSettings settings{"", 1, RIP_MODES_FAST, false};
+    const char* err = nullptr;
+    CdRip* rip = cdrip_open("/dev/fake-cdrom", &settings, &err);
+    expect_true(rip == nullptr, "open should fail when backend open fails");
+    expect_eq("Fake open failure", cdrip::detail::to_string_or_empty(err), "open should propagate backend error text");
+    expect_size(0, static_cast<size_t>(state.close_calls), "failed open should not close a drive that never opened");
+    release_error(err);
+};
+
+auto test_open_releases_drive_when_reader_creation_fails = []() {
+    auto state = make_backend_state();
+    state.fail_create_reader = true;
+    FakeBackendScope scope(state);
+
+    const CdRipSettings settings{"", 1, RIP_MODES_BEST, false};
+    const char* err = nullptr;
+    CdRip* rip = cdrip_open("/dev/fake-cdrom", &settings, &err);
+    expect_true(rip == nullptr, "open should fail when reader creation fails");
+    expect_eq("Fake reader creation failure", cdrip::detail::to_string_or_empty(err), "reader creation error should propagate");
+    expect_size(1, static_cast<size_t>(state.open_calls), "drive should still open before reader creation");
+    expect_size(1, static_cast<size_t>(state.close_calls), "drive should be released after reader creation failure");
+    expect_size(0, static_cast<size_t>(state.destroy_reader_calls), "reader destruction should not run when reader creation fails");
+    release_error(err);
+};
+
+auto test_build_disc_toc_reports_backend_failure_and_no_audio = []() {
+    {
+        auto state = make_backend_state();
+        state.fail_get_track_count = true;
+        FakeBackendScope scope(state);
+
+        const CdRipSettings settings{"", 1, RIP_MODES_FAST, false};
+        CdRip* rip = open_fake_rip(settings);
+        const char* err = nullptr;
+        CdRipDiscToc* toc = cdrip_build_disc_toc(rip, &err);
+        expect_true(toc == nullptr, "TOC build should fail when backend track count fails");
+        expect_eq("Fake track count failure", cdrip::detail::to_string_or_empty(err), "track count failure should propagate");
+        release_error(err);
+
+        cdrip_close(rip, false, &err);
+        expect_true(err == nullptr, "close should succeed after TOC failure");
+        release_error(err);
+    }
+
+    {
+        auto state = make_backend_state();
+        for (auto& track : state.tracks) {
+            track.is_audio = 0;
+        }
+        FakeBackendScope scope(state);
+
+        const CdRipSettings settings{"", 1, RIP_MODES_FAST, false};
+        CdRip* rip = open_fake_rip(settings);
+        const char* err = nullptr;
+        CdRipDiscToc* toc = cdrip_build_disc_toc(rip, &err);
+        expect_true(toc == nullptr, "TOC build should fail when the disc contains no audio tracks");
+        expect_eq("No audio tracks found on disc", cdrip::detail::to_string_or_empty(err), "no-audio validation should remain stable");
+        release_error(err);
+
+        cdrip_close(rip, false, &err);
+        expect_true(err == nullptr, "close should succeed after no-audio failure");
+        release_error(err);
+    }
+};
+
+auto test_rip_track_reports_seek_and_read_failures = []() {
+    {
+        auto state = make_backend_state();
+        state.fail_seek = true;
+        FakeBackendScope scope(state);
+
+        const auto temp_dir = std::filesystem::temp_directory_path() / "cdrip-test-drive-backend-seek-failure";
+        std::filesystem::remove_all(temp_dir);
+        std::filesystem::create_directories(temp_dir);
+        const auto flac_path = (temp_dir / "seek-failure.flac").string();
+
+        const CdRipSettings settings{"", 1, RIP_MODES_FAST, false};
+        CdRip* rip = open_fake_rip(settings);
+        const char* err = nullptr;
+        CdRipDiscToc* toc = cdrip_build_disc_toc(rip, &err);
+        expect_true(toc != nullptr, err ? err : "TOC build should succeed before seek failure test");
+        release_error(err);
+
+        const auto entry = make_test_entry();
+        cdrip::detail::RipTrackWriteOptions options{};
+        options.output_path = flac_path.c_str();
+        options.display_path = flac_path.c_str();
+        std::string rip_err;
+        expect_true(
+            !cdrip::detail::rip_track_with_options(
+                rip,
+                &toc->tracks[0],
+                &entry,
+                toc,
+                nullptr,
+                static_cast<int>(toc->tracks_count),
+                0.0,
+                0.0,
+                0.0,
+                &options,
+                nullptr,
+                rip_err),
+            "seek failure should fail the rip");
+        expect_eq("Fake seek failure", rip_err, "seek failure should propagate the backend message");
+        expect_true(!std::filesystem::exists(flac_path), "failed seek should not publish a FLAC file");
+
+        cdrip_release_disctoc(toc);
+        cdrip_close(rip, false, &err);
+        release_error(err);
+        std::filesystem::remove_all(temp_dir);
+    }
+
+    {
+        auto state = make_backend_state();
+        state.fail_read_call = 0;
+        FakeBackendScope scope(state);
+
+        const auto temp_dir = std::filesystem::temp_directory_path() / "cdrip-test-drive-backend-read-failure";
+        std::filesystem::remove_all(temp_dir);
+        std::filesystem::create_directories(temp_dir);
+        const auto flac_path = (temp_dir / "read-failure.flac").string();
+
+        const CdRipSettings settings{"", 1, RIP_MODES_FAST, false};
+        CdRip* rip = open_fake_rip(settings);
+        const char* err = nullptr;
+        CdRipDiscToc* toc = cdrip_build_disc_toc(rip, &err);
+        expect_true(toc != nullptr, err ? err : "TOC build should succeed before read failure test");
+        release_error(err);
+
+        const auto entry = make_test_entry();
+        cdrip::detail::RipTrackWriteOptions options{};
+        options.output_path = flac_path.c_str();
+        options.display_path = flac_path.c_str();
+        std::string rip_err;
+        expect_true(
+            !cdrip::detail::rip_track_with_options(
+                rip,
+                &toc->tracks[0],
+                &entry,
+                toc,
+                nullptr,
+                static_cast<int>(toc->tracks_count),
+                0.0,
+                0.0,
+                0.0,
+                &options,
+                nullptr,
+                rip_err),
+            "read failure should fail the rip");
+        expect_eq("Read error on track 1", rip_err, "read failure should preserve the public error message");
+        expect_true(!std::filesystem::exists(flac_path), "failed read should not publish a FLAC file");
+
+        cdrip_release_disctoc(toc);
+        cdrip_close(rip, false, &err);
+        release_error(err);
+        std::filesystem::remove_all(temp_dir);
+    }
+};
+
+auto test_close_reports_eject_failure_after_cleanup = []() {
+    auto state = make_backend_state();
+    state.fail_eject = true;
+    FakeBackendScope scope(state);
+
+    const CdRipSettings settings{"", 1, RIP_MODES_FAST, false};
+    CdRip* rip = open_fake_rip(settings);
+    const char* err = nullptr;
+    cdrip_close(rip, true, &err);
+    expect_eq("Fake eject failure", cdrip::detail::to_string_or_empty(err), "eject failure should propagate the backend message");
+    expect_size(1, static_cast<size_t>(state.destroy_reader_calls), "reader should still be destroyed before eject failure is reported");
+    expect_size(1, static_cast<size_t>(state.close_calls), "drive should still be closed before eject failure is reported");
+    expect_size(0, static_cast<size_t>(state.eject_calls), "failed eject should not count as a successful eject");
+    release_error(err);
+};
+
+auto test_rip_track_skips_non_audio_without_reads = []() {
+    auto state = make_backend_state();
+    FakeBackendScope scope(state);
+
+    const auto temp_dir = std::filesystem::temp_directory_path() / "cdrip-test-drive-backend-skip";
+    std::filesystem::remove_all(temp_dir);
+    std::filesystem::create_directories(temp_dir);
+    const auto flac_path = (temp_dir / "skip.flac").string();
+
+    const CdRipSettings settings{"", 1, RIP_MODES_FAST, false};
+    CdRip* rip = open_fake_rip(settings);
+    const auto entry = make_test_entry();
+    CdRipDiscToc toc{};
+    toc.cddb_discid = "feedbeef";
+    toc.tracks = state.tracks.data();
+    toc.tracks_count = state.tracks.size();
+    toc.leadout_sector = state.last_sector + 1;
+    toc.length_seconds = static_cast<int>(toc.leadout_sector / CDIO_CD_FRAMES_PER_SEC);
+
+    cdrip::detail::RipTrackWriteOptions options{};
+    options.output_path = flac_path.c_str();
+    options.display_path = flac_path.c_str();
+    std::string rip_err;
+    expect_true(
+        cdrip::detail::rip_track_with_options(
+            rip,
+            &state.tracks[1],
+            &entry,
+            &toc,
+            nullptr,
+            3,
+            0.0,
+            0.0,
+            0.0,
+            &options,
+            nullptr,
+            rip_err),
+        rip_err.empty() ? "non-audio tracks should be skipped successfully" : rip_err);
+    expect_true(!std::filesystem::exists(flac_path), "skip path should not create output");
+    expect_size(0, static_cast<size_t>(state.seek_calls), "skip path should not seek the reader");
+    expect_size(0, static_cast<size_t>(state.read_calls), "skip path should not read sectors");
+
+    const char* err = nullptr;
+    cdrip_close(rip, false, &err);
+    release_error(err);
+    std::filesystem::remove_all(temp_dir);
+};
+
+auto test_rip_track_emits_progress_updates = []() {
+    auto state = make_backend_state();
+    FakeBackendScope scope(state);
+
+    const auto temp_dir = std::filesystem::temp_directory_path() / "cdrip-test-drive-backend-progress";
+    std::filesystem::remove_all(temp_dir);
+    std::filesystem::create_directories(temp_dir);
+    const auto flac_path = (temp_dir / "progress.flac").string();
+
+    const CdRipSettings settings{"", 1, RIP_MODES_FAST, false};
+    CdRip* rip = open_fake_rip(settings);
+    const char* err = nullptr;
+    CdRipDiscToc* toc = cdrip_build_disc_toc(rip, &err);
+    expect_true(toc != nullptr, err ? err : "TOC build should succeed before progress test");
+    release_error(err);
+
+    const auto entry = make_test_entry();
+    cdrip::detail::RipTrackWriteOptions options{};
+    options.output_path = flac_path.c_str();
+    options.display_path = flac_path.c_str();
+    std::vector<RecordedProgress> progress{};
+    ProgressCaptureScope progress_scope(progress);
+    std::string rip_err;
+    expect_true(
+        cdrip::detail::rip_track_with_options(
+            rip,
+            &toc->tracks[0],
+            &entry,
+            toc,
+            progress_callback,
+            static_cast<int>(toc->tracks_count),
+            0.0,
+            4.0,
+            0.0,
+            &options,
+            nullptr,
+            rip_err),
+        rip_err.empty() ? "rip with progress should succeed" : rip_err);
+    expect_true(!progress.empty(), "rip should emit at least one progress callback");
+    expect_true(progress.front().percent > 0.0, "first progress callback should report in-flight progress");
+    expect_true(progress.back().percent >= 100.0, "last progress callback should report completion");
+    expect_true(progress.back().track_number == 1, "progress callback should preserve track number");
+    expect_true(progress.back().total_tracks == static_cast<int>(toc->tracks_count), "progress callback should preserve total tracks");
+    expect_eq("Fake Track 1", progress.back().track_name, "progress callback should include track name");
+    expect_eq(flac_path, progress.back().path, "progress callback should include output path");
+
+    cdrip_release_disctoc(toc);
+    cdrip_close(rip, false, &err);
+    release_error(err);
+    std::filesystem::remove_all(temp_dir);
+};
+
 }  // namespace
 
 int main() {
     test_detect_cd_drives_uses_swapped_backend();
     test_open_build_toc_rip_and_close_use_swapped_backend();
+    test_open_reports_backend_failure();
+    test_open_releases_drive_when_reader_creation_fails();
+    test_build_disc_toc_reports_backend_failure_and_no_audio();
+    test_rip_track_reports_seek_and_read_failures();
+    test_close_reports_eject_failure_after_cleanup();
+    test_rip_track_skips_non_audio_without_reads();
+    test_rip_track_emits_progress_updates();
     return 0;
 }

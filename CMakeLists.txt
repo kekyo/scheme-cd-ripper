@@ -200,3 +200,12 @@ target_link_directories(cdrip_test_drive_backend PRIVATE ${COMMON_LIB_DIRS})
 target_compile_options(cdrip_test_drive_backend PRIVATE ${COMMON_CFLAGS})
 target_link_libraries(cdrip_test_drive_backend PRIVATE cdrip_static)
 add_dependencies(cdrip_test_drive_backend version_header)
+
+add_executable(cdrip_test_real_rip_tags
+    tests/test_real_rip_tags.cpp
+)
+target_include_directories(cdrip_test_real_rip_tags PRIVATE ${COMMON_INCLUDES})
+target_link_directories(cdrip_test_real_rip_tags PRIVATE ${COMMON_LIB_DIRS})
+target_compile_options(cdrip_test_real_rip_tags PRIVATE ${COMMON_CFLAGS})
+target_link_libraries(cdrip_test_real_rip_tags PRIVATE cdrip_static)
+add_dependencies(cdrip_test_real_rip_tags version_header)

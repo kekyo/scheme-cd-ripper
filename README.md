@@ -13,6 +13,9 @@ Packages are available in (Debian/Ubuntu): https://github.com/kekyo/scheme-cd-ri
 
 [(Japanese language is here/日本語はこちら)](./README_ja.md)
 
+> Please note that this English version of the document was machine-translated and then partially edited, so it may contain inaccuracies.
+> We welcome pull requests to correct any errors in the text.
+
 ## What is this?
 
 Scheme CD Ripper is a linux CLI tool that rips audio CDs to FLAC, automatic fetches metadata from multiple CDDB servers and inserts tags into FLAC file.
