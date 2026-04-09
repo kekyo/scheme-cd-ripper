@@ -80,6 +80,16 @@ std::string view_string(const char* s) {
     return s ? std::string{s} : std::string{};
 }
 
+std::string display_version() {
+    std::string version = VERSION;
+    const std::string commit = COMMIT_ID;
+    if (!commit.empty() && commit != "unknown") {
+        version += "-";
+        version += commit;
+    }
+    return version;
+}
+
 std::string trim_ws(const std::string& s);
 
 std::string canonicalize_device_path(const std::string& path) {
@@ -263,19 +273,23 @@ RipProgressSnapshot make_rip_progress_snapshot(
 
 std::string build_rip_progress_line(
     const RipProgressSnapshot& snapshot,
-    char frame) {
+    char frame,
+    bool completed = false) {
 
     // Avoid noisy ETA early in the track: wait for minimal progress/time.
     constexpr double kMinElapsedSec = 10.0;  // wall-clock seconds from album start
-    const bool show_eta = snapshot.wall_elapsed_sec >= kMinElapsedSec;
+    const bool show_eta = completed || snapshot.wall_elapsed_sec >= kMinElapsedSec;
 
-    double remaining_total = snapshot.wall_total_sec > 0.0
+    double remaining_total = completed
+        ? 0.0
+        : snapshot.wall_total_sec > 0.0
         ? snapshot.wall_total_sec - snapshot.wall_elapsed_sec
         : snapshot.total_album_sec - snapshot.elapsed_total_sec;
     if (remaining_total < 0.0) remaining_total = 0.0;
 
     const int bar_width = 20;
-    int filled = static_cast<int>(snapshot.percent / 100.0 * bar_width);
+    const double percent = completed ? 100.0 : snapshot.percent;
+    int filled = static_cast<int>(percent / 100.0 * bar_width);
     if (filled < 0) filled = 0;
     if (filled > bar_width) filled = bar_width;
 
@@ -287,9 +301,10 @@ std::string build_rip_progress_line(
 
     std::string track_name = snapshot.track_name;
     if (track_name.empty()) track_name = snapshot.title;
+    const std::string frame_text = completed ? u8"✓" : std::string(1, frame);
 
     std::ostringstream oss;
-    oss << frame
+    oss << frame_text
         << " Track " << std::setw(2) << snapshot.track_number << "/" << std::setw(2) << snapshot.total_tracks
         << " [ETA: " << (show_eta ? fmt_time_fn(remaining_total) : "--:--") << " " << bar << "]: "
         << "\"" << track_name << "\"";
@@ -300,9 +315,13 @@ void print_rip_progress_line(
     const CdRipProgressInfo& info) {
 
     const RipProgressSnapshot snapshot = make_rip_progress_snapshot(info);
-    std::cout << "\r" << build_rip_progress_line(snapshot, progress_spinner_frame(snapshot.wall_elapsed_sec));
+    const bool completed = info.percent >= 100.0;
+    std::cout << "\r" << build_rip_progress_line(
+        snapshot,
+        progress_spinner_frame(snapshot.wall_elapsed_sec),
+        completed);
     std::cout.flush();
-    if (info.percent >= 100.0) std::cout << "\n";
+    if (completed) std::cout << "\n";
 }
 
 struct ActivitySnapshot {
@@ -398,12 +417,13 @@ public:
     }
 
     void stop(
-        SpinnerStopMode stop_mode) {
+        SpinnerStopMode stop_mode,
+        const std::string& final_line = {}) {
 
         if (!enabled_) return;
         const bool was_running = running_.exchange(false);
         if (was_running && worker_.joinable()) worker_.join();
-        finalize_render(stop_mode);
+        finalize_render(stop_mode, final_line);
     }
 
 protected:
@@ -435,18 +455,24 @@ private:
     }
 
     void finalize_render(
-        SpinnerStopMode stop_mode) {
+        SpinnerStopMode stop_mode,
+        const std::string& final_line) {
 
         std::lock_guard<std::mutex> guard(output_mutex_);
-        if (!rendered_) return;
+        const std::string& visible_line = final_line.empty() ? last_visible_line_ : final_line;
+        if (!rendered_ && visible_line.empty()) return;
 
-        clear_rendered_line_locked();
+        if (rendered_) {
+            clear_rendered_line_locked();
+        }
         if (stop_mode == SpinnerStopMode::Keep || stop_mode == SpinnerStopMode::KeepWithNewline) {
-            std::cout << "\r" << last_visible_line_;
-            if (stop_mode == SpinnerStopMode::KeepWithNewline) {
-                std::cout << "\n";
+            if (!visible_line.empty()) {
+                std::cout << "\r" << visible_line;
+                if (stop_mode == SpinnerStopMode::KeepWithNewline) {
+                    std::cout << "\n";
+                }
+                std::cout.flush();
             }
-            std::cout.flush();
         }
 
         rendered_ = false;
@@ -594,11 +620,13 @@ public:
         bool keep_completed_line) {
 
         if (!enabled()) return;
+        const std::string final_line = keep_completed_line ? build_completed_line() : std::string{};
         if (active_.load() == this) {
             active_.store(nullptr);
         }
         SpinnerRenderer::stop(
-            keep_completed_line ? SpinnerStopMode::KeepWithNewline : SpinnerStopMode::Clear);
+            keep_completed_line ? SpinnerStopMode::KeepWithNewline : SpinnerStopMode::Clear,
+            final_line);
     }
 
     static void progress_cb(
@@ -614,6 +642,12 @@ public:
     }
 
 private:
+    std::string build_completed_line() const {
+        std::lock_guard<std::mutex> guard(mutex_);
+        if (!has_snapshot_) return {};
+        return build_rip_progress_line(snapshot_, ' ', true);
+    }
+
     void update(
         const CdRipProgressInfo& info) {
 
@@ -2870,7 +2904,7 @@ int run_update_mode(
 }
 
 int main(int argc, char** argv) {
-    std::cout << "\nScheme CD music/sound ripper [" << VERSION << "-" << COMMIT_ID << "]\n";
+    std::cout << "\nScheme CD music/sound ripper [" << display_version() << "]\n";
     std::cout << "Copyright (c) Kouji Matsui (@kekyo@mi.kekyo.net)\n";
     std::cout << "https://github.com/kekyo/scheme-cd-ripper\n";
     std::cout << "Licence: Under MIT.\n\n";

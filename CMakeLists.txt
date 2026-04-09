@@ -209,3 +209,12 @@ target_link_directories(cdrip_test_real_rip_tags PRIVATE ${COMMON_LIB_DIRS})
 target_compile_options(cdrip_test_real_rip_tags PRIVATE ${COMMON_CFLAGS})
 target_link_libraries(cdrip_test_real_rip_tags PRIVATE cdrip_static)
 add_dependencies(cdrip_test_real_rip_tags version_header)
+
+add_executable(cdrip_test_rip_progress_display
+    tests/test_rip_progress_display.cpp
+)
+target_include_directories(cdrip_test_rip_progress_display PRIVATE ${COMMON_INCLUDES} ${CHAFA_INCLUDE_DIRS} ${VERSION_DIR})
+target_link_directories(cdrip_test_rip_progress_display PRIVATE ${COMMON_LIB_DIRS} ${CHAFA_LIBRARY_DIRS})
+target_compile_options(cdrip_test_rip_progress_display PRIVATE ${COMMON_CFLAGS} ${CHAFA_CFLAGS_OTHER})
+target_link_libraries(cdrip_test_rip_progress_display PRIVATE cdrip_static ${CHAFA_LIBRARIES})
+add_dependencies(cdrip_test_rip_progress_display version_header)
