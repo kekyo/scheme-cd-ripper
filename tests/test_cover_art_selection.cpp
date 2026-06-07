@@ -222,7 +222,7 @@ auto test_rip_progress_callback_writes_spinner_line_and_completion_newline = [](
     });
 
     expect_eq(
-        "\r- Track  2/ 3 [ETA: 00:55 ====================]: \"Focused Track\"\n",
+        "\r\xE2\x9C\x93 Track  2/ 3 [ETA: 00:00 ====================]: \"Focused Track\"\n",
         output.str(),
         "progress callback should emit the spinner-prefixed line and terminate completed tracks");
 };

@@ -254,6 +254,44 @@ static inline std::string track_tag(
 std::vector<std::string> extract_album_title_candidates(
     const std::vector<const CdRipCddbEntry*>& entries);
 
+struct DiscogsCoverArtCandidate {
+    std::string release_id{};
+    std::string title{};
+    std::string artist{};
+    std::string image_url{};
+    double score{0.0};
+};
+
+struct DiscogsCoverArtImageCandidate {
+    DiscogsCoverArtCandidate candidate{};
+    CdRipCoverArt art{};
+};
+
+enum class DiscogsCoverArtLookupMode {
+    NotApplicable,
+    ReleaseId,
+    TitleSearch,
+};
+
+DiscogsCoverArtLookupMode discogs_cover_art_lookup_mode_for_entry(
+    const CdRipCddbEntry* entry);
+
+std::vector<DiscogsCoverArtCandidate> select_discogs_cover_art_candidates_from_release_jsons(
+    const CdRipCddbEntry* entry,
+    const CdRipDiscToc* toc,
+    const std::vector<std::string>& release_jsons,
+    size_t max_candidates,
+    std::string& err);
+
+std::vector<DiscogsCoverArtImageCandidate> fetch_discogs_cover_art_image_candidates(
+    const CdRipCddbEntry* entry,
+    const CdRipDiscToc* toc,
+    size_t max_candidates,
+    std::string& err);
+
+void release_discogs_cover_art_image_candidates(
+    std::vector<DiscogsCoverArtImageCandidate>& candidates);
+
 /**
  * Build MusicBrainz entries from a release JSON payload using the same
  * media-selection path as runtime code.

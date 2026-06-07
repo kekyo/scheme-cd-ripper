@@ -183,6 +183,15 @@ target_compile_options(cdrip_test_activity_observer PRIVATE ${COMMON_CFLAGS})
 target_link_libraries(cdrip_test_activity_observer PRIVATE cdrip_static)
 add_dependencies(cdrip_test_activity_observer version_header)
 
+add_executable(cdrip_test_discogs_title_search
+    tests/test_discogs_title_search.cpp
+)
+target_include_directories(cdrip_test_discogs_title_search PRIVATE ${COMMON_INCLUDES})
+target_link_directories(cdrip_test_discogs_title_search PRIVATE ${COMMON_LIB_DIRS})
+target_compile_options(cdrip_test_discogs_title_search PRIVATE ${COMMON_CFLAGS})
+target_link_libraries(cdrip_test_discogs_title_search PRIVATE cdrip_static)
+add_dependencies(cdrip_test_discogs_title_search version_header)
+
 add_executable(cdrip_test_cover_art_selection
     tests/test_cover_art_selection.cpp
 )

@@ -38,8 +38,13 @@ build_and_capture() {
     CDRIP_PACKAGE_COMMIT="${commit}" \
     cmake -S "${ROOT_DIR}" -B "${build_subdir}" -DCMAKE_BUILD_TYPE=Release
 
-    cmake --build "${build_subdir}"
-    "${build_subdir}/cdrip" 2>&1 || true
+    cmake --build "${build_subdir}" --target cdrip_app
+    local built_cdrip="${build_subdir}/cdrip"
+    if [[ ! -x "${built_cdrip}" ]]; then
+        echo "built cdrip executable not found: ${built_cdrip}" >&2
+        exit 1
+    fi
+    "${built_cdrip}" --help 2>&1
 }
 
 unknown_output="$(build_and_capture "0.0.0-test" "unknown" "unknown")"
