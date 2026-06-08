@@ -153,7 +153,7 @@ canonical_release() {
 	value=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
 
 	case $value in
-		bookworm | trixie | 22.04 | 24.04)
+		bookworm | trixie | 22.04 | 24.04 | 26.04)
 			printf '%s\n' "$value"
 			;;
 		jammy)

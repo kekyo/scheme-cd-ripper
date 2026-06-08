@@ -1,9 +1,11 @@
 #include <cstdlib>
+#include <fstream>
 #include <filesystem>
 #include <iostream>
 #include <map>
 #include <sstream>
 #include <string>
+#include <sys/stat.h>
 #include <vector>
 
 #include "../src/cdrip/internal.h"
@@ -36,6 +38,19 @@ auto expect_eq = [](
     }
 };
 
+auto expect_uint = [](
+    unsigned int expected,
+    unsigned int actual,
+    const std::string& message) {
+
+    if (expected != actual) {
+        std::cerr << "assert_uint failed: " << message << "\n";
+        std::cerr << "  expected: 0" << std::oct << expected << "\n";
+        std::cerr << "  actual:   0" << std::oct << actual << std::dec << "\n";
+        std::exit(1);
+    }
+};
+
 auto expect_size = [](
     size_t expected,
     size_t actual,
@@ -47,6 +62,52 @@ auto expect_size = [](
         std::cerr << "  actual:   " << actual << "\n";
         std::exit(1);
     }
+};
+
+auto expect_missing = [](
+    const std::map<std::string, std::string>& tags,
+    const std::string& key,
+    const std::string& message) {
+
+    if (tags.find(key) != tags.end()) {
+        std::cerr << "assert_missing failed: " << message << "\n";
+        std::cerr << "  key: " << key << "\n";
+        std::exit(1);
+    }
+};
+
+auto expect_contains = [](
+    const std::string& haystack,
+    const std::string& needle,
+    const std::string& message) {
+
+    if (haystack.find(needle) == std::string::npos) {
+        std::cerr << "assert_contains failed: " << message << "\n";
+        std::cerr << "  expected to find: " << needle << "\n";
+        std::cerr << "  actual: " << haystack << "\n";
+        std::exit(1);
+    }
+};
+
+auto expect_empty = [](
+    const std::string& actual,
+    const std::string& message) {
+
+    if (!actual.empty()) {
+        std::cerr << "assert_empty failed: " << message << "\n";
+        std::cerr << "  actual: " << actual << "\n";
+        std::exit(1);
+    }
+};
+
+auto capture_stderr = [](
+    auto&& fn) {
+
+    std::ostringstream captured;
+    auto* original = std::cerr.rdbuf(captured.rdbuf());
+    fn();
+    std::cerr.rdbuf(original);
+    return captured.str();
 };
 
 auto read_vorbis_comments = [](
@@ -376,6 +437,35 @@ auto release_error = [](
     err = nullptr;
 };
 
+struct UmaskScope {
+    mode_t previous;
+
+    explicit UmaskScope(
+        mode_t next) :
+        previous(::umask(next)) {
+    }
+
+    ~UmaskScope() {
+        ::umask(previous);
+    }
+};
+
+auto filesystem_mode = [](
+    const std::filesystem::path& path) {
+
+    struct stat st {};
+    expect_true(::stat(path.c_str(), &st) == 0, "path mode should be readable: " + path.string());
+    return static_cast<unsigned int>(st.st_mode) & 0777U;
+};
+
+auto chmod_for_cleanup = [](
+    const std::filesystem::path& path) {
+
+    if (std::filesystem::exists(path)) {
+        ::chmod(path.c_str(), 0700);
+    }
+};
+
 auto make_backend_state = []() {
     FakeBackendState state{};
     state.detected_drives = {
@@ -439,6 +529,52 @@ auto open_fake_rip = [](
     expect_true(rip != nullptr, err ? err : "fake drive should open");
     expect_true(err == nullptr, "open should not report an error");
     return rip;
+};
+
+auto rip_fake_track_to_path = [](
+    const std::string& flac_path,
+    const cdrip::detail::OutputPermissions* output_permissions) {
+
+    auto state = make_backend_state();
+    FakeBackendScope scope(state);
+
+    const CdRipSettings settings{
+        "",
+        1,
+        RIP_MODES_FAST,
+        false,
+    };
+    const char* err = nullptr;
+    CdRip* rip = open_fake_rip(settings);
+    CdRipDiscToc* toc = cdrip_build_disc_toc(rip, &err);
+    expect_true(toc != nullptr, err ? err : "fake TOC should build for permissions test");
+    release_error(err);
+
+    const auto entry = make_test_entry();
+    cdrip::detail::RipTrackWriteOptions options{};
+    options.output_path = flac_path.c_str();
+    options.display_path = flac_path.c_str();
+    options.output_permissions = output_permissions;
+    std::string rip_err;
+    expect_true(
+        cdrip::detail::rip_track_with_options(
+            rip,
+            &toc->tracks[0],
+            &entry,
+            toc,
+            nullptr,
+            static_cast<int>(toc->tracks_count),
+            0.0,
+            0.0,
+            0.0,
+            &options,
+            nullptr,
+            rip_err),
+        rip_err.empty() ? "fake rip should succeed for permissions test" : rip_err);
+
+    cdrip_release_disctoc(toc);
+    cdrip_close(rip, false, &err);
+    release_error(err);
 };
 
 auto test_detect_cd_drives_uses_swapped_backend = []() {
@@ -518,6 +654,7 @@ auto test_open_build_toc_rip_and_close_use_swapped_backend = []() {
     expect_eq("Fake Album", tags.at("ALBUM"), "ripped FLAC should contain album tags");
     expect_eq("Fake Track 1", tags.at("TITLE"), "ripped FLAC should contain track tags");
     expect_eq("1", tags.at("TRACKNUMBER"), "ripped FLAC should preserve the audio track number");
+    expect_missing(tags, "YEAR", "ripped FLAC should not persist the format-only YEAR tag");
     expect_size(1, static_cast<size_t>(state.seek_calls), "rip should seek via the fake reader");
     expect_true(state.last_seek_sector == 0, "rip should seek to the start of the selected track");
     expect_size(150, static_cast<size_t>(state.read_calls), "rip should read the expected number of fake sectors");
@@ -530,6 +667,363 @@ auto test_open_build_toc_rip_and_close_use_swapped_backend = []() {
     expect_size(1, static_cast<size_t>(state.eject_calls), "close should eject through the fake backend");
 
     cdrip_release_disctoc(toc);
+    std::filesystem::remove_all(temp_dir);
+};
+
+auto build_tags_for_date = [](
+    const std::string& date) {
+
+    CdRipTrackInfo track{1, 0, 149, 1};
+    CdRipDiscToc toc{};
+    toc.cddb_discid = "feedbeef";
+    toc.tracks = &track;
+    toc.tracks_count = 1;
+    toc.leadout_sector = 150;
+    toc.length_seconds = 2;
+
+    CdRipTagKV album_tags[] = {
+        CdRipTagKV{"ARTIST", "Fake Artist"},
+        CdRipTagKV{"ALBUM", "Fake Album"},
+        CdRipTagKV{"DATE", date.c_str()},
+    };
+    CdRipTagKV track_tags[] = {
+        CdRipTagKV{"TITLE", "Fake Track"},
+    };
+    CdRipTrackTags tracks[] = {
+        CdRipTrackTags{track_tags, 1},
+    };
+    CdRipCddbEntry entry{};
+    entry.cddb_discid = "feedbeef";
+    entry.album_tags = album_tags;
+    entry.album_tags_count = sizeof(album_tags) / sizeof(album_tags[0]);
+    entry.tracks = tracks;
+    entry.tracks_count = sizeof(tracks) / sizeof(tracks[0]);
+
+    std::string title;
+    std::string track_name;
+    std::string safe_title;
+    return cdrip::detail::build_track_vorbis_tags(
+        &track,
+        &entry,
+        &toc,
+        1,
+        nullptr,
+        title,
+        track_name,
+        safe_title);
+};
+
+auto resolve_output_path = [](
+    const std::string& format,
+    const std::map<std::string, std::string>& tags) {
+
+    std::string path;
+    std::string err;
+    expect_true(
+        cdrip::detail::resolve_track_output_path(format, tags, path, err),
+        err.empty() ? "output path should resolve" : err);
+    return path;
+};
+
+auto test_year_format_tag_is_derived_from_single_valid_date_token = []() {
+    const std::vector<std::string> dates = {
+        "2026",
+        "2026-05",
+        "2026-05-24",
+        "05/2026",
+        "13/2026",
+        "2026/05",
+        "05-2026",
+        "2026/05/24",
+        "May 2026",
+        "20th Anniversary 2026",
+        "2026 remaster",
+        "ca. 2026",
+    };
+
+    for (const auto& date : dates) {
+        const auto tags = build_tags_for_date(date);
+        expect_eq("2026", tags.at("YEAR"), "single valid year token should derive YEAR from DATE: " + date);
+        expect_eq("2026.flac", resolve_output_path("{year}.flac", tags), "{year} should use the derived year: " + date);
+    }
+};
+
+auto test_year_format_tag_falls_back_to_date_when_derivation_is_ambiguous_or_out_of_range = []() {
+    {
+        const auto tags = build_tags_for_date("1999/2000");
+        expect_missing(tags, "YEAR", "multiple valid year tokens should not derive YEAR");
+        expect_eq(
+            "1999_2000.flac",
+            resolve_output_path("{year:n}.flac", tags),
+            "{year:n} should safely format DATE fallback when YEAR is ambiguous");
+    }
+
+    {
+        const auto tags = build_tags_for_date("1899");
+        expect_missing(tags, "YEAR", "years below 1900 should not derive YEAR");
+        expect_eq("1899.flac", resolve_output_path("{year:n}.flac", tags), "{year:n} should fall back to DATE below range");
+    }
+
+    {
+        const auto tags = build_tags_for_date("2101");
+        expect_missing(tags, "YEAR", "years above 2100 should not derive YEAR");
+        expect_eq("2101.flac", resolve_output_path("{year:n}.flac", tags), "{year:n} should fall back to DATE above range");
+    }
+};
+
+auto test_tag_overrides_affect_output_path_and_vorbis_comments = []() {
+    auto state = make_backend_state();
+    FakeBackendScope scope(state);
+
+    const auto temp_dir = std::filesystem::temp_directory_path() / "cdrip-test-drive-backend-tag-overrides";
+    std::filesystem::remove_all(temp_dir);
+    std::filesystem::create_directories(temp_dir);
+    const auto format =
+        (temp_dir / "{artist:n}" / "{albumartist:n}" / "{tracknumber:02d}_{title:n}.flac").string();
+    const auto expected_path =
+        (temp_dir / "The Billy Bob Trio" / "The Billy Bob Trio" / "01_Fake Track 1.flac").string();
+
+    const CdRipSettings settings{
+        format.c_str(),
+        1,
+        RIP_MODES_FAST,
+        false,
+    };
+    const char* err = nullptr;
+    CdRip* rip = open_fake_rip(settings);
+    CdRipDiscToc* toc = cdrip_build_disc_toc(rip, &err);
+    expect_true(toc != nullptr, err ? err : "fake TOC should build for tag override test");
+    release_error(err);
+
+    const auto entry = make_test_entry();
+    const std::map<std::string, std::string> tag_overrides{
+        {"artist", "The Billy Bob Trio"},
+        {"albumartist", "The Billy Bob Trio"},
+    };
+    cdrip::detail::RipTrackWriteOptions options{};
+    options.tag_overrides = &tag_overrides;
+    std::string rip_err;
+    expect_true(
+        cdrip::detail::rip_track_with_options(
+            rip,
+            &toc->tracks[0],
+            &entry,
+            toc,
+            nullptr,
+            static_cast<int>(toc->tracks_count),
+            0.0,
+            0.0,
+            0.0,
+            &options,
+            nullptr,
+            rip_err),
+        rip_err.empty() ? "fake rip with tag overrides should succeed" : rip_err);
+
+    expect_true(std::filesystem::exists(expected_path), "tag overrides should affect the resolved output path");
+    const auto tags = read_vorbis_comments(expected_path);
+    expect_eq("The Billy Bob Trio", tags.at("ARTIST"), "ARTIST should be overridden in Vorbis comments");
+    expect_eq("The Billy Bob Trio", tags.at("ALBUMARTIST"), "ALBUMARTIST should be written from tag overrides");
+    expect_eq("Fake Album", tags.at("ALBUM"), "unrelated tags should remain from metadata");
+
+    cdrip_release_disctoc(toc);
+    cdrip_close(rip, false, &err);
+    release_error(err);
+    std::filesystem::remove_all(temp_dir);
+};
+
+auto test_output_permissions_are_derived_from_umask_and_explicit_modes = []() {
+    {
+        UmaskScope scope(0022);
+        const auto permissions = cdrip::detail::default_output_permissions_from_umask();
+        expect_uint(0644, permissions.file_mode, "umask 0022 should derive file mode 0644");
+        expect_uint(0755, permissions.dir_mode, "umask 0022 should derive directory mode 0755");
+    }
+    {
+        UmaskScope scope(0002);
+        const auto permissions = cdrip::detail::default_output_permissions_from_umask();
+        expect_uint(0664, permissions.file_mode, "umask 0002 should derive file mode 0664");
+        expect_uint(0775, permissions.dir_mode, "umask 0002 should derive directory mode 0775");
+    }
+
+    const std::vector<std::pair<unsigned int, unsigned int>> expected_dirs = {
+        {0664, 0775},
+        {0600, 0700},
+        {0640, 0750},
+        {0444, 0555},
+        {0000, 0000},
+    };
+    for (const auto& [file_mode, dir_mode] : expected_dirs) {
+        const auto permissions = cdrip::detail::output_permissions_from_file_mode(file_mode);
+        expect_uint(file_mode, permissions.file_mode, "explicit file mode should be preserved");
+        expect_uint(dir_mode, permissions.dir_mode, "explicit mode should derive directory execute bits");
+    }
+};
+
+auto test_output_permission_warning_resolution_and_emission = []() {
+    {
+        const bool cli_warning = false;
+        const auto permissions = cdrip::detail::resolve_output_permissions(
+            0600,
+            true,
+            nullptr,
+            &cli_warning);
+        expect_uint(0600, permissions.file_mode, "config file mode should be used without CLI permissions");
+        expect_uint(0700, permissions.dir_mode, "config file mode should derive directory mode");
+        expect_true(!permissions.warn_on_failure, "CLI warning flag should override config true");
+    }
+    {
+        const unsigned int cli_file_mode = 0664;
+        const bool cli_warning = true;
+        const auto permissions = cdrip::detail::resolve_output_permissions(
+            0600,
+            false,
+            &cli_file_mode,
+            &cli_warning);
+        expect_uint(0664, permissions.file_mode, "CLI permissions should override config permissions");
+        expect_uint(0775, permissions.dir_mode, "CLI permissions should derive directory mode");
+        expect_true(permissions.warn_on_failure, "CLI warning flag should override config false");
+    }
+
+    const auto visible = capture_stderr([]() {
+        cdrip::detail::emit_output_permissions_warning(
+            "/tmp/cdrip-test.flac",
+            "simulated failure",
+            true);
+    });
+    expect_contains(
+        visible,
+        "Warning: failed to set permissions for /tmp/cdrip-test.flac: simulated failure",
+        "warning helper should emit stderr when enabled");
+
+    const auto hidden = capture_stderr([]() {
+        cdrip::detail::emit_output_permissions_warning(
+            "/tmp/cdrip-test.flac",
+            "simulated failure",
+            false);
+    });
+    expect_empty(hidden, "warning helper should suppress stderr when disabled");
+
+    const auto empty_warning = capture_stderr([]() {
+        cdrip::detail::emit_output_permissions_warning(
+            "/tmp/cdrip-test.flac",
+            "",
+            true);
+    });
+    expect_empty(empty_warning, "warning helper should suppress empty warning text");
+};
+
+auto test_rip_track_applies_default_output_permissions_from_umask = []() {
+    const auto temp_dir = std::filesystem::temp_directory_path() / "cdrip-test-drive-backend-default-permissions";
+    std::filesystem::remove_all(temp_dir);
+    std::filesystem::create_directories(temp_dir);
+
+    {
+        UmaskScope scope(0022);
+        const auto flac_path = temp_dir / "umask-022" / "track.flac";
+        rip_fake_track_to_path(flac_path.string(), nullptr);
+        expect_uint(0644, filesystem_mode(flac_path), "default file mode should follow umask 0022");
+        expect_uint(0755, filesystem_mode(flac_path.parent_path()), "default directory mode should follow umask 0022");
+        chmod_for_cleanup(flac_path.parent_path());
+    }
+
+    {
+        UmaskScope scope(0002);
+        const auto flac_path = temp_dir / "umask-002" / "track.flac";
+        rip_fake_track_to_path(flac_path.string(), nullptr);
+        expect_uint(0664, filesystem_mode(flac_path), "default file mode should follow umask 0002");
+        expect_uint(0775, filesystem_mode(flac_path.parent_path()), "default directory mode should follow umask 0002");
+        chmod_for_cleanup(flac_path.parent_path());
+    }
+
+    std::filesystem::remove_all(temp_dir);
+};
+
+auto test_rip_track_applies_explicit_output_permissions = []() {
+    const auto temp_dir = std::filesystem::temp_directory_path() / "cdrip-test-drive-backend-explicit-permissions";
+    std::filesystem::remove_all(temp_dir);
+    std::filesystem::create_directories(temp_dir);
+
+    const auto permissions = cdrip::detail::output_permissions_from_file_mode(0664);
+    const auto flac_path = temp_dir / "explicit" / "track.flac";
+    {
+        UmaskScope scope(0077);
+        rip_fake_track_to_path(flac_path.string(), &permissions);
+    }
+
+    expect_uint(0664, filesystem_mode(flac_path), "explicit file mode should override umask");
+    expect_uint(0775, filesystem_mode(flac_path.parent_path()), "explicit directory mode should be derived from file mode");
+    chmod_for_cleanup(flac_path.parent_path());
+    std::filesystem::remove_all(temp_dir);
+};
+
+auto test_config_permissions_are_parsed = []() {
+    const auto temp_dir = std::filesystem::temp_directory_path() / "cdrip-test-drive-backend-config-permissions";
+    std::filesystem::remove_all(temp_dir);
+    std::filesystem::create_directories(temp_dir);
+
+    const auto valid_config = temp_dir / "valid.conf";
+    {
+        std::ofstream out(valid_config);
+        out << "[cdrip]\npermissions=640\n";
+    }
+
+    const char* err = nullptr;
+    CdRipConfig* cfg = cdrip_load_config(valid_config.c_str(), &err);
+    expect_true(cfg != nullptr, err ? err : "valid permissions config should load");
+    expect_uint(0640, static_cast<unsigned int>(cfg->permissions), "config permissions should parse as octal");
+    expect_true(cfg->permission_warnings, "permission_warnings should default to true");
+    cdrip_release_config(cfg);
+    release_error(err);
+
+    const auto warnings_false_config = temp_dir / "warnings-false.conf";
+    {
+        std::ofstream out(warnings_false_config);
+        out << "[cdrip]\npermission_warnings=false\n";
+    }
+
+    cfg = cdrip_load_config(warnings_false_config.c_str(), &err);
+    expect_true(cfg != nullptr, err ? err : "permission_warnings=false config should load");
+    expect_true(!cfg->permission_warnings, "permission_warnings=false should be parsed");
+    cdrip_release_config(cfg);
+    release_error(err);
+
+    const auto warnings_true_config = temp_dir / "warnings-true.conf";
+    {
+        std::ofstream out(warnings_true_config);
+        out << "[cdrip]\npermission_warnings=1\n";
+    }
+
+    cfg = cdrip_load_config(warnings_true_config.c_str(), &err);
+    expect_true(cfg != nullptr, err ? err : "permission_warnings=1 config should load");
+    expect_true(cfg->permission_warnings, "permission_warnings=1 should be parsed");
+    cdrip_release_config(cfg);
+    release_error(err);
+
+    const auto invalid_config = temp_dir / "invalid.conf";
+    {
+        std::ofstream out(invalid_config);
+        out << "[cdrip]\npermissions=0664\n";
+    }
+
+    cfg = cdrip_load_config(invalid_config.c_str(), &err);
+    expect_true(cfg == nullptr, "4-digit permissions config should fail");
+    expect_eq("Invalid permissions value", cdrip::detail::to_string_or_empty(err), "invalid config should report permissions error");
+    release_error(err);
+
+    const auto invalid_warning_config = temp_dir / "invalid-warning.conf";
+    {
+        std::ofstream out(invalid_warning_config);
+        out << "[cdrip]\npermission_warnings=maybe\n";
+    }
+
+    cfg = cdrip_load_config(invalid_warning_config.c_str(), &err);
+    expect_true(cfg == nullptr, "invalid permission_warnings config should fail");
+    expect_eq(
+        "Invalid permission_warnings value",
+        cdrip::detail::to_string_or_empty(err),
+        "invalid permission_warnings config should report permissions warning error");
+    release_error(err);
+
     std::filesystem::remove_all(temp_dir);
 };
 
@@ -818,6 +1312,14 @@ auto test_rip_track_emits_progress_updates = []() {
 int main() {
     test_detect_cd_drives_uses_swapped_backend();
     test_open_build_toc_rip_and_close_use_swapped_backend();
+    test_year_format_tag_is_derived_from_single_valid_date_token();
+    test_year_format_tag_falls_back_to_date_when_derivation_is_ambiguous_or_out_of_range();
+    test_tag_overrides_affect_output_path_and_vorbis_comments();
+    test_output_permissions_are_derived_from_umask_and_explicit_modes();
+    test_output_permission_warning_resolution_and_emission();
+    test_rip_track_applies_default_output_permissions_from_umask();
+    test_rip_track_applies_explicit_output_permissions();
+    test_config_permissions_are_parsed();
     test_open_reports_backend_failure();
     test_open_releases_drive_when_reader_creation_fails();
     test_build_disc_toc_reports_backend_failure_and_no_audio();

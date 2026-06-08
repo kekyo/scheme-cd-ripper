@@ -83,10 +83,13 @@ The following are the options:
   In interactive mode, this also controls the default choice when both Discogs and CAA cover art candidates are available.
 - `-na`, `--no-aa`: Disable cover art ANSI/ASCII art output.
 - `-l`, `--logs`: Print debug logs.
+- `--permissions <ugo>`: Set output permissions as a 3-digit octal file mode such as `664`. Ignored by `--update`.
+- `--permission-warnings`, `--no-permission-warnings`: Show or hide warnings when output permission adjustment fails. Ignored by `--update`.
+- `--tag`, `--tags <key=value>`: Override a Vorbis comment tag for normal ripping. Repeatable, ignored by `--update`.
 - `-i`, `--input`: cdrip config file path (default search: `./cdrip.conf` --> `~/.cdrip.conf`)
 - `-u`, `--update <file|dir> [more ...]`: Update existing FLAC tags from CDDB using embedded tags (other options ignored)
 
-All command-line options (except `-u` and `-i`) can override the contents of the config file specified with `-i`.
+Command-line options with config counterparts (except `-u` and `-i`) can override the contents of the config file specified with `-i`.
 
 When ReplayGain is enabled, all tracks are ripped into a temporary directory first. The final `.flac` files do not appear in the destination until the whole album has finished ripping and ReplayGain tags have been written.
 
@@ -137,6 +140,7 @@ The following Vorbis comments are inserted:
 |`album`|Album name|CDDB,MusicBrainz|
 |`genre`|Genre|CDDB,MusicBrainz|
 |`date`|Date (Non-formal format)|CDDB,MusicBrainz|
+|`year`|Year derived from `date` for filename formatting only|internal|
 |`tracknumber`|Track number|internal|
 |`tracktotal`|Number of tracks per this disc|internal|
 |`albumartist`|Album artist|MusicBrainz|
@@ -172,6 +176,36 @@ The following Vorbis comments are inserted:
 When obtaining information from CDDB or MusicBrainz, not all of this tag information may be available.
 
 Note: There's no need to worry. While Vorbis comments are typically written in uppercase, this document simply uses lowercase.
+
+### Manual tag overrides
+
+Use `--tag key=value` (or `--tags key=value`) to override a tag after CDDB/MusicBrainz selection and merging:
+
+```bash
+cdrip --tag artist="The Billy Bob Trio" --tag albumartist="The Billy Bob Trio"
+```
+
+The key is case-insensitive and the option can be specified multiple times.
+Overrides apply to both filename formatting and embedded Vorbis comments.
+They apply to the whole command run, including repeat and auto modes, so avoid using them when processing unrelated discs.
+Empty keys and empty values are rejected.
+`--tag` is ignored when `--update` is used.
+
+### Output permissions
+
+By default, the final output is adjusted to the permissions that would normally result from creating a file:
+
+- File: `0666 & ~umask`
+- Final parent directory: `0777 & ~umask`
+
+To override these values, specify `--permissions 664` or `[cdrip] permissions=664`.
+Values are accepted only as 3-digit octal numbers ranging from `000` to `777`.
+When explicitly specified, files will have the specified value exactly, while directories will have the execute bit set if any bit is set in the u/g/o fields.
+For example, `664` results in a file with `0664` and a directory with `0775`.
+
+When outputting GIO URIs such as `smb://...`, the program attempts to set permissions using GIO attributes; if unsupported, it issues only a warning.
+To suppress only these permission correction warnings, specify `[cdrip] permission_warnings=false` or `--no-permission-warnings`.
+`--permissions` is ignored when `--update` is specified.
 
 ## About MusicBrainz and tags
 
@@ -221,6 +255,10 @@ Below are the details of this format syntax:
 - Numbers can have leading zeros interpolated using format specifiers like `:02d`.
   - This resembles C language `printf` format specifiers, but only this format is supported.
   - ex: `“{tracknumber:02d}.flac”` --> `“04.flac”`
+- The `year` key is derived from `date` for filename formatting only.
+  It splits `date` into ASCII alphanumeric tokens and uses the only 4-digit token in the range 1900-2100.
+  If there are no candidates or multiple candidates, `{year}` falls back to `date`.
+  Use `{year:n}` when `date` may contain path separators, such as `1999/2000`.
 
 Additionally, it includes the following features:
 
@@ -248,6 +286,7 @@ Requirements: FLAC files must contain these tags (These tags are automatically i
 - Re-fetches from MusicBrainz (not first time): `musicbrainz_release` and `musicbrainz_medium`.
 
 CDDB candidates are fetched the same way as during ripping; you still select the desired match interactively (except auto mode.)
+`--tag` overrides, `--permissions`, and permission warning options are ignored in update mode.
 
 ## Config file format
 
@@ -264,6 +303,8 @@ device=/dev/cdrom
 format={album:n/medium:n/tracknumber:02d}_{title:n}.flac
 compression=auto     # auto or 0-8
 max_width=512        # cover art max width in pixels (> 0)
+permissions=664      # optional 3-digit octal file mode; default is derived from umask
+permission_warnings=true  # true / false (default: true; false hides chmod/GIO mode warnings)
 speed=slow           # slow or fast (default: slow)
 aa=true              # show cover art as ANSI/ASCII art (TTY only)
 discogs=always       # no / always / fallback (cover art preference order, default: always)

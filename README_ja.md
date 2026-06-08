@@ -79,10 +79,13 @@ cdrip -d /dev/sr1 -f "{artist:n/title:n}.flac" -r
   対話モードでは、DiscogsとCAAの両方が候補になったときのデフォルト選択にも使われます。
 - `-na`, `--no-aa`: カバーアートのANSI/ASCIIアート表示を無効化する。
 - `-l`, `--logs`: デバッグログを出力する。
+- `--permissions <ugo>`: 出力パーミッションを`664`のような3桁8進数で指定する。`--update`では無視。
+- `--permission-warnings`, `--no-permission-warnings`: 出力パーミッション補正失敗時のwarning表示を切り替える。`--update`では無視。
+- `--tag`, `--tags <key=value>`: 通常リッピング時にVorbis commentタグを上書きする。複数指定可、`--update`では無視。
 - `-i`, `--input`: cdrip設定ファイルのパス（デフォルト検索: `./cdrip.conf` --> `~/.cdrip.conf`）
 - `-u`, `--update <file|dir> [more ...]`: 埋め込みタグを使用してCDDBから既存のFLACタグを更新（他のオプションは無視）
 
-すべてのコマンドラインオプション（`-u` および `-i` を除く）は、`-i` で指定された設定ファイルの内容を上書きできます。
+対応する設定項目を持つコマンドラインオプション（`-u` および `-i` を除く）は、`-i` で指定された設定ファイルの内容を上書きできます。
 
 ReplayGain が有効な場合、すべてのトラックは一度テンポラリディレクトリへリッピングされます。最終保存先に `.flac` が現れるのは、アルバム全体のリッピング完了後に ReplayGain タグを書き込んでからです。
 
@@ -132,6 +135,7 @@ Select match [0-15] (comma/space separated, default 1): 3,12
 |`album`|アルバム名|CDDB,MusicBrainz|
 |`genre`|ジャンル|CDDB,MusicBrainz|
 |`date`|日付（決められていないフォーマット）|CDDB,MusicBrainz|
+|`year`|`date`から派生するファイル名フォーマット専用の年|internal|
 |`tracknumber`|トラック番号|internal|
 |`tracktotal`|CD辺りのトラック数|internal|
 |`albumartist`|アルバムアーティスト|MusicBrainz|
@@ -167,6 +171,36 @@ Select match [0-15] (comma/space separated, default 1): 3,12
 CDDBやMusicBrainzから情報を得る場合、これらのすべてのタグ情報が得られるとは限りません。
 
 Note: 心配する必要はありません。Vorbisコメントは通常大文字で記述されますが、この文書では単に小文字を使用しています。
+
+### 手動タグ上書き
+
+CDDB/MusicBrainzの候補選択とマージ後にタグを上書きするには、`--tag key=value`（または`--tags key=value`）を使用します:
+
+```bash
+cdrip --tag artist="The Billy Bob Trio" --tag albumartist="The Billy Bob Trio"
+```
+
+キーは大文字小文字を区別せず、このオプションは複数回指定できます。
+上書きはファイル名フォーマットと埋め込みVorbis commentの両方に反映されます。
+repeat/autoモードを含むコマンド実行全体に適用されるため、無関係なCDを続けて処理する場合は指定しないでください。
+空キーや空値はエラーになります。
+`--tag`は`--update`指定時には無視されます。
+
+### 出力パーミッション
+
+デフォルトでは、通常のファイル作成で得られるはずの権限へ最終出力を補正します:
+
+- ファイル: `0666 & ~umask`
+- 最終親ディレクトリ: `0777 & ~umask`
+
+この値を上書きするには、`--permissions 664` または `[cdrip] permissions=664` を指定します。
+値は`000`から`777`までの3桁8進数だけを受け付けます。
+明示指定時、ファイルは指定値そのままになり、ディレクトリはu/g/o各桁に何らかのbitが立っていれば実行bitを追加します。
+例えば`664`はファイル`0664`、ディレクトリ`0775`になります。
+
+`smb://...`などのGIO URI出力では、GIO属性による設定を試行し、非対応の場合はwarningのみを出します。
+これらのパーミッション補正warningだけを非表示にするには、`[cdrip] permission_warnings=false`または`--no-permission-warnings`を指定します。
+`--permissions`は`--update`指定時には無視されます。
 
 ## MusicBrainzとタグについて
 
@@ -215,6 +249,10 @@ MusicBrainzから情報を取得した場合は、追加でカバーアート画
 - 数値は、 `:02d` のような書式指定で先頭ゼロを補間できます。
   - これはC言語の`printf`書式指定と似ていますが、サポートしている指定はこの形式のみです。
   - 例: `"{tracknumber:02d}.flac"` --> `"04.flac"`
+- `year`キーは、ファイル名フォーマット専用として`date`から派生します。
+  `date`をASCII英数字の連続要素に分割し、1900から2100の範囲にある4桁の要素が1つだけ存在する場合に、その値を使用します。
+  候補が無い場合や複数ある場合、`{year}`は`date`にフォールバックします。
+  `1999/2000`のように`date`にパス区切りが含まれる可能性がある場合は、`{year:n}`を使用してください。
 
 その他に、以下のような機能があります:
 
@@ -242,6 +280,7 @@ cdrip -u album1 album2/track03.flac /path/to/archive
 - MusicBrainzからの再取得（初回以外）: `musicbrainz_release`, `musicbrainz_medium`
 
 CDDB候補の取得はリッピング時と同様の方法で行われます。希望する一致を対話的に選択する必要があります（自動モードを除く）。
+update modeでは`--tag`による上書き、`--permissions`、permission warningオプションは無視されます。
 
 ## 設定ファイルフォーマット
 
@@ -258,6 +297,8 @@ device=/dev/cdrom
 format={album:n/medium:n/tracknumber:02d}_{title:n}.flac
 compression=auto     # auto または 0-8
 max_width=512        # カバーアート最大幅(px、1以上)
+permissions=664      # 任意の3桁8進数ファイルモード。未指定時はumaskから計算
+permission_warnings=true  # true / false（デフォルト: true。falseならchmod/GIO mode warningを非表示）
 speed=slow           # slow または fast（デフォルト: slow）
 aa=true              # カバーアートをANSI/ASCIIアートで表示（TTYのみ）
 discogs=always       # no / always / fallback（カバーアートの優先順。デフォルト: always）

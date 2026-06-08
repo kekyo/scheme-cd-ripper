@@ -163,6 +163,8 @@ static CdRipConfig* make_default_config() {
     cfg->format = make_cstr_copy("{album:n/medium:n/tracknumber:02d}_{title:n}.flac");
     cfg->compression_level = -1;
     cfg->max_width = 512;
+    cfg->permissions = -1;
+    cfg->permission_warnings = true;
     cfg->mode = RIP_MODES_DEFAULT;
     cfg->repeat = false;
     cfg->sort = false;
@@ -295,6 +297,38 @@ CdRipConfig* cdrip_load_config(
             cfg->max_width = parsed;
         } else if (gerr) {
             return fail_gerror(gerr, "Failed to parse max_width");
+        }
+    }
+
+    if (g_key_file_has_key(key_file, "cdrip", "permissions", nullptr)) {
+        GError* gerr = nullptr;
+        char* value = g_key_file_get_string(key_file, "cdrip", "permissions", &gerr);
+        if (value) {
+            unsigned int parsed = 0;
+            const std::string v = strip_inline_comment_value(value);
+            g_free(value);
+            if (!parse_output_permissions_value(v, parsed)) {
+                return fail("Invalid permissions value");
+            }
+            cfg->permissions = static_cast<int>(parsed);
+        } else if (gerr) {
+            return fail_gerror(gerr, "Failed to parse permissions");
+        }
+    }
+
+    if (g_key_file_has_key(key_file, "cdrip", "permission_warnings", nullptr)) {
+        GError* gerr = nullptr;
+        char* value = g_key_file_get_string(key_file, "cdrip", "permission_warnings", &gerr);
+        if (value) {
+            bool parsed = false;
+            const std::string v = strip_inline_comment_value(value);
+            g_free(value);
+            if (!parse_bool_value(v, parsed)) {
+                return fail("Invalid permission_warnings value");
+            }
+            cfg->permission_warnings = parsed;
+        } else if (gerr) {
+            return fail_gerror(gerr, "Failed to parse permission_warnings");
         }
     }
 

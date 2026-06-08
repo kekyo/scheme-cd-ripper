@@ -123,12 +123,99 @@ bool parse_int_strict(
     }
 }
 
+bool is_ascii_alnum_char(
+    unsigned char ch) {
+
+    return (ch >= '0' && ch <= '9')
+        || (ch >= 'A' && ch <= 'Z')
+        || (ch >= 'a' && ch <= 'z');
+}
+
+bool is_valid_year_token(
+    const std::string& token) {
+
+    if (token.size() != 4) return false;
+    int year = 0;
+    for (char ch : token) {
+        if (ch < '0' || ch > '9') return false;
+        year = year * 10 + (ch - '0');
+    }
+    return year >= 1900 && year <= 2100;
+}
+
+std::string derive_year_from_date(
+    const std::string& date) {
+
+    std::string token;
+    std::string selected;
+    size_t candidates = 0;
+
+    auto flush_token = [&]() {
+        if (is_valid_year_token(token)) {
+            ++candidates;
+            if (candidates == 1) selected = token;
+        }
+        token.clear();
+    };
+
+    for (unsigned char ch : date) {
+        if (is_ascii_alnum_char(ch)) {
+            token.push_back(static_cast<char>(ch));
+        } else {
+            flush_token();
+        }
+    }
+    flush_token();
+
+    return candidates == 1 ? selected : std::string{};
+}
+
+void apply_derived_year_tag(
+    std::map<std::string, std::string>& tags) {
+
+    const auto existing_year_it = tags.find("YEAR");
+    if (existing_year_it != tags.end() && !existing_year_it->second.empty()) return;
+    tags.erase("YEAR");
+
+    const auto date_it = tags.find("DATE");
+    if (date_it == tags.end() || date_it->second.empty()) return;
+
+    const std::string year = derive_year_from_date(date_it->second);
+    if (!year.empty()) {
+        tags["YEAR"] = year;
+    }
+}
+
+void apply_tag_overrides(
+    std::map<std::string, std::string>& tags,
+    const std::map<std::string, std::string>* tag_overrides) {
+
+    if (!tag_overrides) return;
+    for (const auto& [key, value] : *tag_overrides) {
+        if (!key.empty() && !value.empty()) {
+            tags[to_upper(key)] = value;
+        }
+    }
+}
+
 FormatTagMap build_format_tags(
     const std::map<std::string, std::string>& path_tags) {
 
-    FormatTagMap format_tags;
+    std::map<std::string, std::string> effective_tags;
     for (const auto& [key, value] : path_tags) {
-        const std::string key_upper = to_upper(key);
+        effective_tags[to_upper(key)] = value;
+    }
+
+    const auto year_it = effective_tags.find("YEAR");
+    const auto date_it = effective_tags.find("DATE");
+    if ((year_it == effective_tags.end() || year_it->second.empty()) &&
+        date_it != effective_tags.end() &&
+        !date_it->second.empty()) {
+        effective_tags["YEAR"] = date_it->second;
+    }
+
+    FormatTagMap format_tags;
+    for (const auto& [key_upper, value] : effective_tags) {
         if (is_numeric_format_key(key_upper)) {
             int numeric = 0;
             if (parse_int_strict(value, numeric)) {
@@ -174,6 +261,7 @@ std::map<std::string, std::string> build_track_vorbis_tags(
     const CdRipCddbEntry* meta,
     const CdRipDiscToc* toc,
     int total_tracks,
+    const std::map<std::string, std::string>* tag_overrides,
     std::string& title_out,
     std::string& track_name_out,
     std::string& safe_title_out) {
@@ -235,10 +323,18 @@ std::map<std::string, std::string> build_track_vorbis_tags(
         }
     }
 
+    apply_tag_overrides(tags, tag_overrides);
     prune_empty_tags(tags);
-    title_out = title;
-    track_name_out = track_name;
-    safe_title_out = safe_title;
+    apply_derived_year_tag(tags);
+
+    const auto title_it = tags.find("TITLE");
+    const std::string final_title =
+        (title_it != tags.end() && !title_it->second.empty()) ? title_it->second : title;
+    const std::string final_track_name = truncate_on_newline(final_title);
+
+    title_out = final_title;
+    track_name_out = final_track_name;
+    safe_title_out = format_safe_string(final_track_name);
     return tags;
 }
 

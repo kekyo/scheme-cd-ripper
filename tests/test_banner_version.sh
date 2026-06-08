@@ -29,6 +29,24 @@ assert_not_contains() {
     fi
 }
 
+assert_fails_contains() {
+    local expected_text="$1"
+    shift
+
+    local output
+    local status
+    set +e
+    output="$("$@" 2>&1)"
+    status=$?
+    set -e
+    if [[ "${status}" -eq 0 ]]; then
+        echo "assert_fails_contains failed: command unexpectedly succeeded" >&2
+        echo "  command: $*" >&2
+        exit 1
+    fi
+    assert_contains "${output}" "${expected_text}" "failed command should report expected error"
+}
+
 build_and_capture() {
     local version="$1"
     local commit="$2"
@@ -53,3 +71,15 @@ assert_not_contains "${unknown_output}" "Scheme CD music/sound ripper [0.0.0-tes
 
 commit_output="$(build_and_capture "0.0.0-test" "test" "commit")"
 assert_contains "${commit_output}" "Scheme CD music/sound ripper [0.0.0-test-test]" "banner should include known commit"
+assert_contains "${commit_output}" "--tag / --tags" "help should mention tag overrides"
+assert_contains "${commit_output}" "--permissions" "help should mention permissions"
+assert_contains "${commit_output}" "--permission-warnings" "help should mention permission warnings"
+
+built_cdrip="${BUILD_DIR}/commit/cdrip"
+assert_fails_contains "expected key=value" "${built_cdrip}" --tag artist
+assert_fails_contains "tag key must not be empty" "${built_cdrip}" --tag =value
+assert_fails_contains "tag value must not be empty" "${built_cdrip}" --tags artist=
+assert_fails_contains "requires a 3-digit octal value" "${built_cdrip}" --permissions
+assert_fails_contains "invalid --permissions value" "${built_cdrip}" --permissions 66
+assert_fails_contains "invalid --permissions value" "${built_cdrip}" --permissions 0664
+assert_fails_contains "invalid --permissions value" "${built_cdrip}" --permissions 888
