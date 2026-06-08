@@ -18,6 +18,14 @@ require_command() {
 	}
 }
 
+require_pkg_config_module() {
+	module_name=$1
+	pkg-config --exists "$module_name" || {
+		printf '%s\n' "Missing required pkg-config module: $module_name" >&2
+		exit 1
+	}
+}
+
 validate_positive_integer() {
 	value_name=$1
 	value=$2
@@ -157,8 +165,6 @@ require_env CDRIP_CLI_PACKAGE_DESCRIPTION
 require_env CDRIP_PACKAGE_MAINTAINER
 require_env CDRIP_BUILD_TYPE
 
-require_command apt-get
-
 CDRIP_MAKE_JOBS=${CDRIP_MAKE_JOBS:-1}
 validate_positive_integer 'CDRIP_MAKE_JOBS' "$CDRIP_MAKE_JOBS"
 
@@ -169,30 +175,22 @@ build_dir="$work_dir/build"
 rm -rf "$work_dir" "$meta_dir"
 mkdir -p "$build_dir" "$meta_dir"
 
-export DEBIAN_FRONTEND=noninteractive
-
-apt-get update
-apt-get install -y --no-install-recommends \
-	build-essential \
-	ca-certificates \
-	cmake \
-	dpkg-dev \
-	libcdio-paranoia-dev \
-	libcddb2-dev \
-	libebur128-dev \
-	libchafa-dev \
-	libflac++-dev \
-	libglib2.0-dev \
-	libjpeg-dev \
-	libjson-glib-dev \
-	liblcms2-dev \
-	libpng-dev \
-	libsoup-3.0-dev \
-	pkg-config
-
 require_command cmake
 require_command dpkg-architecture
 require_command dpkg-shlibdeps
+require_command pkg-config
+
+require_pkg_config_module chafa
+require_pkg_config_module flac++
+require_pkg_config_module gio-2.0
+require_pkg_config_module json-glib-1.0
+require_pkg_config_module lcms2
+require_pkg_config_module libcdio_paranoia
+require_pkg_config_module libcddb
+require_pkg_config_module libebur128
+require_pkg_config_module libjpeg
+require_pkg_config_module libpng
+require_pkg_config_module libsoup-3.0
 
 cmake -S . -B "$build_dir" -DCMAKE_BUILD_TYPE="$CDRIP_BUILD_TYPE"
 cmake --build "$build_dir" --parallel "$CDRIP_MAKE_JOBS"

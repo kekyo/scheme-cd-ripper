@@ -437,10 +437,10 @@ int cdrip_fetch_cover_art(
     const char** error /* nullable */);
 /**
  * Fetch front cover art from Discogs using DISCOGS_RELEASE tag (Discogs release ID)
- * and optional activity observer.
+ * first, or by conservative Discogs title search from CDDB ARTIST/ALBUM tags.
  * On success, stores image bytes and MIME type into the entry's cover_art field.
- * @param entry Target CDDB entry (must come from MusicBrainz and contain DISCOGS_RELEASE).
- * @param toc Disc TOC (reserved for future use, nullable).
+ * @param entry Target CDDB entry.
+ * @param toc Disc TOC used for CDDB-only title-search validation, nullable.
  * @param observer Optional activity observer for long-running work.
  * @param state Optional opaque per-call state passed back to the activity callback.
  * @param error Optional error string out-parameter.

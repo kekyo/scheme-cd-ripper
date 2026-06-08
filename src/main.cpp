@@ -1552,26 +1552,6 @@ bool parse_discogs_mode(
     return false;
 }
 
-const char* discogs_mode_label(DiscogsMode mode) {
-    switch (mode) {
-        case DiscogsMode::No: return "no";
-        case DiscogsMode::Always: return "always";
-        case DiscogsMode::Fallback: return "fallback";
-    }
-    return "unknown";
-}
-
-bool servers_include_musicbrainz(
-    const CdRipCddbServerList* servers) {
-
-    if (!servers || !servers->servers || servers->count == 0) return false;
-    for (size_t i = 0; i < servers->count; ++i) {
-        const std::string label = to_lower_ascii(view_string(servers->servers[i].label));
-        if (label == "musicbrainz") return true;
-    }
-    return false;
-}
-
 enum class CoverArtFetchSource {
     None,
     CoverArtArchive,
@@ -1608,10 +1588,10 @@ size_t default_cover_art_choice(
     }
 }
 
-size_t prompt_cover_art_choice(
-    DiscogsMode discogs_mode) {
+size_t prompt_cover_art_choice_with_default(
+    size_t default_choice) {
 
-    const size_t default_choice = default_cover_art_choice(discogs_mode);
+    if (default_choice < 1 || default_choice > 2) default_choice = 1;
     while (true) {
         std::cout << "\nSelect cover art [1-2] (default " << default_choice << "): ";
         std::string line;
@@ -1867,16 +1847,26 @@ using CoverArtFetchFunction = int (*)(
 
 struct CoverArtFetchAttempt {
     CoverArtFetchSource source{CoverArtFetchSource::None};
+    std::string label{};
     CdRipCoverArt art{};
     bool success{false};
     bool had_error{false};
 };
+
+std::string cover_art_attempt_label(
+    const CoverArtFetchAttempt& attempt) {
+
+    return attempt.label.empty()
+        ? std::string{cover_art_source_label(attempt.source)}
+        : attempt.label;
+}
 
 void clear_cover_art_fetch_attempt(
     CoverArtFetchAttempt& attempt) {
 
     clear_cover_art(attempt.art);
     attempt.source = CoverArtFetchSource::None;
+    attempt.label.clear();
     attempt.success = false;
     attempt.had_error = false;
 }
@@ -1925,14 +1915,85 @@ CoverArtFetchAttempt fetch_cover_art_attempt(
     return result;
 }
 
-bool prompt_for_cover_art_source(
+void emit_local_cover_art_activity(
+    const CdRipActivityObserver* observer,
+    void* observer_state,
+    CdRipActivityStates state,
+    const char* source_label) {
+
+    CdRipActivityInfo info{};
+    info.phase = CDRIP_ACTIVITY_PHASE_COVER_ART_FETCH;
+    info.state = state;
+    info.source_label = source_label;
+    info.completed_sources = (state == CDRIP_ACTIVITY_STATE_SOURCE_FINISHED ||
+        state == CDRIP_ACTIVITY_STATE_PHASE_FINISHED) ? 1u : 0u;
+    info.total_sources = 1;
+    cdrip::detail::notify_activity(observer, observer_state, info);
+}
+
+std::vector<CoverArtFetchAttempt> fetch_discogs_cover_art_attempts(
+    const std::vector<CdRipCddbEntry*>& effective,
+    const CdRipDiscToc* toc,
+    size_t max_attempts,
+    std::string& notice_out) {
+
+    std::vector<CoverArtFetchAttempt> attempts;
+    if (max_attempts == 0) return attempts;
+
+    ActivitySpinner phase_spinner{CDRIP_ACTIVITY_PHASE_COVER_ART_FETCH};
+    const CdRipActivityObserver* observer = nullptr;
+    if (phase_spinner.enabled()) {
+        phase_spinner.start();
+        observer = phase_spinner.observer();
+    }
+    void* observer_state = static_cast<void*>(&phase_spinner);
+    emit_local_cover_art_activity(observer, observer_state, CDRIP_ACTIVITY_STATE_PHASE_STARTED, nullptr);
+    emit_local_cover_art_activity(observer, observer_state, CDRIP_ACTIVITY_STATE_SOURCE_STARTED, "discogs");
+
+    for (CdRipCddbEntry* e : effective) {
+        if (!e) continue;
+        std::string err;
+        auto image_candidates = cdrip::detail::fetch_discogs_cover_art_image_candidates(
+            e,
+            toc,
+            max_attempts - attempts.size(),
+            err);
+        for (const auto& image_candidate : image_candidates) {
+            CoverArtFetchAttempt attempt{};
+            attempt.source = CoverArtFetchSource::Discogs;
+            attempt.art = clone_cover_art(image_candidate.art);
+            attempt.success = has_cover_art_data_local(attempt.art);
+            if (attempt.success) {
+                attempts.push_back(attempt);
+                if (attempts.size() >= max_attempts) break;
+            } else {
+                clear_cover_art_fetch_attempt(attempt);
+            }
+        }
+        cdrip::detail::release_discogs_cover_art_image_candidates(image_candidates);
+        if (!err.empty()) {
+            notice_out = err;
+        }
+        if (attempts.size() >= max_attempts) break;
+    }
+
+    for (size_t i = 0; i < attempts.size(); ++i) {
+        attempts[i].label = attempts.size() > 1
+            ? "Discogs #" + std::to_string(i + 1)
+            : "Discogs";
+    }
+
+    emit_local_cover_art_activity(observer, observer_state, CDRIP_ACTIVITY_STATE_SOURCE_FINISHED, "discogs");
+    emit_local_cover_art_activity(observer, observer_state, CDRIP_ACTIVITY_STATE_PHASE_FINISHED, nullptr);
+    phase_spinner.stop();
+    return attempts;
+}
+
+size_t prompt_for_cover_art_attempt_choice(
     const CoverArtFetchAttempt& left,
     const CoverArtFetchAttempt& right,
-    DiscogsMode discogs_mode,
-    bool allow_aa,
-    CoverArtFetchSource& selected_source_out) {
-
-    selected_source_out = CoverArtFetchSource::None;
+    size_t default_choice,
+    bool allow_aa) {
 
     const bool can_preview = allow_aa && (::isatty(STDOUT_FILENO) != 0);
     if (can_preview) {
@@ -1950,8 +2011,8 @@ bool prompt_for_cover_art_source(
                     render_err)) {
                 std::cout << "\n"
                           << build_cover_art_choice_header(
-                                 "[1] " + std::string{cover_art_source_label(left.source)},
-                                 "[2] " + std::string{cover_art_source_label(right.source)},
+                                 "[1] " + cover_art_attempt_label(left),
+                                 "[2] " + cover_art_attempt_label(right),
                                  columns_per_image);
                 for (const auto& line : rendered.lines) {
                     std::cout << line << "\n";
@@ -1959,22 +2020,38 @@ bool prompt_for_cover_art_source(
                 std::cout << "\x1b[0m";
             } else {
                 std::cout << "\nCover art candidates:\n";
-                std::cout << "  [1] " << cover_art_source_label(left.source) << "\n";
-                std::cout << "  [2] " << cover_art_source_label(right.source) << "\n";
+                std::cout << "  [1] " << cover_art_attempt_label(left) << "\n";
+                std::cout << "  [2] " << cover_art_attempt_label(right) << "\n";
             }
         } else {
             std::cout << "\n"
                       << "Cover art candidates:\n";
-            std::cout << "  [1] " << cover_art_source_label(left.source) << "\n";
-            std::cout << "  [2] " << cover_art_source_label(right.source) << "\n";
+            std::cout << "  [1] " << cover_art_attempt_label(left) << "\n";
+            std::cout << "  [2] " << cover_art_attempt_label(right) << "\n";
         }
     } else {
         std::cout << "\nCover art candidates:\n";
-        std::cout << "  [1] " << cover_art_source_label(left.source) << "\n";
-        std::cout << "  [2] " << cover_art_source_label(right.source) << "\n";
+        std::cout << "  [1] " << cover_art_attempt_label(left) << "\n";
+        std::cout << "  [2] " << cover_art_attempt_label(right) << "\n";
     }
 
-    const size_t choice = prompt_cover_art_choice(discogs_mode);
+    return prompt_cover_art_choice_with_default(default_choice);
+}
+
+bool prompt_for_cover_art_source(
+    const CoverArtFetchAttempt& left,
+    const CoverArtFetchAttempt& right,
+    DiscogsMode discogs_mode,
+    bool allow_aa,
+    CoverArtFetchSource& selected_source_out) {
+
+    selected_source_out = CoverArtFetchSource::None;
+
+    const size_t choice = prompt_for_cover_art_attempt_choice(
+        left,
+        right,
+        default_cover_art_choice(discogs_mode),
+        allow_aa);
     selected_source_out = (choice == 2) ? right.source : left.source;
     return true;
 }
@@ -2051,18 +2128,45 @@ bool ensure_cover_art_merged(
     };
 
     if (allow_source_choice) {
+        auto clear_attempt_vector = [](std::vector<CoverArtFetchAttempt>& attempts) {
+            for (auto& attempt : attempts) {
+                clear_cover_art_fetch_attempt(attempt);
+            }
+            attempts.clear();
+        };
+
         CoverArtFetchAttempt caa_attempt = fetch_cover_art_attempt(
             effective,
             toc,
             &cdrip_fetch_cover_art,
             CoverArtFetchSource::CoverArtArchive,
             notice_out);
-        CoverArtFetchAttempt discogs_attempt = fetch_cover_art_attempt(
-            effective,
-            toc,
-            &cdrip_fetch_discogs_cover_art,
-            CoverArtFetchSource::Discogs,
-            notice_out);
+        CoverArtFetchAttempt discogs_attempt{};
+        std::vector<CoverArtFetchAttempt> discogs_attempts;
+        if (discogs_mode != DiscogsMode::No) {
+            discogs_attempts = fetch_discogs_cover_art_attempts(
+                effective,
+                toc,
+                2,
+                notice_out);
+            if (discogs_attempts.size() >= 2) {
+                const size_t discogs_choice = prompt_for_cover_art_attempt_choice(
+                    discogs_attempts[0],
+                    discogs_attempts[1],
+                    1,
+                    allow_aa);
+                const auto& selected_discogs = discogs_attempts[discogs_choice == 2 ? 1 : 0];
+                discogs_attempt.source = CoverArtFetchSource::Discogs;
+                discogs_attempt.label = "Discogs";
+                discogs_attempt.art = clone_cover_art(selected_discogs.art);
+                discogs_attempt.success = has_cover_art_data_local(discogs_attempt.art);
+            } else if (discogs_attempts.size() == 1) {
+                discogs_attempt.source = CoverArtFetchSource::Discogs;
+                discogs_attempt.label = "Discogs";
+                discogs_attempt.art = clone_cover_art(discogs_attempts[0].art);
+                discogs_attempt.success = has_cover_art_data_local(discogs_attempt.art);
+            }
+        }
 
         if (should_offer_cover_art_choice(
                 allow_source_choice,
@@ -2081,6 +2185,7 @@ bool ensure_cover_art_merged(
             source_out = selected_source;
             clear_cover_art_fetch_attempt(caa_attempt);
             clear_cover_art_fetch_attempt(discogs_attempt);
+            clear_attempt_vector(discogs_attempts);
             return true;
         }
         if (caa_attempt.success) {
@@ -2089,6 +2194,7 @@ bool ensure_cover_art_merged(
             if (allow_aa) maybe_print_cover_art_ascii(target->cover_art);
             clear_cover_art_fetch_attempt(caa_attempt);
             clear_cover_art_fetch_attempt(discogs_attempt);
+            clear_attempt_vector(discogs_attempts);
             return true;
         }
         if (discogs_attempt.success) {
@@ -2097,10 +2203,12 @@ bool ensure_cover_art_merged(
             if (allow_aa) maybe_print_cover_art_ascii(target->cover_art);
             clear_cover_art_fetch_attempt(caa_attempt);
             clear_cover_art_fetch_attempt(discogs_attempt);
+            clear_attempt_vector(discogs_attempts);
             return true;
         }
         clear_cover_art_fetch_attempt(caa_attempt);
         clear_cover_art_fetch_attempt(discogs_attempt);
+        clear_attempt_vector(discogs_attempts);
         return false;
     }
 
@@ -3017,13 +3125,6 @@ int main(int argc, char** argv) {
                   << " value: " << discogs_value << " (expected: no|always|fallback)\n";
         return 1;
     }
-    if ((discogs_mode == DiscogsMode::Always || discogs_mode == DiscogsMode::Fallback) &&
-        !servers_include_musicbrainz(servers_from_config)) {
-        std::cerr << "Warning: Discogs is enabled (" << discogs_mode_label(discogs_mode)
-                  << ") but MusicBrainz is not configured in [cddb].servers; disabling Discogs access.\n";
-        discogs_mode = DiscogsMode::No;
-    }
-
     int recrawl_track_length_tolerance_percent =
         kDefaultMusicBrainzRecrawlTrackLengthTolerancePercent;
     std::string recrawl_tolerance_err;

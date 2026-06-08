@@ -26,6 +26,8 @@ ubuntu 22.04 x86_64 linux/amd64
 ubuntu 22.04 arm64 linux/arm64
 ubuntu 24.04 x86_64 linux/amd64
 ubuntu 24.04 arm64 linux/arm64
+ubuntu 26.04 x86_64 linux/amd64
+ubuntu 26.04 arm64 linux/arm64
 EOF
 )
 
@@ -43,6 +45,9 @@ Options:
   --debug              Build packages with a Debug CMake configuration.
   --print-version      Print the resolved package version and exit.
   --help               Show this help.
+
+Run ./prereq.sh first to build the prerequisite Podman images used by package
+build containers.
 EOF
 }
 
@@ -383,16 +388,34 @@ container_image_for_target() {
 	printf 'docker.io/%s/%s:%s\n' "$repository_prefix" "$distro" "$release"
 }
 
+prereq_image_for_target() {
+	distro=$1
+	release=$2
+	arch=$3
+
+	printf 'localhost/scheme-cd-ripper-pack-deb-%s-%s-%s:latest\n' "$distro" "$release" "$arch"
+}
+
+assert_prereq_image() {
+	image=$1
+
+	if ! "$CONTAINER_ENGINE_BIN" image exists "$image" >/dev/null 2>&1; then
+		fail "Missing prerequisite image: $image. Run ./prereq.sh first."
+	fi
+}
+
 build_deb_packages() {
 	distro=$1
 	release=$2
 	arch=$3
 	platform=$4
-	image=$(container_image_for_target "$distro" "$release" "$arch")
+	image=$(prereq_image_for_target "$distro" "$release" "$arch")
 	work_root="$TMP_ROOT/deb/$distro/$release/$arch"
 	container_root="/workspace/artifacts/.tmp/$RUN_ID/deb/$distro/$release/$arch"
 
-	printf '%s\n' "[deb] $distro $release $arch"
+	assert_prereq_image "$image"
+
+	printf '%s\n' "[deb] $distro $release $arch ($platform, $image)"
 	rm -rf "$work_root"
 	mkdir -p "$DEB_ARTIFACT_ROOT"
 

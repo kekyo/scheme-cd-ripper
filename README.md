@@ -186,7 +186,7 @@ If the player supports cover art display, the cover art image will be shown:
 
 ![Cover art](./images/aa.png)
 
-- Fetching and embedding cover art is only possible when a MusicBrainz match is used; other CDDB servers do not supply cover art.
+- Cover art can be embedded from MusicBrainz/CAA or Discogs. CDDB servers do not supply images directly, but a CDDB-only match can still use Discogs title search when MusicBrainz does not match.
 - In normal interactive mode, when both Cover Art Archive and Discogs images are available, both candidates are shown and you can choose `1` or `2`.
   When ANSI/ASCII art output is enabled on a TTY, the two previews are displayed side by side in columns.
   The default choice follows `-dc`/`--discogs` (`always` => Discogs, `fallback`/`no` => Cover Art Archive).
@@ -197,9 +197,10 @@ If the player supports cover art display, the cover art image will be shown:
   This is because images provided by CAA may contain special metadata (such as ICC profiles), which can cause the hardware media player to be unable to display the image.
   Since it's in PNG format, the image itself does not degrade over time
   (though there is a form of “degradation” in the sense that the ICC profile is removed, which performs the color space conversion to sRGB).
-- Discogs cover art is only attempted when MusicBrainz release provides `discogs_release` tag.
+- Discogs cover art first uses the MusicBrainz-provided `discogs_release` tag when available. Without that tag, non-MusicBrainz CDDB matches are searched by `ARTIST` and `ALBUM`; only conservative CD-format matches with matching album/artist, track count, and sufficient track-title overlap are used.
+- If more than two Discogs title-search image candidates remain, only the top two are offered in interactive mode. Repeat mode and fully automatic mode use the highest-ranked candidate.
 - You can choose the preference order with `-dc`/`--discogs`: `always` (default: Discogs first, then CAA), `fallback` (CAA first, then Discogs), `no` (do not use Discogs).
-- In repeat mode and fully automatic mode, no cover-art choice prompt is shown; the configured preference order is used directly.
+- Discogs data and images are retrieved through the Discogs API. See the Discogs API Terms of Use: https://support.discogs.com/hc/en-us/articles/360009334593-API-Terms-of-Use
 
 ## Filename formatting
 
@@ -345,6 +346,7 @@ npm install -g screw-up
 ### Build packages
 
 `build_package.sh` runs package builds inside distro-specific podman containers and can schedule the full matrix in one invocation.
+Run `prereq.sh` first to build target-specific Podman images with the apt build dependencies already installed. Reusing these images avoids spending time on `apt-get install` inside every package build container.
 
 Prerequisites:
 
@@ -355,6 +357,9 @@ sudo apt-get install podman qemu-user-static dpkg-dev binutils
 Build examples:
 
 ```bash
+# Prepare prerequisite images
+./prereq.sh
+
 # Ubuntu 24.04 / amd64
 ./build_package.sh --target deb --distro ubuntu --release 24.04 --arch x86_64
 
@@ -374,6 +379,7 @@ Notes:
 - Arch aliases: `x86_64|amd64`, `i686|i386`, `armv7l|armv7|armhf`, `arm64|aarch64`
 - Ubuntu release aliases: `24.04|noble`, `22.04|jammy`
 - Debug build: add `--debug`
+- Rebuild prerequisite images after dependency or base-image changes: `./prereq.sh --force`
 - Outputs: `artifacts/deb/<package>-<version>-<distro>-<release>-<deb-arch>.deb`
 
 Batch build for all predefined combos:
