@@ -4,10 +4,13 @@
 // https://github.com/kekyo/scheme-cd-ripper
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
@@ -66,13 +69,135 @@ void remove_local_file_quietly(
     std::filesystem::remove(path, ec);
 }
 
+void append_permissions_warning(
+    std::string& warning,
+    const std::string& message) {
+
+    if (!warning.empty()) warning += "; ";
+    warning += message;
+}
+
+bool set_local_mode(
+    const std::string& path,
+    unsigned int mode,
+    const std::string& label,
+    std::string& warning) {
+
+    if (::chmod(path.c_str(), static_cast<mode_t>(mode & 0777U)) != 0) {
+        append_permissions_warning(
+            warning,
+            "failed to chmod " + label + " " + path + ": " + std::strerror(errno));
+        return false;
+    }
+    return true;
+}
+
+void apply_local_output_permissions(
+    const std::string& destination_path,
+    const cdrip::detail::OutputPermissions& permissions) {
+
+    std::string warning;
+    set_local_mode(destination_path, permissions.file_mode, "file", warning);
+
+    std::filesystem::path parent = std::filesystem::path(destination_path).parent_path();
+    if (parent.empty()) parent = ".";
+    set_local_mode(parent.string(), permissions.dir_mode, "directory", warning);
+
+    cdrip::detail::emit_output_permissions_warning(
+        destination_path,
+        warning,
+        permissions.warn_on_failure);
+}
+
+bool set_gfile_mode(
+    GFile* file,
+    unsigned int mode,
+    const std::string& label,
+    std::string& warning) {
+
+    GError* gerr = nullptr;
+    if (!g_file_set_attribute_uint32(
+            file,
+            G_FILE_ATTRIBUTE_UNIX_MODE,
+            mode & 0777U,
+            G_FILE_QUERY_INFO_NONE,
+            nullptr,
+            &gerr)) {
+        append_permissions_warning(
+            warning,
+            "failed to set " + label + " mode: " + (gerr && gerr->message ? gerr->message : "unknown"));
+        g_clear_error(&gerr);
+        return false;
+    }
+    return true;
+}
+
+void apply_gio_output_permissions(
+    GFile* file,
+    const std::string& destination_path,
+    const cdrip::detail::OutputPermissions& permissions) {
+
+    std::string warning;
+    set_gfile_mode(file, permissions.file_mode, "file", warning);
+
+    GFile* parent = g_file_get_parent(file);
+    if (parent) {
+        set_gfile_mode(parent, permissions.dir_mode, "directory", warning);
+        g_object_unref(parent);
+    }
+
+    cdrip::detail::emit_output_permissions_warning(
+        destination_path,
+        warning,
+        permissions.warn_on_failure);
+}
+
 }
 
 namespace cdrip::detail {
 
+OutputPermissions default_output_permissions_from_umask() {
+    const mode_t current_umask = ::umask(0);
+    ::umask(current_umask);
+    return OutputPermissions{
+        static_cast<unsigned int>(0666 & ~current_umask) & 0777U,
+        static_cast<unsigned int>(0777 & ~current_umask) & 0777U,
+        true,
+    };
+}
+
+void emit_output_permissions_warning(
+    const std::string& destination_path,
+    const std::string& warning,
+    bool warn_on_failure) {
+
+    if (warn_on_failure && !warning.empty()) {
+        std::cerr << "Warning: failed to set permissions for "
+                  << destination_path << ": " << warning << "\n";
+    }
+}
+
+OutputPermissions resolve_output_permissions(
+    int config_file_mode,
+    bool config_warn_on_failure,
+    const unsigned int* cli_file_mode,
+    const bool* cli_warn_on_failure) {
+
+    OutputPermissions permissions =
+        cli_file_mode
+            ? output_permissions_from_file_mode(*cli_file_mode)
+            : (config_file_mode >= 0
+                ? output_permissions_from_file_mode(static_cast<unsigned int>(config_file_mode))
+                : default_output_permissions_from_umask());
+    permissions.warn_on_failure =
+        cli_warn_on_failure ? *cli_warn_on_failure : config_warn_on_failure;
+    return permissions;
+}
+
 bool publish_local_file_to_destination(
     const std::string& local_path,
     const std::string& destination_path,
+    const OutputPermissions* output_permissions,
     std::string& err) {
 
     err.clear();
@@ -154,6 +279,14 @@ bool publish_local_file_to_destination(
         g_clear_error(&gerr);
         cleanup();
         return false;
+    }
+
+    if (output_permissions) {
+        if (uri_output) {
+            apply_gio_output_permissions(file, destination_path, *output_permissions);
+        } else {
+            apply_local_output_permissions(destination_path, *output_permissions);
+        }
     }
 
     cleanup();
@@ -411,7 +544,18 @@ bool rip_track_with_options(
         }
     }
 
-    if (!publish_local_file_to_destination(temp_path, output_path, err)) {
+    OutputPermissions default_output_permissions{};
+    const OutputPermissions* output_permissions = nullptr;
+    if (!options || options->apply_output_permissions) {
+        if (options && options->output_permissions) {
+            output_permissions = options->output_permissions;
+        } else {
+            default_output_permissions = default_output_permissions_from_umask();
+            output_permissions = &default_output_permissions;
+        }
+    }
+
+    if (!publish_local_file_to_destination(temp_path, output_path, output_permissions, err)) {
         remove_local_file_quietly(temp_path);
         return false;
     }

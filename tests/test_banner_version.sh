@@ -72,8 +72,14 @@ assert_not_contains "${unknown_output}" "Scheme CD music/sound ripper [0.0.0-tes
 commit_output="$(build_and_capture "0.0.0-test" "test" "commit")"
 assert_contains "${commit_output}" "Scheme CD music/sound ripper [0.0.0-test-test]" "banner should include known commit"
 assert_contains "${commit_output}" "--tag / --tags" "help should mention tag overrides"
+assert_contains "${commit_output}" "--permissions" "help should mention permissions"
+assert_contains "${commit_output}" "--permission-warnings" "help should mention permission warnings"
 
 built_cdrip="${BUILD_DIR}/commit/cdrip"
 assert_fails_contains "expected key=value" "${built_cdrip}" --tag artist
 assert_fails_contains "tag key must not be empty" "${built_cdrip}" --tag =value
 assert_fails_contains "tag value must not be empty" "${built_cdrip}" --tags artist=
+assert_fails_contains "requires a 3-digit octal value" "${built_cdrip}" --permissions
+assert_fails_contains "invalid --permissions value" "${built_cdrip}" --permissions 66
+assert_fails_contains "invalid --permissions value" "${built_cdrip}" --permissions 0664
+assert_fails_contains "invalid --permissions value" "${built_cdrip}" --permissions 888

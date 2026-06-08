@@ -2793,6 +2793,8 @@ struct Options {
     std::optional<bool> speed_fast;
     std::optional<bool> replaygain;
     std::optional<std::string> discogs;
+    std::optional<unsigned int> permissions;
+    std::optional<bool> permission_warnings;
     std::string config_file;
     bool no_eject = false;
     bool no_aa = false;
@@ -2801,6 +2803,14 @@ struct Options {
     std::vector<std::string> update_paths;
     std::map<std::string, std::string> tag_overrides;
 };
+
+std::string format_permission_mode(
+    unsigned int mode) {
+
+    std::ostringstream oss;
+    oss << "0" << std::oct << std::setw(3) << std::setfill('0') << (mode & 0777U);
+    return oss.str();
+}
 
 bool parse_tag_override_arg(
     const std::string& raw,
@@ -2897,6 +2907,23 @@ Options parse_args(int argc, char** argv) {
         } else if (arg == "-n") {
             std::cerr << "Warning: -n is deprecated; use -ne or --no-eject\n";
             opts.no_eject = true;
+        } else if (arg == "--permissions") {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: --permissions requires a 3-digit octal value\n";
+                std::exit(1);
+            }
+            unsigned int permissions = 0;
+            const std::string raw_permissions = argv[++i];
+            if (!cdrip::detail::parse_output_permissions_value(raw_permissions, permissions)) {
+                std::cerr << "Error: invalid --permissions value \"" << raw_permissions
+                          << "\" (expected: 000..777)\n";
+                std::exit(1);
+            }
+            opts.permissions = permissions;
+        } else if (arg == "--permission-warnings") {
+            opts.permission_warnings = true;
+        } else if (arg == "--no-permission-warnings") {
+            opts.permission_warnings = false;
         } else if (arg == "--tag" || arg == "--tags") {
             if (i + 1 >= argc) {
                 std::cerr << "Error: " << arg << " requires key=value\n";
@@ -2919,7 +2946,7 @@ Options parse_args(int argc, char** argv) {
                 std::exit(1);
             }
         } else if (arg == "-?" || arg == "-h" || arg == "--help") {
-            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-g|-ng] [-dc no|always|fallback] [-na] [--tag key=value] [-i config] [-u file|dir ...]\n";
+            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-g|-ng] [-dc no|always|fallback] [-na] [--permissions ugo] [--permission-warnings|--no-permission-warnings] [--tag key=value] [-i config] [-u file|dir ...]\n";
             std::cout << "  -d  / --device: CD device path (default: auto-detect)\n";
             std::cout << "  -f  / --format: FLAC destination path format (default: \"{album:n/medium:n/tracknumber:02d}_{title:n}.flac\")\n";
             std::cout << "  -m  / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disabled any checks)\n";
@@ -2938,6 +2965,8 @@ Options parse_args(int argc, char** argv) {
             std::cout << "  -dc / --discogs: Cover art preference for Discogs: no, always (default), fallback\n";
             std::cout << "  -na / --no-aa: Disable cover art ANSI/ASCII art output\n";
             std::cout << "  -l  / --logs: Print debug logs for MusicBrainz recrawl and selected metadata\n";
+            std::cout << "  --permissions: Set output file permissions as 3-digit octal (default: derived from umask; ignored with -u)\n";
+            std::cout << "  --permission-warnings / --no-permission-warnings: Show or hide output permission adjustment warnings (default: show; ignored with -u)\n";
             std::cout << "  --tag / --tags: Override a tag for normal ripping (repeatable, key=value; ignored with -u)\n";
             std::cout << "  -i  / --input: cdrip config file path (default search: ./cdrip.conf --> ~/.cdrip.conf)\n";
             std::cout << "  -u  / --update <file|dir> [more ...]: Update existing FLAC tags from CDDB using embedded tags (other options ignored)\n";
@@ -3205,6 +3234,17 @@ int main(int argc, char** argv) {
                                discogs_mode, allow_aa, title_filter.get());
     }
 
+    const unsigned int* cli_permissions_ptr =
+        cli_opts.permissions.has_value() ? &*cli_opts.permissions : nullptr;
+    const bool* cli_permission_warnings_ptr =
+        cli_opts.permission_warnings.has_value() ? &*cli_opts.permission_warnings : nullptr;
+    const cdrip::detail::OutputPermissions output_permissions =
+        cdrip::detail::resolve_output_permissions(
+            cfg->permissions,
+            cfg->permission_warnings,
+            cli_permissions_ptr,
+            cli_permission_warnings_ptr);
+
     const char* err = nullptr;
     if (auto_mode) {
         std::string wait_message;
@@ -3357,6 +3397,9 @@ int main(int argc, char** argv) {
     std::cout << "\n";
     std::cout << "  speed       : " << (speed_fast ? "fast (max)" : "slow (1x)") << "\n";
     std::cout << "  replaygain  : " << (replaygain ? "enabled (save after full album rip)" : "disabled (save each track immediately)") << "\n";
+    std::cout << "  permissions : file " << format_permission_mode(output_permissions.file_mode)
+              << ", dir " << format_permission_mode(output_permissions.dir_mode)
+              << ", warnings " << (output_permissions.warn_on_failure ? "enabled" : "disabled") << "\n";
     std::cout << "  auto        : " << (auto_mode ? "enabled" : "disabled");
     std::cout << "\n\n";
 
@@ -3518,6 +3561,7 @@ int main(int argc, char** argv) {
                     write_options.output_path = staged_path_str.c_str();
                     write_options.display_path = final_path.c_str();
                     write_options.tag_overrides = tag_override_ptr;
+                    write_options.apply_output_permissions = false;
                     write_options.track_replaygain_state = track_replaygain_state.get();
                     write_options.album_replaygain_state = album_replaygain_state.get();
 
@@ -3554,6 +3598,7 @@ int main(int argc, char** argv) {
                 } else {
                     cdrip::detail::RipTrackWriteOptions write_options{};
                     write_options.tag_overrides = tag_override_ptr;
+                    write_options.output_permissions = &output_permissions;
                     std::string rip_err;
                     RipProgressSpinner rip_spinner{};
                     rip_spinner.activate();
@@ -3614,6 +3659,7 @@ int main(int argc, char** argv) {
                     if (!cdrip::detail::publish_local_file_to_destination(
                             staged_track.staged_path,
                             staged_track.final_path,
+                            &output_permissions,
                             replaygain_err)) {
                         success = false;
                         std::cerr << "ReplayGain error: " << replaygain_err << "\n";

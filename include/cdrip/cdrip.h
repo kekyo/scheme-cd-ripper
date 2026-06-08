@@ -82,6 +82,10 @@ typedef struct CdRipConfig {
     int compression_level;
     /** Cover art maximum width in pixels (<=0 => default). */
     int max_width;
+    /** Output permissions as 3-digit octal file mode, or <0 for umask-derived default. */
+    int permissions;
+    /** Non-zero to show warnings when output permission adjustments fail. */
+    bool permission_warnings;
     /** Rip mode. */
     CdRipRipModes mode;
     /** Repeat prompt for next disc. */

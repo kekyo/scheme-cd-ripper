@@ -79,6 +79,8 @@ cdrip -d /dev/sr1 -f "{artist:n/title:n}.flac" -r
   対話モードでは、DiscogsとCAAの両方が候補になったときのデフォルト選択にも使われます。
 - `-na`, `--no-aa`: カバーアートのANSI/ASCIIアート表示を無効化する。
 - `-l`, `--logs`: デバッグログを出力する。
+- `--permissions <ugo>`: 出力パーミッションを`664`のような3桁8進数で指定する。`--update`では無視。
+- `--permission-warnings`, `--no-permission-warnings`: 出力パーミッション補正失敗時のwarning表示を切り替える。`--update`では無視。
 - `--tag`, `--tags <key=value>`: 通常リッピング時にVorbis commentタグを上書きする。複数指定可、`--update`では無視。
 - `-i`, `--input`: cdrip設定ファイルのパス（デフォルト検索: `./cdrip.conf` --> `~/.cdrip.conf`）
 - `-u`, `--update <file|dir> [more ...]`: 埋め込みタグを使用してCDDBから既存のFLACタグを更新（他のオプションは無視）
@@ -184,6 +186,22 @@ repeat/autoモードを含むコマンド実行全体に適用されるため、
 空キーや空値はエラーになります。
 `--tag`は`--update`指定時には無視されます。
 
+### 出力パーミッション
+
+デフォルトでは、通常のファイル作成で得られるはずの権限へ最終出力を補正します:
+
+- ファイル: `0666 & ~umask`
+- 最終親ディレクトリ: `0777 & ~umask`
+
+この値を上書きするには、`--permissions 664` または `[cdrip] permissions=664` を指定します。
+値は`000`から`777`までの3桁8進数だけを受け付けます。
+明示指定時、ファイルは指定値そのままになり、ディレクトリはu/g/o各桁に何らかのbitが立っていれば実行bitを追加します。
+例えば`664`はファイル`0664`、ディレクトリ`0775`になります。
+
+`smb://...`などのGIO URI出力では、GIO属性による設定を試行し、非対応の場合はwarningのみを出します。
+これらのパーミッション補正warningだけを非表示にするには、`[cdrip] permission_warnings=false`または`--no-permission-warnings`を指定します。
+`--permissions`は`--update`指定時には無視されます。
+
 ## MusicBrainzとタグについて
 
 - [MusicBrainz](https://musicbrainz.org/) は、構造化されたID、クレジット、ジャンル、リリースメタデータを提供するコミュニティ管理の音楽データベースです。
@@ -262,7 +280,7 @@ cdrip -u album1 album2/track03.flac /path/to/archive
 - MusicBrainzからの再取得（初回以外）: `musicbrainz_release`, `musicbrainz_medium`
 
 CDDB候補の取得はリッピング時と同様の方法で行われます。希望する一致を対話的に選択する必要があります（自動モードを除く）。
-update modeでは`--tag`による上書きは無視されます。
+update modeでは`--tag`による上書き、`--permissions`、permission warningオプションは無視されます。
 
 ## 設定ファイルフォーマット
 
@@ -279,6 +297,8 @@ device=/dev/cdrom
 format={album:n/medium:n/tracknumber:02d}_{title:n}.flac
 compression=auto     # auto または 0-8
 max_width=512        # カバーアート最大幅(px、1以上)
+permissions=664      # 任意の3桁8進数ファイルモード。未指定時はumaskから計算
+permission_warnings=true  # true / false（デフォルト: true。falseならchmod/GIO mode warningを非表示）
 speed=slow           # slow または fast（デフォルト: slow）
 aa=true              # カバーアートをANSI/ASCIIアートで表示（TTYのみ）
 discogs=always       # no / always / fallback（カバーアートの優先順。デフォルト: always）

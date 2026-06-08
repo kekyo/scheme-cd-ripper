@@ -491,13 +491,52 @@ struct ReplayGainScanResult {
     bool peak_ok{false};
 };
 
+struct OutputPermissions {
+    unsigned int file_mode{0};
+    unsigned int dir_mode{0};
+    bool warn_on_failure{true};
+};
+
 struct RipTrackWriteOptions {
     const char* output_path{nullptr};
     const char* display_path{nullptr};
     const std::map<std::string, std::string>* tag_overrides{nullptr};
+    const OutputPermissions* output_permissions{nullptr};
+    bool apply_output_permissions{true};
     ebur128_state* track_replaygain_state{nullptr};
     ebur128_state* album_replaygain_state{nullptr};
 };
+
+static inline bool parse_output_permissions_value(
+    const std::string& raw,
+    unsigned int& out) {
+
+    const std::string value = trim(raw);
+    if (value.size() != 3) return false;
+
+    unsigned int parsed = 0;
+    for (char ch : value) {
+        if (ch < '0' || ch > '7') return false;
+        parsed = (parsed << 3) | static_cast<unsigned int>(ch - '0');
+    }
+    out = parsed;
+    return true;
+}
+
+static inline OutputPermissions output_permissions_from_file_mode(
+    unsigned int file_mode) {
+
+    file_mode &= 0777U;
+    unsigned int dir_mode = file_mode;
+    for (unsigned int group = 0; group < 3; ++group) {
+        const unsigned int shift = (2U - group) * 3U;
+        const unsigned int bits = (file_mode >> shift) & 07U;
+        if (bits != 0U) {
+            dir_mode |= (01U << shift);
+        }
+    }
+    return OutputPermissions{file_mode, dir_mode & 0777U, true};
+}
 
 static inline std::string build_cddb_offsets_tag(
     const CdRipDiscToc* toc) {
@@ -577,7 +616,21 @@ bool resolve_track_output_path(
 bool publish_local_file_to_destination(
     const std::string& local_path,
     const std::string& destination_path,
+    const OutputPermissions* output_permissions,
     std::string& err);
+
+OutputPermissions default_output_permissions_from_umask();
+
+OutputPermissions resolve_output_permissions(
+    int config_file_mode,
+    bool config_warn_on_failure,
+    const unsigned int* cli_file_mode,
+    const bool* cli_warn_on_failure);
+
+void emit_output_permissions_warning(
+    const std::string& destination_path,
+    const std::string& warning,
+    bool warn_on_failure);
 
 bool finalize_replaygain_scan(
     ebur128_state* state,
