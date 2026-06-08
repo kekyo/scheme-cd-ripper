@@ -346,6 +346,7 @@ npm install -g screw-up
 ### Build packages
 
 `build_package.sh` runs package builds inside distro-specific podman containers and can schedule the full matrix in one invocation.
+Run `prereq.sh` first to build target-specific Podman images with the apt build dependencies already installed. Reusing these images avoids spending time on `apt-get install` inside every package build container.
 
 Prerequisites:
 
@@ -356,6 +357,9 @@ sudo apt-get install podman qemu-user-static dpkg-dev binutils
 Build examples:
 
 ```bash
+# Prepare prerequisite images
+./prereq.sh
+
 # Ubuntu 24.04 / amd64
 ./build_package.sh --target deb --distro ubuntu --release 24.04 --arch x86_64
 
@@ -375,6 +379,7 @@ Notes:
 - Arch aliases: `x86_64|amd64`, `i686|i386`, `armv7l|armv7|armhf`, `arm64|aarch64`
 - Ubuntu release aliases: `24.04|noble`, `22.04|jammy`
 - Debug build: add `--debug`
+- Rebuild prerequisite images after dependency or base-image changes: `./prereq.sh --force`
 - Outputs: `artifacts/deb/<package>-<version>-<distro>-<release>-<deb-arch>.deb`
 
 Batch build for all predefined combos:

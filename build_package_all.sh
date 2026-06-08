@@ -8,7 +8,7 @@ FORWARDED_ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --refresh-base)
-            echo "Warning: --refresh-base is ignored in the podman-based builder." >&2
+            echo "Warning: --refresh-base is ignored. Run ./prereq.sh --force to rebuild prerequisite images." >&2
             shift
             ;;
         *)
