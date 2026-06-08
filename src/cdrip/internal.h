@@ -494,6 +494,7 @@ struct ReplayGainScanResult {
 struct RipTrackWriteOptions {
     const char* output_path{nullptr};
     const char* display_path{nullptr};
+    const std::map<std::string, std::string>* tag_overrides{nullptr};
     ebur128_state* track_replaygain_state{nullptr};
     ebur128_state* album_replaygain_state{nullptr};
 };
@@ -562,6 +563,7 @@ std::map<std::string, std::string> build_track_vorbis_tags(
     const CdRipCddbEntry* meta,
     const CdRipDiscToc* toc,
     int total_tracks,
+    const std::map<std::string, std::string>* tag_overrides,
     std::string& title_out,
     std::string& track_name_out,
     std::string& safe_title_out);

@@ -144,6 +144,7 @@ bool update_flac_tags(
         entry,
         toc,
         track_total,
+        nullptr,
         title,
         track_name,
         safe_title);

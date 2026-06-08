@@ -205,6 +205,7 @@ bool rip_track_with_options(
         meta,
         toc,
         total_tracks,
+        options ? options->tag_overrides : nullptr,
         title,
         track_name,
         safe_title);

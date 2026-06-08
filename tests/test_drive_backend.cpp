@@ -583,6 +583,7 @@ auto build_tags_for_date = [](
         &entry,
         &toc,
         1,
+        nullptr,
         title,
         track_name,
         safe_title);
@@ -644,6 +645,66 @@ auto test_year_format_tag_falls_back_to_date_when_derivation_is_ambiguous_or_out
         expect_missing(tags, "YEAR", "years above 2100 should not derive YEAR");
         expect_eq("2101.flac", resolve_output_path("{year:n}.flac", tags), "{year:n} should fall back to DATE above range");
     }
+};
+
+auto test_tag_overrides_affect_output_path_and_vorbis_comments = []() {
+    auto state = make_backend_state();
+    FakeBackendScope scope(state);
+
+    const auto temp_dir = std::filesystem::temp_directory_path() / "cdrip-test-drive-backend-tag-overrides";
+    std::filesystem::remove_all(temp_dir);
+    std::filesystem::create_directories(temp_dir);
+    const auto format =
+        (temp_dir / "{artist:n}" / "{albumartist:n}" / "{tracknumber:02d}_{title:n}.flac").string();
+    const auto expected_path =
+        (temp_dir / "The Billy Bob Trio" / "The Billy Bob Trio" / "01_Fake Track 1.flac").string();
+
+    const CdRipSettings settings{
+        format.c_str(),
+        1,
+        RIP_MODES_FAST,
+        false,
+    };
+    const char* err = nullptr;
+    CdRip* rip = open_fake_rip(settings);
+    CdRipDiscToc* toc = cdrip_build_disc_toc(rip, &err);
+    expect_true(toc != nullptr, err ? err : "fake TOC should build for tag override test");
+    release_error(err);
+
+    const auto entry = make_test_entry();
+    const std::map<std::string, std::string> tag_overrides{
+        {"artist", "The Billy Bob Trio"},
+        {"albumartist", "The Billy Bob Trio"},
+    };
+    cdrip::detail::RipTrackWriteOptions options{};
+    options.tag_overrides = &tag_overrides;
+    std::string rip_err;
+    expect_true(
+        cdrip::detail::rip_track_with_options(
+            rip,
+            &toc->tracks[0],
+            &entry,
+            toc,
+            nullptr,
+            static_cast<int>(toc->tracks_count),
+            0.0,
+            0.0,
+            0.0,
+            &options,
+            nullptr,
+            rip_err),
+        rip_err.empty() ? "fake rip with tag overrides should succeed" : rip_err);
+
+    expect_true(std::filesystem::exists(expected_path), "tag overrides should affect the resolved output path");
+    const auto tags = read_vorbis_comments(expected_path);
+    expect_eq("The Billy Bob Trio", tags.at("ARTIST"), "ARTIST should be overridden in Vorbis comments");
+    expect_eq("The Billy Bob Trio", tags.at("ALBUMARTIST"), "ALBUMARTIST should be written from tag overrides");
+    expect_eq("Fake Album", tags.at("ALBUM"), "unrelated tags should remain from metadata");
+
+    cdrip_release_disctoc(toc);
+    cdrip_close(rip, false, &err);
+    release_error(err);
+    std::filesystem::remove_all(temp_dir);
 };
 
 auto test_open_reports_backend_failure = []() {
@@ -933,6 +994,7 @@ int main() {
     test_open_build_toc_rip_and_close_use_swapped_backend();
     test_year_format_tag_is_derived_from_single_valid_date_token();
     test_year_format_tag_falls_back_to_date_when_derivation_is_ambiguous_or_out_of_range();
+    test_tag_overrides_affect_output_path_and_vorbis_comments();
     test_open_reports_backend_failure();
     test_open_releases_drive_when_reader_creation_fails();
     test_build_disc_toc_reports_backend_failure_and_no_audio();

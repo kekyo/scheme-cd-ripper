@@ -173,13 +173,28 @@ std::string derive_year_from_date(
 void apply_derived_year_tag(
     std::map<std::string, std::string>& tags) {
 
+    const auto existing_year_it = tags.find("YEAR");
+    if (existing_year_it != tags.end() && !existing_year_it->second.empty()) return;
     tags.erase("YEAR");
+
     const auto date_it = tags.find("DATE");
     if (date_it == tags.end() || date_it->second.empty()) return;
 
     const std::string year = derive_year_from_date(date_it->second);
     if (!year.empty()) {
         tags["YEAR"] = year;
+    }
+}
+
+void apply_tag_overrides(
+    std::map<std::string, std::string>& tags,
+    const std::map<std::string, std::string>* tag_overrides) {
+
+    if (!tag_overrides) return;
+    for (const auto& [key, value] : *tag_overrides) {
+        if (!key.empty() && !value.empty()) {
+            tags[to_upper(key)] = value;
+        }
     }
 }
 
@@ -246,6 +261,7 @@ std::map<std::string, std::string> build_track_vorbis_tags(
     const CdRipCddbEntry* meta,
     const CdRipDiscToc* toc,
     int total_tracks,
+    const std::map<std::string, std::string>* tag_overrides,
     std::string& title_out,
     std::string& track_name_out,
     std::string& safe_title_out) {
@@ -307,11 +323,18 @@ std::map<std::string, std::string> build_track_vorbis_tags(
         }
     }
 
+    apply_tag_overrides(tags, tag_overrides);
     prune_empty_tags(tags);
     apply_derived_year_tag(tags);
-    title_out = title;
-    track_name_out = track_name;
-    safe_title_out = safe_title;
+
+    const auto title_it = tags.find("TITLE");
+    const std::string final_title =
+        (title_it != tags.end() && !title_it->second.empty()) ? title_it->second : title;
+    const std::string final_track_name = truncate_on_newline(final_title);
+
+    title_out = final_title;
+    track_name_out = final_track_name;
+    safe_title_out = format_safe_string(final_track_name);
     return tags;
 }
 

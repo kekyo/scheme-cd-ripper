@@ -79,10 +79,11 @@ cdrip -d /dev/sr1 -f "{artist:n/title:n}.flac" -r
   対話モードでは、DiscogsとCAAの両方が候補になったときのデフォルト選択にも使われます。
 - `-na`, `--no-aa`: カバーアートのANSI/ASCIIアート表示を無効化する。
 - `-l`, `--logs`: デバッグログを出力する。
+- `--tag`, `--tags <key=value>`: 通常リッピング時にVorbis commentタグを上書きする。複数指定可、`--update`では無視。
 - `-i`, `--input`: cdrip設定ファイルのパス（デフォルト検索: `./cdrip.conf` --> `~/.cdrip.conf`）
 - `-u`, `--update <file|dir> [more ...]`: 埋め込みタグを使用してCDDBから既存のFLACタグを更新（他のオプションは無視）
 
-すべてのコマンドラインオプション（`-u` および `-i` を除く）は、`-i` で指定された設定ファイルの内容を上書きできます。
+対応する設定項目を持つコマンドラインオプション（`-u` および `-i` を除く）は、`-i` で指定された設定ファイルの内容を上書きできます。
 
 ReplayGain が有効な場合、すべてのトラックは一度テンポラリディレクトリへリッピングされます。最終保存先に `.flac` が現れるのは、アルバム全体のリッピング完了後に ReplayGain タグを書き込んでからです。
 
@@ -169,6 +170,20 @@ CDDBやMusicBrainzから情報を得る場合、これらのすべてのタグ�
 
 Note: 心配する必要はありません。Vorbisコメントは通常大文字で記述されますが、この文書では単に小文字を使用しています。
 
+### 手動タグ上書き
+
+CDDB/MusicBrainzの候補選択とマージ後にタグを上書きするには、`--tag key=value`（または`--tags key=value`）を使用します:
+
+```bash
+cdrip --tag artist="The Billy Bob Trio" --tag albumartist="The Billy Bob Trio"
+```
+
+キーは大文字小文字を区別せず、このオプションは複数回指定できます。
+上書きはファイル名フォーマットと埋め込みVorbis commentの両方に反映されます。
+repeat/autoモードを含むコマンド実行全体に適用されるため、無関係なCDを続けて処理する場合は指定しないでください。
+空キーや空値はエラーになります。
+`--tag`は`--update`指定時には無視されます。
+
 ## MusicBrainzとタグについて
 
 - [MusicBrainz](https://musicbrainz.org/) は、構造化されたID、クレジット、ジャンル、リリースメタデータを提供するコミュニティ管理の音楽データベースです。
@@ -247,6 +262,7 @@ cdrip -u album1 album2/track03.flac /path/to/archive
 - MusicBrainzからの再取得（初回以外）: `musicbrainz_release`, `musicbrainz_medium`
 
 CDDB候補の取得はリッピング時と同様の方法で行われます。希望する一致を対話的に選択する必要があります（自動モードを除く）。
+update modeでは`--tag`による上書きは無視されます。
 
 ## 設定ファイルフォーマット
 

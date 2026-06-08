@@ -83,10 +83,11 @@ The following are the options:
   In interactive mode, this also controls the default choice when both Discogs and CAA cover art candidates are available.
 - `-na`, `--no-aa`: Disable cover art ANSI/ASCII art output.
 - `-l`, `--logs`: Print debug logs.
+- `--tag`, `--tags <key=value>`: Override a Vorbis comment tag for normal ripping. Repeatable, ignored by `--update`.
 - `-i`, `--input`: cdrip config file path (default search: `./cdrip.conf` --> `~/.cdrip.conf`)
 - `-u`, `--update <file|dir> [more ...]`: Update existing FLAC tags from CDDB using embedded tags (other options ignored)
 
-All command-line options (except `-u` and `-i`) can override the contents of the config file specified with `-i`.
+Command-line options with config counterparts (except `-u` and `-i`) can override the contents of the config file specified with `-i`.
 
 When ReplayGain is enabled, all tracks are ripped into a temporary directory first. The final `.flac` files do not appear in the destination until the whole album has finished ripping and ReplayGain tags have been written.
 
@@ -174,6 +175,20 @@ When obtaining information from CDDB or MusicBrainz, not all of this tag informa
 
 Note: There's no need to worry. While Vorbis comments are typically written in uppercase, this document simply uses lowercase.
 
+### Manual tag overrides
+
+Use `--tag key=value` (or `--tags key=value`) to override a tag after CDDB/MusicBrainz selection and merging:
+
+```bash
+cdrip --tag artist="The Billy Bob Trio" --tag albumartist="The Billy Bob Trio"
+```
+
+The key is case-insensitive and the option can be specified multiple times.
+Overrides apply to both filename formatting and embedded Vorbis comments.
+They apply to the whole command run, including repeat and auto modes, so avoid using them when processing unrelated discs.
+Empty keys and empty values are rejected.
+`--tag` is ignored when `--update` is used.
+
 ## About MusicBrainz and tags
 
 - [MusicBrainz](https://musicbrainz.org/) is a community-maintained music database that provides structured IDs, credits, genres, and release metadata.
@@ -253,6 +268,7 @@ Requirements: FLAC files must contain these tags (These tags are automatically i
 - Re-fetches from MusicBrainz (not first time): `musicbrainz_release` and `musicbrainz_medium`.
 
 CDDB candidates are fetched the same way as during ripping; you still select the desired match interactively (except auto mode.)
+`--tag` overrides are ignored in update mode.
 
 ## Config file format
 

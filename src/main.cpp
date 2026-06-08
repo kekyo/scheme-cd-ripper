@@ -2799,7 +2799,40 @@ struct Options {
     bool no_recrawl = false;
     bool logs = false;
     std::vector<std::string> update_paths;
+    std::map<std::string, std::string> tag_overrides;
 };
+
+bool parse_tag_override_arg(
+    const std::string& raw,
+    std::string& key_out,
+    std::string& value_out,
+    std::string& err) {
+
+    key_out.clear();
+    value_out.clear();
+    err.clear();
+
+    const size_t eq = raw.find('=');
+    if (eq == std::string::npos) {
+        err = "expected key=value";
+        return false;
+    }
+
+    const std::string key = to_upper_ascii(trim_ws(raw.substr(0, eq)));
+    const std::string value = trim_ws(raw.substr(eq + 1));
+    if (key.empty()) {
+        err = "tag key must not be empty";
+        return false;
+    }
+    if (value.empty()) {
+        err = "tag value must not be empty";
+        return false;
+    }
+
+    key_out = key;
+    value_out = value;
+    return true;
+}
 
 Options parse_args(int argc, char** argv) {
     Options opts;
@@ -2864,6 +2897,20 @@ Options parse_args(int argc, char** argv) {
         } else if (arg == "-n") {
             std::cerr << "Warning: -n is deprecated; use -ne or --no-eject\n";
             opts.no_eject = true;
+        } else if (arg == "--tag" || arg == "--tags") {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: " << arg << " requires key=value\n";
+                std::exit(1);
+            }
+            std::string key;
+            std::string value;
+            std::string tag_err;
+            const std::string raw_tag = argv[++i];
+            if (!parse_tag_override_arg(raw_tag, key, value, tag_err)) {
+                std::cerr << "Error: invalid " << arg << " value \"" << raw_tag << "\": " << tag_err << "\n";
+                std::exit(1);
+            }
+            opts.tag_overrides[key] = value;
         } else if (arg == "-u" || arg == "--update") {
             if (i + 1 < argc) {
                 opts.update_paths.push_back(argv[++i]);
@@ -2872,7 +2919,7 @@ Options parse_args(int argc, char** argv) {
                 std::exit(1);
             }
         } else if (arg == "-?" || arg == "-h" || arg == "--help") {
-            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-g|-ng] [-dc no|always|fallback] [-na] [-i config] [-u file|dir ...]\n";
+            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-g|-ng] [-dc no|always|fallback] [-na] [--tag key=value] [-i config] [-u file|dir ...]\n";
             std::cout << "  -d  / --device: CD device path (default: auto-detect)\n";
             std::cout << "  -f  / --format: FLAC destination path format (default: \"{album:n/medium:n/tracknumber:02d}_{title:n}.flac\")\n";
             std::cout << "  -m  / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disabled any checks)\n";
@@ -2891,6 +2938,7 @@ Options parse_args(int argc, char** argv) {
             std::cout << "  -dc / --discogs: Cover art preference for Discogs: no, always (default), fallback\n";
             std::cout << "  -na / --no-aa: Disable cover art ANSI/ASCII art output\n";
             std::cout << "  -l  / --logs: Print debug logs for MusicBrainz recrawl and selected metadata\n";
+            std::cout << "  --tag / --tags: Override a tag for normal ripping (repeatable, key=value; ignored with -u)\n";
             std::cout << "  -i  / --input: cdrip config file path (default search: ./cdrip.conf --> ~/.cdrip.conf)\n";
             std::cout << "  -u  / --update <file|dir> [more ...]: Update existing FLAC tags from CDDB using embedded tags (other options ignored)\n";
             std::exit(0);
@@ -3313,6 +3361,8 @@ int main(int argc, char** argv) {
     std::cout << "\n\n";
 
     CdRipProgressCallback progress = &RipProgressSpinner::progress_cb;
+    const auto* tag_override_ptr =
+        cli_opts.tag_overrides.empty() ? nullptr : &cli_opts.tag_overrides;
 
     while (true) {
         if (!drive) {
@@ -3438,6 +3488,7 @@ int main(int argc, char** argv) {
                         meta,
                         toc,
                         total_tracks,
+                        tag_override_ptr,
                         title,
                         track_name,
                         safe_title);
@@ -3466,6 +3517,7 @@ int main(int argc, char** argv) {
                     const std::string staged_path_str = staged_path.string();
                     write_options.output_path = staged_path_str.c_str();
                     write_options.display_path = final_path.c_str();
+                    write_options.tag_overrides = tag_override_ptr;
                     write_options.track_replaygain_state = track_replaygain_state.get();
                     write_options.album_replaygain_state = album_replaygain_state.get();
 
@@ -3500,20 +3552,30 @@ int main(int argc, char** argv) {
                         track_replaygain,
                     });
                 } else {
-                    const char* rip_err = nullptr;
+                    cdrip::detail::RipTrackWriteOptions write_options{};
+                    write_options.tag_overrides = tag_override_ptr;
+                    std::string rip_err;
                     RipProgressSpinner rip_spinner{};
                     rip_spinner.activate();
-                    if (!cdrip_rip_track(drive, track, meta, toc, progress, &rip_err, total_tracks, completed_before, total_album_sec, wall_start)) {
+                    if (!cdrip::detail::rip_track_with_options(
+                            drive,
+                            track,
+                            meta,
+                            toc,
+                            progress,
+                            total_tracks,
+                            completed_before,
+                            total_album_sec,
+                            wall_start,
+                            &write_options,
+                            nullptr,
+                            rip_err)) {
                         rip_spinner.finish(false);
                         success = false;
-                        if (rip_err) {
-                            std::cerr << "Rip error: " << view_string(rip_err) << "\n";
-                            cdrip_release_error(rip_err);
-                        }
+                        std::cerr << "Rip error: " << rip_err << "\n";
                         break;
                     }
                     rip_spinner.finish(true);
-                    cdrip_release_error(rip_err);
                 }
                 completed_before += track_secs[idx];
             }
@@ -3530,8 +3592,13 @@ int main(int argc, char** argv) {
                 std::cerr << "ReplayGain error: " << replaygain_err << "\n";
             } else {
                 for (const auto& staged_track : staged_tracks) {
-                    const auto replaygain_tags =
+                    auto replaygain_tags =
                         cdrip::detail::build_replaygain_tags(staged_track.replaygain, album_replaygain);
+                    for (const auto& [key, value] : cli_opts.tag_overrides) {
+                        if (!key.empty() && !value.empty()) {
+                            replaygain_tags[key] = value;
+                        }
+                    }
                     if (!cdrip::detail::update_flac_tags(
                             staged_track.staged_path,
                             toc,
