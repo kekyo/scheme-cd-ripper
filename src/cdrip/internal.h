@@ -139,6 +139,7 @@ static inline std::string trim(const std::string& s) {
 
 static inline void drop_format_only_tags(std::map<std::string, std::string>& tags) {
     tags.erase("MUSICBRAINZ_MEDIUMTITLE_RAW");
+    tags.erase("YEAR");
 }
 
 static inline bool is_replaygain_tag_key(

@@ -43,7 +43,7 @@ test_count_deb_builds() {
     DISTRO_FILTER=''
     RELEASE_FILTER=''
     ARCH_FILTER=''
-    assert_eq "13" "$(count_deb_builds)" "full matrix count"
+    assert_eq "15" "$(count_deb_builds)" "full matrix count"
 
     DISTRO_FILTER="$(normalize_filter_list distro ubuntu)"
     RELEASE_FILTER="$(normalize_filter_list release 24.04)"

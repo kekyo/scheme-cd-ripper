@@ -137,6 +137,7 @@ The following Vorbis comments are inserted:
 |`album`|Album name|CDDB,MusicBrainz|
 |`genre`|Genre|CDDB,MusicBrainz|
 |`date`|Date (Non-formal format)|CDDB,MusicBrainz|
+|`year`|Year derived from `date` for filename formatting only|internal|
 |`tracknumber`|Track number|internal|
 |`tracktotal`|Number of tracks per this disc|internal|
 |`albumartist`|Album artist|MusicBrainz|
@@ -221,6 +222,10 @@ Below are the details of this format syntax:
 - Numbers can have leading zeros interpolated using format specifiers like `:02d`.
   - This resembles C language `printf` format specifiers, but only this format is supported.
   - ex: `“{tracknumber:02d}.flac”` --> `“04.flac”`
+- The `year` key is derived from `date` for filename formatting only.
+  It splits `date` into ASCII alphanumeric tokens and uses the only 4-digit token in the range 1900-2100.
+  If there are no candidates or multiple candidates, `{year}` falls back to `date`.
+  Use `{year:n}` when `date` may contain path separators, such as `1999/2000`.
 
 Additionally, it includes the following features:
 

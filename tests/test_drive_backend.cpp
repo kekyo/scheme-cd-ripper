@@ -49,6 +49,18 @@ auto expect_size = [](
     }
 };
 
+auto expect_missing = [](
+    const std::map<std::string, std::string>& tags,
+    const std::string& key,
+    const std::string& message) {
+
+    if (tags.find(key) != tags.end()) {
+        std::cerr << "assert_missing failed: " << message << "\n";
+        std::cerr << "  key: " << key << "\n";
+        std::exit(1);
+    }
+};
+
 auto read_vorbis_comments = [](
     const std::string& path) {
 
@@ -518,6 +530,7 @@ auto test_open_build_toc_rip_and_close_use_swapped_backend = []() {
     expect_eq("Fake Album", tags.at("ALBUM"), "ripped FLAC should contain album tags");
     expect_eq("Fake Track 1", tags.at("TITLE"), "ripped FLAC should contain track tags");
     expect_eq("1", tags.at("TRACKNUMBER"), "ripped FLAC should preserve the audio track number");
+    expect_missing(tags, "YEAR", "ripped FLAC should not persist the format-only YEAR tag");
     expect_size(1, static_cast<size_t>(state.seek_calls), "rip should seek via the fake reader");
     expect_true(state.last_seek_sector == 0, "rip should seek to the start of the selected track");
     expect_size(150, static_cast<size_t>(state.read_calls), "rip should read the expected number of fake sectors");
@@ -531,6 +544,106 @@ auto test_open_build_toc_rip_and_close_use_swapped_backend = []() {
 
     cdrip_release_disctoc(toc);
     std::filesystem::remove_all(temp_dir);
+};
+
+auto build_tags_for_date = [](
+    const std::string& date) {
+
+    CdRipTrackInfo track{1, 0, 149, 1};
+    CdRipDiscToc toc{};
+    toc.cddb_discid = "feedbeef";
+    toc.tracks = &track;
+    toc.tracks_count = 1;
+    toc.leadout_sector = 150;
+    toc.length_seconds = 2;
+
+    CdRipTagKV album_tags[] = {
+        CdRipTagKV{"ARTIST", "Fake Artist"},
+        CdRipTagKV{"ALBUM", "Fake Album"},
+        CdRipTagKV{"DATE", date.c_str()},
+    };
+    CdRipTagKV track_tags[] = {
+        CdRipTagKV{"TITLE", "Fake Track"},
+    };
+    CdRipTrackTags tracks[] = {
+        CdRipTrackTags{track_tags, 1},
+    };
+    CdRipCddbEntry entry{};
+    entry.cddb_discid = "feedbeef";
+    entry.album_tags = album_tags;
+    entry.album_tags_count = sizeof(album_tags) / sizeof(album_tags[0]);
+    entry.tracks = tracks;
+    entry.tracks_count = sizeof(tracks) / sizeof(tracks[0]);
+
+    std::string title;
+    std::string track_name;
+    std::string safe_title;
+    return cdrip::detail::build_track_vorbis_tags(
+        &track,
+        &entry,
+        &toc,
+        1,
+        title,
+        track_name,
+        safe_title);
+};
+
+auto resolve_output_path = [](
+    const std::string& format,
+    const std::map<std::string, std::string>& tags) {
+
+    std::string path;
+    std::string err;
+    expect_true(
+        cdrip::detail::resolve_track_output_path(format, tags, path, err),
+        err.empty() ? "output path should resolve" : err);
+    return path;
+};
+
+auto test_year_format_tag_is_derived_from_single_valid_date_token = []() {
+    const std::vector<std::string> dates = {
+        "2026",
+        "2026-05",
+        "2026-05-24",
+        "05/2026",
+        "13/2026",
+        "2026/05",
+        "05-2026",
+        "2026/05/24",
+        "May 2026",
+        "20th Anniversary 2026",
+        "2026 remaster",
+        "ca. 2026",
+    };
+
+    for (const auto& date : dates) {
+        const auto tags = build_tags_for_date(date);
+        expect_eq("2026", tags.at("YEAR"), "single valid year token should derive YEAR from DATE: " + date);
+        expect_eq("2026.flac", resolve_output_path("{year}.flac", tags), "{year} should use the derived year: " + date);
+    }
+};
+
+auto test_year_format_tag_falls_back_to_date_when_derivation_is_ambiguous_or_out_of_range = []() {
+    {
+        const auto tags = build_tags_for_date("1999/2000");
+        expect_missing(tags, "YEAR", "multiple valid year tokens should not derive YEAR");
+        expect_eq(
+            "1999_2000.flac",
+            resolve_output_path("{year:n}.flac", tags),
+            "{year:n} should safely format DATE fallback when YEAR is ambiguous");
+    }
+
+    {
+        const auto tags = build_tags_for_date("1899");
+        expect_missing(tags, "YEAR", "years below 1900 should not derive YEAR");
+        expect_eq("1899.flac", resolve_output_path("{year:n}.flac", tags), "{year:n} should fall back to DATE below range");
+    }
+
+    {
+        const auto tags = build_tags_for_date("2101");
+        expect_missing(tags, "YEAR", "years above 2100 should not derive YEAR");
+        expect_eq("2101.flac", resolve_output_path("{year:n}.flac", tags), "{year:n} should fall back to DATE above range");
+    }
 };
 
 auto test_open_reports_backend_failure = []() {
@@ -818,6 +931,8 @@ auto test_rip_track_emits_progress_updates = []() {
 int main() {
     test_detect_cd_drives_uses_swapped_backend();
     test_open_build_toc_rip_and_close_use_swapped_backend();
+    test_year_format_tag_is_derived_from_single_valid_date_token();
+    test_year_format_tag_falls_back_to_date_when_derivation_is_ambiguous_or_out_of_range();
     test_open_reports_backend_failure();
     test_open_releases_drive_when_reader_creation_fails();
     test_build_disc_toc_reports_backend_failure_and_no_audio();

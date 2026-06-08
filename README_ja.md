@@ -132,6 +132,7 @@ Select match [0-15] (comma/space separated, default 1): 3,12
 |`album`|アルバム名|CDDB,MusicBrainz|
 |`genre`|ジャンル|CDDB,MusicBrainz|
 |`date`|日付（決められていないフォーマット）|CDDB,MusicBrainz|
+|`year`|`date`から派生するファイル名フォーマット専用の年|internal|
 |`tracknumber`|トラック番号|internal|
 |`tracktotal`|CD辺りのトラック数|internal|
 |`albumartist`|アルバムアーティスト|MusicBrainz|
@@ -215,6 +216,10 @@ MusicBrainzから情報を取得した場合は、追加でカバーアート画
 - 数値は、 `:02d` のような書式指定で先頭ゼロを補間できます。
   - これはC言語の`printf`書式指定と似ていますが、サポートしている指定はこの形式のみです。
   - 例: `"{tracknumber:02d}.flac"` --> `"04.flac"`
+- `year`キーは、ファイル名フォーマット専用として`date`から派生します。
+  `date`をASCII英数字の連続要素に分割し、1900から2100の範囲にある4桁の要素が1つだけ存在する場合に、その値を使用します。
+  候補が無い場合や複数ある場合、`{year}`は`date`にフォールバックします。
+  `1999/2000`のように`date`にパス区切りが含まれる可能性がある場合は、`{year:n}`を使用してください。
 
 その他に、以下のような機能があります:
 
