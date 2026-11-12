@@ -98,6 +98,37 @@ Additionally, when ripping CDs from the same series, using the `-ft` option to n
 
 TIPS: Some hardware media players malfunction when the compression level is set to 6 or higher. Therefore, the default for Scheme CD ripper is set to 5.
 
+### Read offsets and AccurateRip verification
+
+Use `--read-offset` to correct a drive's read position. The unit is one stereo sample frame; positive values read later audio. The default is zero. Find the value for your model in the [official AccurateRip offset list](https://www.accuraterip.com/driveoffsets.htm). Offsets are not configured automatically.
+
+For example, for a drive with a +6 correction offset:
+
+```bash
+cdrip --read-offset 6 --accuraterip --no-eject
+```
+
+Correction preserves each track's length. Audio is read from adjacent audio tracks when needed. Samples beyond disc edges or data-track boundaries are filled with silence. FLAC tags `READ_OFFSET` and `READ_OFFSET_PADDED_SAMPLES` record the correction and the number of padded sample frames. ReplayGain and AccurateRip also use the corrected audio.
+
+`--accuraterip` compares v1/v2 checksums calculated during ripping with the AccurateRip database. It supports ordinary audio CDs; discs containing data tracks are unsupported. Results are displayed for each track:
+
+| Result | Meaning |
+|---|---|
+| `match` | Matches the database. Also shows the matching version and confidence (submission count). |
+| `mismatch` | The disc is registered, but no stored checksum matches this audio. |
+| `not in database` | The disc is not registered. |
+| `network error` | The lookup failed due to a communication error. |
+| `invalid database response` | The response could not be used for verification. |
+| `unsupported disc layout` | The disc layout is unsupported. |
+
+Verification results do not delete FLAC files or change the exit code. Files are saved even when verification does not match, so check the reported results. The `best` mode checks drive reads and can be selected independently of AccurateRip verification.
+
+### Terminal cover art
+
+Select the preview format with `--cover-art auto|kitty|ascii|none`. The default, `auto`, uses Kitty graphics when `TERM=xterm-kitty`, and ANSI/ASCII otherwise. `kitty` selects Kitty graphics, `ascii` selects ANSI/ASCII, and `none` disables previews.
+
+Inside tmux or screen, previews fall back to ANSI/ASCII. No images are printed when standard output is redirected to a file. The existing `--no-aa` option disables terminal cover previews in all formats.
+
 ## Inserting CDDB Tags
 
 You can automatically retrieve track information from CDDB servers or MusicBrainz to automatically apply track names or add Vorbis comments (similar to ID3 tags in FLAC).

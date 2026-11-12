@@ -93,6 +93,37 @@ TIPS: MusicBrainzタグ付けで大量のCDを連続してインポートした�
 
 TIPS: いくつかのハードウェアメディアプレーヤーでは、圧縮レベルを6以上にすると誤動作を起こします。したがって、Scheme CD ripperのデフォルトは5となっています。
 
+### 読み取りオフセットとAccurateRip照合
+
+ドライブの読み取り位置のずれは`--read-offset`で補正できます。値の単位は左右1組のサンプルで、正の値は後方の音声を読みます。初期値は0です。使用する機種の値を[AccurateRipの公式一覧](https://www.accuraterip.com/driveoffsets.htm)で確認してください。値は自動設定されません。
+
+例えば、補正値が+6のドライブでは次のように指定します。
+
+```bash
+cdrip --read-offset 6 --accuraterip --no-eject
+```
+
+補正しても各トラックの長さは変わりません。隣接する音声トラックから必要な分を読み足し、ディスク端やデータトラックとの境界を越える部分は無音で埋めます。補正値と無音で埋めたサンプル数は、FLACの`READ_OFFSET`と`READ_OFFSET_PADDED_SAMPLES`タグに記録します。ReplayGainとAccurateRipにも補正後の音声を使用します。
+
+`--accuraterip`は、リッピング中に計算したv1/v2チェックサムをAccurateRipデータベースと比較します。通常の音楽CDが対象で、データトラックを含むCDは未対応です。トラックごとに次の結果を表示します。
+
+| 表示 | 意味 |
+|---|---|
+| `match` | データベースの値と一致。照合方式と登録件数を表すconfidenceも表示します。 |
+| `mismatch` | 登録はありますが、今回の音声と一致する値がありません。 |
+| `not in database` | CDが未登録です。 |
+| `network error` | 通信に失敗しました。 |
+| `invalid database response` | 応答が不正で照合できませんでした。 |
+| `unsupported disc layout` | 未対応のディスク構成です。 |
+
+照合結果によってFLACを削除したり、終了コードを変更したりはしません。一致しなかった場合も保存されるため、表示された結果を確認してください。`best`モードはドライブの読み取りを検査する設定で、AccurateRip照合とは別に指定できます。
+
+### 端末でのカバーアート表示
+
+`--cover-art auto|kitty|ascii|none`で表示方式を選べます。初期値の`auto`は`TERM=xterm-kitty`の端末でKitty画像表示を使い、それ以外ではANSI/ASCII表示を使います。`kitty`はKitty方式、`ascii`はANSI/ASCII表示、`none`は非表示です。
+
+tmuxやscreen経由ではANSI/ASCII表示に戻ります。標準出力をファイルへリダイレクトした場合は画像を表示しません。既存の`--no-aa`も方式にかかわらずカバーアートの端末表示を無効にします。
+
 ## CDDBタグの挿入
 
 CDDBサーバー、またはMusicBrainzから楽曲の情報を自動的に取得して、トラック名を自動的に適用したり、
