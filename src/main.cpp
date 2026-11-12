@@ -2817,6 +2817,7 @@ MediaWaitResult wait_for_device_media_state(
 
 struct Options {
     int read_offset{0};
+    bool accuraterip{false};
     std::optional<std::string> device; // empty = auto-detect
     std::optional<std::string> format;
     std::optional<int> compression_level;
@@ -2932,6 +2933,8 @@ Options parse_args(int argc, char** argv) {
             opts.replaygain = false;
         } else if ((arg == "-dc" || arg == "--discogs") && i + 1 < argc) {
             opts.discogs = argv[++i];
+        } else if (arg == "--accuraterip") {
+            opts.accuraterip = true;
         } else if (arg == "--read-offset") {
             try {
                 if (i + 1 >= argc) throw std::invalid_argument("missing value");
@@ -2999,6 +3002,7 @@ Options parse_args(int argc, char** argv) {
             }
         } else if (arg == "-?" || arg == "-h" || arg == "--help") {
             std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-g|-ng] [-dc no|always|fallback] [-na] [--permissions ugo] [--permission-warnings|--no-permission-warnings] [--tag key=value] [-i config] [-u file|dir ...]\n";
+            std::cout << "  --accuraterip: Compare corrected audio with AccurateRip v1/v2 (audio-only discs)\n";
             std::cout << "  --read-offset samples: Signed stereo sample correction (default: 0); disc/data edges are zero-filled\n";
             std::cout << "  --cover-art auto|kitty|ascii|none: Terminal cover preview (default: auto)\n";
             std::cout << "  -d  / --device: CD device path (default: auto-detect)\n";
@@ -3547,6 +3551,11 @@ int main(int argc, char** argv) {
             total_album_sec += sec;
         }
 
+        cdrip::detail::AccurateRipDatabase ar_database{};
+        if (cli_opts.accuraterip) {
+            std::cout << "Looking up AccurateRip...\n";
+            ar_database = cdrip::detail::accuraterip_lookup(*toc);
+        }
         bool success = true;
         double completed_before = 0.0;
         int total_tracks = static_cast<int>(audio_tracks.size());
@@ -3576,6 +3585,7 @@ int main(int argc, char** argv) {
         if (success) {
             for (size_t idx = 0; idx < audio_tracks.size(); ++idx) {
                 const auto* track = audio_tracks[idx];
+                cdrip::detail::AccurateRipChecksum ar_checksum{};
                 if (replaygain) {
                     std::string title;
                     std::string track_name;
@@ -3612,6 +3622,7 @@ int main(int argc, char** argv) {
                     }
 
                     cdrip::detail::RipTrackWriteOptions write_options{};
+                    write_options.accuraterip_result = cli_opts.accuraterip ? &ar_checksum : nullptr;
                     const std::string staged_path_str = staged_path.string();
                     write_options.output_path = staged_path_str.c_str();
                     write_options.display_path = final_path.c_str();
@@ -3652,6 +3663,7 @@ int main(int argc, char** argv) {
                     });
                 } else {
                     cdrip::detail::RipTrackWriteOptions write_options{};
+                    write_options.accuraterip_result = cli_opts.accuraterip ? &ar_checksum : nullptr;
                     write_options.tag_overrides = tag_override_ptr;
                     write_options.output_permissions = &output_permissions;
                     std::string rip_err;
@@ -3676,6 +3688,10 @@ int main(int argc, char** argv) {
                         break;
                     }
                     rip_spinner.finish(true);
+                }
+                if (cli_opts.accuraterip) {
+                    std::cout << "AccurateRip track " << track->number << ": "
+                              << cdrip::detail::accuraterip_report(ar_database, idx, ar_checksum) << "\n";
                 }
                 completed_before += track_secs[idx];
             }

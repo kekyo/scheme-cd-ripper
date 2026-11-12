@@ -116,6 +116,7 @@ set(CDRIP_SOURCES
     src/cdrip/drive_backend.cpp
     src/cdrip/disc_toc.cpp
     src/cdrip/rip.cpp
+    src/cdrip/accuraterip.cpp
     src/cdrip/error.cpp
     src/cdrip/cover_art.cpp
     src/cdrip/replaygain.cpp
@@ -227,3 +228,7 @@ target_link_directories(cdrip_test_rip_progress_display PRIVATE ${COMMON_LIB_DIR
 target_compile_options(cdrip_test_rip_progress_display PRIVATE ${COMMON_CFLAGS} ${CHAFA_CFLAGS_OTHER})
 target_link_libraries(cdrip_test_rip_progress_display PRIVATE cdrip_static ${CHAFA_LIBRARIES})
 add_dependencies(cdrip_test_rip_progress_display version_header)
+
+add_executable(cdrip_test_accuraterip tests/test_accuraterip.cpp)
+target_link_libraries(cdrip_test_accuraterip PRIVATE cdrip_static)
+target_compile_options(cdrip_test_accuraterip PRIVATE ${COMMON_CFLAGS})

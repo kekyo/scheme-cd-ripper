@@ -127,6 +127,7 @@ CdRipDiscToc* cdrip_build_disc_toc(
             return nullptr;
         }
         if (!info.is_audio) {
+            toc->has_data_tracks = true;
             continue;
         }
         info.number = static_cast<int>(audio_tracks.size()) + 1;

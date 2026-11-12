@@ -220,6 +220,8 @@ typedef struct CdRipTrackInfo {
 
 /** Disc TOC information. */
 typedef struct CdRipDiscToc {
+    /** True when the original disc includes data tracks. */
+    bool has_data_tracks;
     /** CDDB disc ID (hex). */
     const char* cddb_discid;
     /** MusicBrainz disc ID (base64 variant). */

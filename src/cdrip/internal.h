@@ -24,6 +24,7 @@
 #include <FLAC/metadata.h>
 
 #include "cdrip/cdrip.h"
+#include "accuraterip.h"
 
 namespace cdrip::detail {
 struct BackendDetectedDrive;
@@ -499,6 +500,7 @@ struct OutputPermissions {
 };
 
 struct RipTrackWriteOptions {
+    AccurateRipChecksum* accuraterip_result{nullptr};
     const char* output_path{nullptr};
     const char* display_path{nullptr};
     const std::map<std::string, std::string>* tag_overrides{nullptr};

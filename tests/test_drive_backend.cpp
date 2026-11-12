@@ -1387,6 +1387,8 @@ static void test_read_offsets() {
         cdrip::detail::RipTrackWriteOptions options{};
         options.output_path = path.c_str();
         options.apply_output_permissions = false;
+        cdrip::detail::AccurateRipChecksum checksum{};
+        options.accuraterip_result = &checksum;
         std::string err;
         expect_true(cdrip::detail::rip_track_with_options(rip, &toc->tracks[track_index], &entry, toc,
             nullptr, 2, 0, 0, 0, &options, nullptr, err), err);
@@ -1394,18 +1396,31 @@ static void test_read_offsets() {
         expect_true(std::system(("flac -d -f -s --force-raw-format --endian=little --sign=signed -o " + raw + " " + path).c_str()) == 0,
             "decode corrected FLAC");
         std::ifstream input(raw, std::ios::binary);
+        uint32_t expected_v1 = 0, expected_v2 = 0;
         for (int frame = 0; frame < frames; ++frame) {
             const long source = static_cast<long>(start) + frame + offset;
+            uint32_t packed = 0;
             for (int channel = 0; channel < 2; ++channel) {
                 unsigned char bytes[2]{};
                 expect_true(static_cast<bool>(input.read(reinterpret_cast<char*>(bytes), 2)), "track length preserved");
                 const auto actual = static_cast<int16_t>(bytes[0] | (bytes[1] << 8));
                 const auto expected = source >= 0 && source < limit
                     ? state.sectors[source / 588][(source % 588) * 2 + channel] : 0;
+                packed |= static_cast<uint32_t>(static_cast<uint16_t>(actual)) << (16 * channel);
                 expect_true(actual == expected, "corrected audio and data-boundary silence");
             }
+            const auto position = static_cast<uint64_t>(frame + 1);
+            if ((track_index != 0 || position >= 2940) &&
+                (track_index != 1 || position <= static_cast<uint64_t>(frames - 2940))) {
+                const uint64_t product = packed * position;
+                expected_v1 += static_cast<uint32_t>(product);
+                expected_v2 += static_cast<uint32_t>(product) + static_cast<uint32_t>(product >> 32);
+            }
         }
+        expect_true(checksum.v1 == expected_v1 && checksum.v2 == expected_v2, "checksum describes decoded corrected PCM");
         expect_true(input.peek() == EOF, "no extra audio frames");
+        expect_true(cdrip::detail::update_flac_tags(path, toc, track_index + 1, &entry,
+            {}, false, err), "ReplayGain metadata rewrite");
         const auto tags = read_vorbis_comments(path);
         expect_eq(std::to_string(offset), tags.at("READ_OFFSET"), "offset recorded");
         std::filesystem::remove(path);

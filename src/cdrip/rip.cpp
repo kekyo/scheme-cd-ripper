@@ -308,6 +308,8 @@ bool rip_track_with_options(
     std::string& err) {
 
     err.clear();
+    AccurateRipChecksum checksum{};
+    if (options && options->accuraterip_result) *options->accuraterip_result = {};
     if (replaygain_result) {
         *replaygain_result = ReplayGainScanResult{};
     }
@@ -520,6 +522,10 @@ bool rip_track_with_options(
                 }
             }
 
+            if (options && options->accuraterip_result) {
+                accuraterip_update(checksum, buffer, kSamplesPerSector, frame_count,
+                    track->number == 1, track->number == static_cast<int>(toc->tracks_count));
+            }
             const int base = c * kSamplesPerSector;
             for (int i = 0; i < kSamplesPerSector; ++i) {
                 left[base + i] = buffer[i * 2];
@@ -612,6 +618,7 @@ bool rip_track_with_options(
         return false;
     }
     remove_local_file_quietly(temp_path);
+    if (options && options->accuraterip_result) *options->accuraterip_result = checksum;
     return true;
 }
 
