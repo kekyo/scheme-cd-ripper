@@ -1367,7 +1367,58 @@ static void test_final_flush_failure() {
     }
 }
 
+static void test_read_offsets() {
+    for (int layout : {0, 1, 2}) {
+    for (int offset : {0, 1, -1, 589, -589, 88201, -88201}) {
+        auto state = make_backend_state();
+        if (layout != 0) state.tracks = {CdRipTrackInfo{1, 0, 149, 1}, CdRipTrackInfo{2, 150, 309, 1}};
+        const int track_index = layout == 2 ? 1 : 0;
+        const int frames = layout == 2 ? 160 * 588 : 150 * 588;
+        const int start = layout == 2 ? 150 * 588 : 0;
+        const int limit = layout == 0 ? 150 * 588 : 310 * 588;
+        FakeBackendScope scope(state);
+        const CdRipSettings settings{"", 1, RIP_MODES_FAST, false};
+        auto* rip = open_fake_rip(settings);
+        cdrip_set_read_offset(rip, offset);
+        const char* error = nullptr;
+        auto* toc = cdrip_build_disc_toc(rip, &error);
+        const auto entry = make_test_entry();
+        const auto path = (std::filesystem::temp_directory_path() / "cdrip-offset-test.flac").string();
+        cdrip::detail::RipTrackWriteOptions options{};
+        options.output_path = path.c_str();
+        options.apply_output_permissions = false;
+        std::string err;
+        expect_true(cdrip::detail::rip_track_with_options(rip, &toc->tracks[track_index], &entry, toc,
+            nullptr, 2, 0, 0, 0, &options, nullptr, err), err);
+        const auto raw = path + ".raw";
+        expect_true(std::system(("flac -d -f -s --force-raw-format --endian=little --sign=signed -o " + raw + " " + path).c_str()) == 0,
+            "decode corrected FLAC");
+        std::ifstream input(raw, std::ios::binary);
+        for (int frame = 0; frame < frames; ++frame) {
+            const long source = static_cast<long>(start) + frame + offset;
+            for (int channel = 0; channel < 2; ++channel) {
+                unsigned char bytes[2]{};
+                expect_true(static_cast<bool>(input.read(reinterpret_cast<char*>(bytes), 2)), "track length preserved");
+                const auto actual = static_cast<int16_t>(bytes[0] | (bytes[1] << 8));
+                const auto expected = source >= 0 && source < limit
+                    ? state.sectors[source / 588][(source % 588) * 2 + channel] : 0;
+                expect_true(actual == expected, "corrected audio and data-boundary silence");
+            }
+        }
+        expect_true(input.peek() == EOF, "no extra audio frames");
+        const auto tags = read_vorbis_comments(path);
+        expect_eq(std::to_string(offset), tags.at("READ_OFFSET"), "offset recorded");
+        std::filesystem::remove(path);
+        std::filesystem::remove(raw);
+        cdrip_release_disctoc(toc);
+        cdrip_close(rip, false, &error);
+        release_error(error);
+    }
+    }
+}
+
 int main() {
+    test_read_offsets();
     test_final_flush_failure();
     test_detect_cd_drives_uses_swapped_backend();
     test_open_build_toc_rip_and_close_use_swapped_backend();

@@ -2816,6 +2816,7 @@ MediaWaitResult wait_for_device_media_state(
 }  // namespace
 
 struct Options {
+    int read_offset{0};
     std::optional<std::string> device; // empty = auto-detect
     std::optional<std::string> format;
     std::optional<int> compression_level;
@@ -2931,6 +2932,16 @@ Options parse_args(int argc, char** argv) {
             opts.replaygain = false;
         } else if ((arg == "-dc" || arg == "--discogs") && i + 1 < argc) {
             opts.discogs = argv[++i];
+        } else if (arg == "--read-offset") {
+            try {
+                if (i + 1 >= argc) throw std::invalid_argument("missing value");
+                const std::string value = argv[++i];
+                size_t used = 0;
+                opts.read_offset = std::stoi(value, &used);
+                if (used != value.size()) throw std::invalid_argument("trailing characters");
+            } catch (...) {
+                std::cerr << "Error: --read-offset requires a signed integer\n"; std::exit(1);
+            }
         } else if (arg == "--cover-art") {
             if (i + 1 >= argc) { std::cerr << "Error: --cover-art requires auto|kitty|ascii|none\n"; std::exit(1); }
             cover_art_mode = argv[++i];
@@ -2988,6 +2999,7 @@ Options parse_args(int argc, char** argv) {
             }
         } else if (arg == "-?" || arg == "-h" || arg == "--help") {
             std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-g|-ng] [-dc no|always|fallback] [-na] [--permissions ugo] [--permission-warnings|--no-permission-warnings] [--tag key=value] [-i config] [-u file|dir ...]\n";
+            std::cout << "  --read-offset samples: Signed stereo sample correction (default: 0); disc/data edges are zero-filled\n";
             std::cout << "  --cover-art auto|kitty|ascii|none: Terminal cover preview (default: auto)\n";
             std::cout << "  -d  / --device: CD device path (default: auto-detect)\n";
             std::cout << "  -f  / --format: FLAC destination path format (default: \"{album:n/medium:n/tracknumber:02d}_{title:n}.flac\")\n";
@@ -3454,6 +3466,7 @@ int main(int argc, char** argv) {
             std::cerr << "Drive not available\n";
             return 1;
         }
+        cdrip_set_read_offset(drive, cli_opts.read_offset);
         const char* toc_err = nullptr;
         CdRipDiscToc* toc = cdrip_build_disc_toc(drive, &toc_err);
         if (!toc || !toc->tracks || toc->tracks_count == 0) {

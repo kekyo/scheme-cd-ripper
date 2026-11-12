@@ -383,7 +383,28 @@ bool rip_track_with_options(
     encoder.set_total_samples_estimate(
         static_cast<uint64_t>(sectors) * kSamplesPerSector);
 
+    // Only extend into adjacent audio tracks. Filtered-out data tracks leave gaps.
+    long audio_start = track->start;
+    long audio_end = track->end;
+    for (size_t i = toc->tracks_count; i > 0; --i) {
+        const auto& adjacent = toc->tracks[i - 1];
+        if (adjacent.is_audio && adjacent.end + 1 == audio_start) audio_start = adjacent.start;
+    }
+    for (size_t i = 0; i < toc->tracks_count; ++i) {
+        const auto& adjacent = toc->tracks[i];
+        if (adjacent.is_audio && adjacent.start == audio_end + 1) audio_end = adjacent.end;
+    }
+    const int64_t source_start = static_cast<int64_t>(track->start) * kSamplesPerSector + rip->read_offset;
+    const int64_t frame_count = static_cast<int64_t>(sectors) * kSamplesPerSector;
+    const int64_t audio_first = static_cast<int64_t>(audio_start) * kSamplesPerSector;
+    const int64_t audio_limit = (static_cast<int64_t>(audio_end) + 1) * kSamplesPerSector;
+    const int64_t valid_first = std::max(source_start, audio_first);
+    const int64_t valid_limit = std::min(source_start + frame_count, audio_limit);
+    const int64_t padded = frame_count - std::max<int64_t>(0, valid_limit - valid_first);
+
     std::map<std::string, std::string> vorbis_tags = tags;
+    vorbis_tags["READ_OFFSET"] = std::to_string(rip->read_offset);
+    vorbis_tags["READ_OFFSET_PADDED_SAMPLES"] = std::to_string(padded);
     drop_format_only_tags(vorbis_tags);
     FLAC__StreamMetadata* vorbis = build_vorbis_comments(vorbis_tags);
     FLAC__StreamMetadata* picture = nullptr;
@@ -420,7 +441,8 @@ bool rip_track_with_options(
         return false;
     }
 
-    if (!backend.seek_reader(rip->reader, track->start, backend_err)) {
+    if (valid_first < valid_limit &&
+        !backend.seek_reader(rip->reader, static_cast<long>(valid_first / kSamplesPerSector), backend_err)) {
         err = backend_err;
         encoder.finish();
         cleanup_encoder_state();
@@ -438,6 +460,30 @@ bool rip_track_with_options(
             .count() / 1000.0
         - wall_start_sec;
 
+    long cached_sector = -1;
+    const int16_t* cached_audio = nullptr;
+    int16_t corrected[kSamplesPerSector * kChannels]{};
+    auto read_corrected = [&](int64_t position) {
+        for (int i = 0; i < kSamplesPerSector; ++i) {
+            const int64_t source = position + i;
+            if (source < audio_first || source >= audio_limit) {
+                corrected[i * 2] = corrected[i * 2 + 1] = 0;
+                continue;
+            }
+            const long sector = static_cast<long>(source / kSamplesPerSector);
+            if (sector != cached_sector) {
+                if (!backend.read_sector(rip->reader, cached_audio, backend_err) || !cached_audio) {
+                    backend_err = "source sector " + std::to_string(sector) + ": " + backend_err;
+                    return false;
+                }
+                cached_sector = sector;
+            }
+            const int index = static_cast<int>(source % kSamplesPerSector) * 2;
+            corrected[i * 2] = cached_audio[index];
+            corrected[i * 2 + 1] = cached_audio[index + 1];
+        }
+        return true;
+    };
     long processed = 0;
     while (processed < sectors) {
         const int chunk = static_cast<int>(
@@ -445,8 +491,8 @@ bool rip_track_with_options(
         int read_sectors = 0;
 
         for (int c = 0; c < chunk; ++c) {
-            const int16_t* buffer = nullptr;
-            if (!backend.read_sector(rip->reader, buffer, backend_err)) {
+            const int16_t* buffer = corrected;
+            if (!read_corrected(source_start + (processed + c) * kSamplesPerSector)) {
                 err = "Read error on track " + std::to_string(track->number) +
                     " at sector " + std::to_string(track->start + processed + c) + ": " + backend_err;
                 encoder.finish();

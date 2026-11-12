@@ -186,6 +186,14 @@ CdRip* cdrip_open(
     const CdRipSettings* settings,
     const char** error /* nullable */);
 /**
+ * Set the drive read correction offset (default: zero).
+ * @param rip Open drive handle; null is ignored.
+ * @param samples Signed stereo sample frames. Positive values read later audio.
+ * @remarks Unreadable disc/data boundaries are zero-filled; track length is preserved.
+ */
+void cdrip_set_read_offset(CdRip* rip, int samples);
+
+/**
  * Close Scheme CD Ripper and optionally eject the disc.
  * @param cdrip Ripper handle.
  * @param will_eject True to eject the disc.
