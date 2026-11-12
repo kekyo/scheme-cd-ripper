@@ -230,6 +230,11 @@ auto test_rip_progress_callback_writes_spinner_line_and_completion_newline = [](
 }  // namespace
 
 int main() {
+    expect_true(select_cover_pixel_mode("auto", true, "xterm-kitty", false) == CHAFA_PIXEL_MODE_KITTY, "Kitty auto detection");
+    expect_true(select_cover_pixel_mode("auto", true, "xterm-kitty", true) == CHAFA_PIXEL_MODE_SYMBOLS, "multiplexer fallback");
+    expect_true(select_cover_pixel_mode("kitty", false, "xterm-kitty", false) == CHAFA_PIXEL_MODE_SYMBOLS, "redirect fallback");
+    expect_true(select_cover_pixel_mode("ascii", true, "xterm-kitty", false) == CHAFA_PIXEL_MODE_SYMBOLS, "explicit ASCII");
+
     test_should_offer_cover_art_choice_only_when_both_sources_exist();
     test_default_cover_art_choice_matches_discogs_mode();
     test_build_cover_art_choice_header_centers_labels();

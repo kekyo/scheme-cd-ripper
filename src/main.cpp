@@ -948,7 +948,18 @@ std::string center_ascii_label(
         std::string(static_cast<size_t>(right_pad), ' ');
 }
 
+static std::string cover_art_mode = "auto";
+
+static ChafaPixelMode select_cover_pixel_mode(
+    const std::string& mode, bool tty, const std::string& term, bool multiplexed) {
+    if (!tty || multiplexed || mode == "ascii" || mode == "none") return CHAFA_PIXEL_MODE_SYMBOLS;
+    return (mode == "kitty" || term == "xterm-kitty")
+        ? CHAFA_PIXEL_MODE_KITTY : CHAFA_PIXEL_MODE_SYMBOLS;
+}
+
 struct RenderedCoverArtAscii {
+    std::string graphics{};
+    int display_rows{0};
     std::vector<std::string> lines{};
     int display_columns{0};
 };
@@ -1175,7 +1186,13 @@ bool render_rgba_ascii(
     if (canvas_cols <= 0) canvas_cols = 1;
     if (canvas_rows <= 0) canvas_rows = 1;
 
+    const char* term = std::getenv("TERM");
+    const auto pixel_mode = select_cover_pixel_mode(
+        cover_art_mode, ::isatty(STDOUT_FILENO) != 0, term ? term : "",
+        std::getenv("TMUX") != nullptr || std::getenv("STY") != nullptr);
     ChafaCanvasConfig* config = chafa_canvas_config_new();
+    chafa_canvas_config_set_pixel_mode(config, pixel_mode);
+    chafa_canvas_config_set_cell_geometry(config, 8, 16);
     chafa_canvas_config_set_canvas_mode(config, CHAFA_CANVAS_MODE_TRUECOLOR);
     chafa_canvas_config_set_dither_mode(config, CHAFA_DITHER_MODE_DIFFUSION);
     chafa_canvas_config_set_geometry(config, canvas_cols, canvas_rows);
@@ -1220,6 +1237,15 @@ bool render_rgba_ascii(
         return false;
     }
 
+    if (pixel_mode == CHAFA_PIXEL_MODE_KITTY) {
+        rendered_out.graphics.assign(printed->str, printed->len);
+        rendered_out.display_rows = canvas_rows;
+        rendered_out.display_columns = canvas_cols;
+        g_string_free(printed, TRUE);
+        chafa_term_info_unref(term_info);
+        chafa_canvas_unref(canvas);
+        return !rendered_out.graphics.empty();
+    }
     std::istringstream iss(printed->str ? std::string{printed->str} : std::string{});
     std::string line;
     while (std::getline(iss, line)) {
@@ -1264,7 +1290,20 @@ std::string build_cover_art_choice_header(
         "\n";
 }
 
+static void print_cover_art(const RenderedCoverArtAscii& rendered) {
+    if (!rendered.graphics.empty()) {
+        // Reserve rows before drawing, then restore the cursor below the image.
+        std::cout << std::string(rendered.display_rows, '\n')
+                  << "\x1b[" << rendered.display_rows << "A\r\x1b[s"
+                  << rendered.graphics << "\x1b[u\x1b["
+                  << rendered.display_rows << "B\r";
+    } else {
+        for (const auto& line : rendered.lines) std::cout << line << "\n";
+    }
+}
+
 void maybe_print_cover_art_ascii(const CdRipCoverArt& art) {
+    if (cover_art_mode == "none") return;
     if (::isatty(STDOUT_FILENO) == 0) return;
 
     const TerminalSize tty = get_stdout_terminal_size();
@@ -1279,9 +1318,7 @@ void maybe_print_cover_art_ascii(const CdRipCoverArt& art) {
     }
 
     std::cout << "\n\n";
-    for (const auto& line : rendered.lines) {
-        std::cout << line << "\n";
-    }
+    print_cover_art(rendered);
     std::cout << "\x1b[0m\n";
 }
 
@@ -1995,7 +2032,7 @@ size_t prompt_for_cover_art_attempt_choice(
     size_t default_choice,
     bool allow_aa) {
 
-    const bool can_preview = allow_aa && (::isatty(STDOUT_FILENO) != 0);
+    const bool can_preview = allow_aa && cover_art_mode != "none" && (::isatty(STDOUT_FILENO) != 0);
     if (can_preview) {
         const TerminalSize tty = get_stdout_terminal_size();
         const int columns_per_image = compute_cover_art_pair_columns_limit(tty.columns);
@@ -2014,9 +2051,7 @@ size_t prompt_for_cover_art_attempt_choice(
                                  "[1] " + cover_art_attempt_label(left),
                                  "[2] " + cover_art_attempt_label(right),
                                  columns_per_image);
-                for (const auto& line : rendered.lines) {
-                    std::cout << line << "\n";
-                }
+                print_cover_art(rendered);
                 std::cout << "\x1b[0m";
             } else {
                 std::cout << "\nCover art candidates:\n";
@@ -2896,6 +2931,12 @@ Options parse_args(int argc, char** argv) {
             opts.replaygain = false;
         } else if ((arg == "-dc" || arg == "--discogs") && i + 1 < argc) {
             opts.discogs = argv[++i];
+        } else if (arg == "--cover-art") {
+            if (i + 1 >= argc) { std::cerr << "Error: --cover-art requires auto|kitty|ascii|none\n"; std::exit(1); }
+            cover_art_mode = argv[++i];
+            if (cover_art_mode != "auto" && cover_art_mode != "kitty" && cover_art_mode != "ascii" && cover_art_mode != "none") {
+                std::cerr << "Error: invalid --cover-art mode\n"; std::exit(1);
+            }
         } else if (arg == "-na" || arg == "--no-aa") {
             opts.no_aa = true;
         } else if (arg == "-nr" || arg == "--no-recrawl") {
@@ -2947,6 +2988,7 @@ Options parse_args(int argc, char** argv) {
             }
         } else if (arg == "-?" || arg == "-h" || arg == "--help") {
             std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-g|-ng] [-dc no|always|fallback] [-na] [--permissions ugo] [--permission-warnings|--no-permission-warnings] [--tag key=value] [-i config] [-u file|dir ...]\n";
+            std::cout << "  --cover-art auto|kitty|ascii|none: Terminal cover preview (default: auto)\n";
             std::cout << "  -d  / --device: CD device path (default: auto-detect)\n";
             std::cout << "  -f  / --format: FLAC destination path format (default: \"{album:n/medium:n/tracknumber:02d}_{title:n}.flac\")\n";
             std::cout << "  -m  / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disabled any checks)\n";
