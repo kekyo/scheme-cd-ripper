@@ -229,7 +229,31 @@ auto test_rip_progress_callback_writes_spinner_line_and_completion_newline = [](
 
 }  // namespace
 
-int main() {
+static void test_kitty_output() {
+    expect_true(::isatty(STDOUT_FILENO) != 0, "graphics test requires a PTY");
+    cover_art_mode = "kitty";
+    RgbaImage image{};
+    image.width = image.height = 8;
+    image.pixels.assign(8 * 8 * 4, 255);
+    for (bool pair : {false, true}) {
+        RgbaImage composed = image;
+        std::string error;
+        if (pair) expect_true(compose_rgba_side_by_side(image, image, 2, composed, error), "pair composition");
+        RenderedCoverArtAscii rendered{};
+        expect_true(render_rgba_ascii(composed, 8, rendered, error), "Kitty render");
+        expect_true(rendered.graphics.find("\x1b_G") != std::string::npos, "Kitty protocol emitted");
+        expect_true(rendered.lines.empty(), "graphics payload not split into text lines");
+        std::ostringstream out;
+        auto* previous = std::cout.rdbuf(out.rdbuf());
+        print_cover_art(rendered);
+        std::cout.rdbuf(previous);
+        expect_true(out.str().find(rendered.graphics) != std::string::npos, "payload preserved");
+        expect_true(out.str().find("\x1b[u\x1b[") != std::string::npos, "cursor restored below image");
+    }
+}
+
+int main(int argc, char**) {
+    if (argc > 1) { test_kitty_output(); return 0; }
     expect_true(select_cover_pixel_mode("auto", true, "xterm-kitty", false) == CHAFA_PIXEL_MODE_KITTY, "Kitty auto detection");
     expect_true(select_cover_pixel_mode("auto", true, "xterm-kitty", true) == CHAFA_PIXEL_MODE_SYMBOLS, "multiplexer fallback");
     expect_true(select_cover_pixel_mode("kitty", false, "xterm-kitty", false) == CHAFA_PIXEL_MODE_SYMBOLS, "redirect fallback");

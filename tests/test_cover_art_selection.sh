@@ -11,3 +11,5 @@ cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release
 
 cmake --build "${BUILD_DIR}"
 "${BUILD_DIR}/cdrip_test_cover_art_selection"
+# Exercise image payloads and cursor handling with an actual PTY.
+env -u TMUX -u STY TERM=xterm-kitty script -q -e -c "\"${BUILD_DIR}/cdrip_test_cover_art_selection\" --kitty" /dev/null
