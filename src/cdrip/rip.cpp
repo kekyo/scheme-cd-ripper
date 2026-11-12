@@ -447,7 +447,8 @@ bool rip_track_with_options(
         for (int c = 0; c < chunk; ++c) {
             const int16_t* buffer = nullptr;
             if (!backend.read_sector(rip->reader, buffer, backend_err)) {
-                err = "Read error on track " + std::to_string(track->number);
+                err = "Read error on track " + std::to_string(track->number) +
+                    " at sector " + std::to_string(track->start + processed + c) + ": " + backend_err;
                 encoder.finish();
                 cleanup_encoder_state();
                 remove_local_file_quietly(temp_path);
@@ -534,8 +535,13 @@ bool rip_track_with_options(
         }
     }
 
-    encoder.finish();
+    const bool finished = encoder.finish();
     cleanup_encoder_state();
+    if (!finished) {
+        err = "Failed to finalize FLAC on track " + std::to_string(track->number);
+        remove_local_file_quietly(temp_path);
+        return false;
+    }
 
     if (replaygain_result && options && options->track_replaygain_state) {
         if (!finalize_replaygain_scan(options->track_replaygain_state, *replaygain_result, err)) {

@@ -1,4 +1,6 @@
 #include <cstdlib>
+#include <sys/resource.h>
+#include <csignal>
 #include <fstream>
 #include <filesystem>
 #include <iostream>
@@ -1181,7 +1183,7 @@ auto test_rip_track_reports_seek_and_read_failures = []() {
                 nullptr,
                 rip_err),
             "read failure should fail the rip");
-        expect_eq("Read error on track 1", rip_err, "read failure should preserve the public error message");
+        expect_contains(rip_err, "Fake read failure", "read failure should retain backend diagnostics");
         expect_true(!std::filesystem::exists(flac_path), "failed read should not publish a FLAC file");
 
         cdrip_release_disctoc(toc);
@@ -1309,7 +1311,64 @@ auto test_rip_track_emits_progress_updates = []() {
 
 }  // namespace
 
+static void test_final_flush_failure() {
+    {
+        auto state = make_backend_state();
+        state.tracks[0].end = 0;
+        struct rlimit original{};
+        getrlimit(RLIMIT_FSIZE, &original);
+        auto limited = original;
+        limited.rlim_cur = 128;
+        auto old_handler = std::signal(SIGXFSZ, SIG_IGN);
+        setrlimit(RLIMIT_FSIZE, &limited);
+        FakeBackendScope scope(state);
+
+        const auto temp_dir = std::filesystem::temp_directory_path() / "cdrip-test-drive-backend-read-failure";
+        std::filesystem::remove_all(temp_dir);
+        std::filesystem::create_directories(temp_dir);
+        const auto flac_path = (temp_dir / "read-failure.flac").string();
+
+        const CdRipSettings settings{"", 1, RIP_MODES_FAST, false};
+        CdRip* rip = open_fake_rip(settings);
+        const char* err = nullptr;
+        CdRipDiscToc* toc = cdrip_build_disc_toc(rip, &err);
+        expect_true(toc != nullptr, err ? err : "TOC build should succeed before read failure test");
+        release_error(err);
+
+        const auto entry = make_test_entry();
+        cdrip::detail::RipTrackWriteOptions options{};
+        options.output_path = flac_path.c_str();
+        options.display_path = flac_path.c_str();
+        std::string rip_err;
+        expect_true(
+            !cdrip::detail::rip_track_with_options(
+                rip,
+                &toc->tracks[0],
+                &entry,
+                toc,
+                nullptr,
+                static_cast<int>(toc->tracks_count),
+                0.0,
+                0.0,
+                0.0,
+                &options,
+                nullptr,
+                rip_err),
+            "read failure should fail the rip");
+        setrlimit(RLIMIT_FSIZE, &original);
+        std::signal(SIGXFSZ, old_handler);
+        expect_contains(rip_err, "finalize FLAC", "final flush failure should be reported");
+        expect_true(!std::filesystem::exists(flac_path), "failed read should not publish a FLAC file");
+
+        cdrip_release_disctoc(toc);
+        cdrip_close(rip, false, &err);
+        release_error(err);
+        std::filesystem::remove_all(temp_dir);
+    }
+}
+
 int main() {
+    test_final_flush_failure();
     test_detect_cd_drives_uses_swapped_backend();
     test_open_build_toc_rip_and_close_use_swapped_backend();
     test_year_format_tag_is_derived_from_single_valid_date_token();
