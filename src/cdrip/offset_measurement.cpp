@@ -145,6 +145,77 @@ static void record_matches(OffsetTrackResult& result, const AccurateRipDatabase&
     }
 }
 
+static uint32_t packed_frame(const CapturedTrack& track, int64_t frame) {
+    const size_t index = static_cast<size_t>(frame - track.first) * 2;
+    return static_cast<uint16_t>(track.pcm[index]) |
+        (static_cast<uint32_t>(static_cast<uint16_t>(track.pcm[index + 1])) << 16);
+}
+
+static std::optional<uint32_t> offset_signature(const CapturedTrack& track, int offset) {
+    // The database's final four entry bytes describe 588 stereo frames starting
+    // at CD sector 450, weighted 1..588. This can filter both v1 and v2 records.
+    // Format reference: CUETools.AccurateRip/AccurateRip.cs, CRC450(), at
+    // https://github.com/gchudov/cuetools.net
+    const int64_t first = track.track_first + 450 * 588 + offset;
+    if (track.track_frames < 451 * 588 || first < track.first ||
+        first + 588 > track.first + static_cast<int64_t>(track.pcm.size() / 2)) return {};
+    uint32_t sum = 0;
+    for (unsigned i = 0; i < 588; ++i) sum += packed_frame(track, first + i) * (i + 1);
+    return sum;
+}
+
+static void search_track_offsets(OffsetTrackResult& result, const CapturedTrack& track,
+    const AccurateRipDatabase& database, std::optional<int> listed, const MeasurementProgress& progress) {
+    if (!result.error.empty()) return;
+    const auto [begin, end] = checksum_interval(track);
+    if (begin >= end) return;
+    const int64_t first = std::max<int64_t>(-kSearchLimit, track.first - track.track_first - begin);
+    const int64_t last = std::min<int64_t>(kSearchLimit,
+        track.first + static_cast<int64_t>(track.pcm.size() / 2) - track.track_first - end);
+    if (first > last) return;
+    result.search_range = {static_cast<int>(first), static_cast<int>(last)};
+
+    // Keep both the unweighted sum S and weighted v1 sum W modulo 2^32.
+    // Sliding [begin,end) by one frame gives W' = W-S-begin*old+end*next.
+    uint32_t sum = 0, weighted = 0;
+    for (int64_t i = begin; i < end; ++i) {
+        const auto word = packed_frame(track, track.track_first + first + i);
+        sum += word;
+        weighted += word * static_cast<uint32_t>(i + 1);
+    }
+    const bool silent = std::all_of(track.pcm.begin(), track.pcm.end(), [](int16_t sample) { return sample == 0; });
+    const size_t total = static_cast<size_t>(last - first + 1);
+    if (progress) progress("Searching", result.number, 0, total);
+    for (int offset = static_cast<int>(first); offset <= last; ++offset) {
+        if (offset != listed) {
+            const auto signature = offset_signature(track, offset);
+            const bool candidate = std::any_of(database.pressings.begin(), database.pressings.end(),
+                [&](const auto& record) {
+                    if (result.number > record.size()) return false;
+                    const auto& entry = record[result.number - 1];
+                    // Missing signatures and short tracks require a full v2 check.
+                    return entry.confidence && (entry.checksum == weighted || !signature ||
+                        !entry.offset_checksum || entry.offset_checksum == *signature);
+                });
+            if (candidate) {
+                const auto checksum = silent ? AccurateRipChecksum{} : *checksum_at(track, offset);
+                record_matches(result, database, checksum, offset);
+            }
+        }
+        if (offset < last) {
+            const auto old_word = packed_frame(track, track.track_first + offset + begin);
+            const auto next_word = packed_frame(track, track.track_first + offset + end);
+            weighted = weighted - sum - static_cast<uint32_t>(begin) * old_word + static_cast<uint32_t>(end) * next_word;
+            sum = sum - old_word + next_word;
+        }
+        const size_t done = static_cast<size_t>(offset - first + 1);
+        if (progress && (done % 64 == 0 || done == total)) progress("Searching", result.number, done, total);
+    }
+    std::sort(result.matches.begin(), result.matches.end(), [](const auto& a, const auto& b) {
+        return std::pair{a.samples, a.record} < std::pair{b.samples, b.record};
+    });
+}
+
 OffsetMeasurement measure_offsets(CdRip* rip, const CdRipDiscToc& toc,
     const AccurateRipDatabase& database, std::optional<int> listed_offset,
     unsigned tracks, const MeasurementProgress& progress) {
@@ -155,7 +226,6 @@ OffsetMeasurement measure_offsets(CdRip* rip, const CdRipDiscToc& toc,
         result.error = accuraterip_report(database, 0, {});
         return result;
     }
-    if (!listed_offset) { result.error = "no listed offset to verify"; return result; }
     const size_t count = std::min<size_t>(tracks, toc.tracks_count);
     const int64_t audio_first = static_cast<int64_t>(toc.tracks[0].start) * 588;
     const int64_t audio_limit = static_cast<int64_t>(toc.leadout_sector) * 588;
@@ -167,8 +237,8 @@ OffsetMeasurement measure_offsets(CdRip* rip, const CdRipDiscToc& toc,
         auto& measured = result.tracks.back();
         const int64_t start = static_cast<int64_t>(info.start) * 588;
         const int64_t frames = (static_cast<int64_t>(info.end) - info.start + 1) * 588;
-        const int64_t first = std::max(audio_first, start + std::min(-kSearchLimit, *listed_offset));
-        const int64_t limit = std::min(audio_limit, start + frames + std::max(kSearchLimit, *listed_offset));
+        const int64_t first = std::max(audio_first, start + std::min(-kSearchLimit, listed_offset.value_or(0)));
+        const int64_t limit = std::min(audio_limit, start + frames + std::max(kSearchLimit, listed_offset.value_or(0)));
         const uint64_t size = static_cast<uint64_t>(limit - first);
         if (size > (kPcmMemoryLimit - bytes) / 4) { result.error = "measurement PCM exceeds 1 GiB memory limit"; return result; }
         bytes += size * 4;
@@ -182,11 +252,28 @@ OffsetMeasurement measure_offsets(CdRip* rip, const CdRipDiscToc& toc,
             if (!read_pcm_frames(reader, first + static_cast<int64_t>(done), chunk, audio_first,
                     audio_limit, buffer.pcm.data() + done * 2, measured.error)) break;
             done += chunk;
-            if (progress) progress(measured.number, done, size);
+            if (progress) progress("Reading", measured.number, done, size);
         }
         if (!measured.error.empty()) { buffer.pcm.clear(); continue; }
-        measured.listed_checksum = checksum_at(buffer, *listed_offset);
-        if (measured.listed_checksum) record_matches(measured, database, *measured.listed_checksum, *listed_offset);
+        if (listed_offset) {
+            measured.listed_checksum = checksum_at(buffer, *listed_offset);
+            if (measured.listed_checksum) record_matches(measured, database, *measured.listed_checksum, *listed_offset);
+        }
+    }
+    // A shared record must cover every selected track before a listed value can
+    // skip searching; unrelated per-track matches are insufficient.
+    const bool listed_match = std::any_of(result.tracks[0].matches.begin(), result.tracks[0].matches.end(),
+        [&](const auto& match) {
+            return std::all_of(result.tracks.begin(), result.tracks.end(), [&](const auto& track) {
+                return std::any_of(track.matches.begin(), track.matches.end(),
+                    [&](const auto& other) { return other.record == match.record; });
+            });
+        });
+    if (!listed_match) {
+        result.searched = true;
+        result.search_min = -kSearchLimit;
+        result.search_max = kSearchLimit;
+        for (size_t i = 0; i < count; ++i) search_track_offsets(result.tracks[i], captured[i], database, listed_offset, progress);
     }
     return result;
 }
@@ -198,11 +285,16 @@ static std::string signed_samples(int samples) {
 void print_offset_measurement(std::ostream& out, const OffsetMeasurement& result) {
     out << "Requested tracks: " << result.requested_tracks << "; measured tracks: " << result.tracks.size() << '\n';
     if (!result.error.empty()) out << "Measurement unavailable: " << result.error << '\n';
-    if (result.searched) out << "Searched offsets: " << signed_samples(result.search_min) << ".." << signed_samples(result.search_max) << " stereo samples\n";
+    if (result.searched) out << "Offset search bounds: " << signed_samples(result.search_min) << ".." << signed_samples(result.search_max) << " stereo samples\n";
     std::map<std::pair<int, size_t>, size_t> common;
     for (const auto& track : result.tracks) {
         out << "Track " << track.number << ":\n";
         if (!track.error.empty()) { out << "  Read error: " << track.error << '\n'; continue; }
+        if (result.searched) {
+            if (track.search_range) out << "  Searched offsets: " << signed_samples(track.search_range->first)
+                << ".." << signed_samples(track.search_range->second) << '\n';
+            else out << "  Search unavailable: required audio missing\n";
+        }
         if (result.listed_offset) {
             out << "  Listed offset " << signed_samples(*result.listed_offset) << ": ";
             if (track.listed_checksum) {
@@ -252,14 +344,14 @@ int run_offset_measurement(CdRip* rip, unsigned tracks, const OffsetLookupServic
     out << "\nFetching AccurateRip disc records...\n" << std::flush;
     const auto database = services.disc_database(*toc);
     const auto result = measure_offsets(rip, *toc, database, listed.samples, tracks,
-        [&out](unsigned track, size_t done, size_t total) {
-            out << "\rReading track " << track << ": " << done * 100 / total << "%" << std::flush;
+        [&out](const char* phase, unsigned track, size_t done, size_t total) {
+            out << '\r' << phase << " track " << track << ": " << done * 100 / total << "%" << std::flush;
             if (done == total) out << '\n';
         });
     out << '\n';
     print_offset_measurement(out, result);
     if (!result.error.empty()) return 1;
     return std::all_of(result.tracks.begin(), result.tracks.end(),
-        [](const auto& track) { return track.error.empty(); }) ? 0 : 1;
+        [](const auto& track) { return track.error.empty() && (track.listed_checksum || track.search_range); }) ? 0 : 1;
 }
 }

@@ -22,6 +22,8 @@ enum class AccurateRipStatus { Available, NotFound, NetworkError, InvalidRespons
 struct AccurateRipTrackEntry {
     unsigned confidence{0};
     uint32_t checksum{0};
+    /** Weighted checksum of CD sector 450 within the track; zero may mean absent. */
+    uint32_t offset_checksum{0};
 };
 struct AccurateRipDatabase {
     AccurateRipStatus status{AccurateRipStatus::Unsupported};

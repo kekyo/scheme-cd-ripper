@@ -84,7 +84,7 @@ AccurateRipDatabase accuraterip_response(const AccurateRipDisc& disc, unsigned s
         std::vector<AccurateRipTrackEntry> tracks;
         for (unsigned i = 0; i < disc.tracks; ++i) {
             const auto entry = pos + 13 + i * 9;
-            tracks.push_back({body[entry], le32(entry+1)});
+            tracks.push_back({body[entry], le32(entry+1), le32(entry+5)});
         }
         db.pressings.push_back(std::move(tracks));
     }

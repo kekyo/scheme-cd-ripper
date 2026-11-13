@@ -32,6 +32,8 @@ struct OffsetTrackResult {
     std::optional<AccurateRipChecksum> listed_checksum;
     std::vector<OffsetMatch> matches;
     std::string error;
+    /** Inclusive range with all required audio available; absent if none was searched. */
+    std::optional<std::pair<int, int>> search_range{};
 };
 
 /** Independent results for the inserted CD, without a recommended drive setting. */
@@ -45,8 +47,8 @@ struct OffsetMeasurement {
     std::string error;
 };
 
-/** Progress arguments are track number, copied frames, and total frames. */
-using MeasurementProgress = std::function<void(unsigned, size_t, size_t)>;
+/** Progress arguments are phase label, track number, completed units, and total units. */
+using MeasurementProgress = std::function<void(const char*, unsigned, size_t, size_t)>;
 
 /** Capture PCM and compare selected full tracks with database records.
  * @param rip Open drive; existing configured correction is not applied.

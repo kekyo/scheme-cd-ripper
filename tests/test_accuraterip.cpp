@@ -34,11 +34,12 @@ int main() {
     auto put32 = [&](uint32_t x) { for (int i=0;i<4;++i) body.push_back(static_cast<uint8_t>(x >> (8*i))); };
     for (unsigned pressing : {0U,1U}) {
         body.push_back(2); put32(disc.id1); put32(disc.id2); put32(disc.cddb);
-        body.push_back(pressing ? 7 : 2); put32(pressing ? 0x5678 : 0x1234); put32(0);
+        body.push_back(pressing ? 7 : 2); put32(pressing ? 0x5678 : 0x1234); put32(0x89abcdef);
         body.push_back(3); put32(0x9999); put32(0);
     }
     const auto db = accuraterip_response(disc, 200, body);
     expect(db.status == AccurateRipStatus::Available && db.pressings.size() == 2, "multiple pressings");
+    expect(db.pressings[1][0].offset_checksum == 0x89abcdef, "offset signature must retain its little-endian value");
     expect(accuraterip_report(db, 0, {0x1234,0x5678,7056}).find("v2 confidence=7") != std::string::npos, "match all candidates");
     expect(accuraterip_report(db, 1, {1,2,7056}).find("mismatch") == 0, "mismatch");
     expect(accuraterip_response(disc,404,{}).status == AccurateRipStatus::NotFound, "404 is not registered");

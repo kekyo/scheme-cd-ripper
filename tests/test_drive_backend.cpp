@@ -1456,7 +1456,17 @@ static void test_offset_measurement() {
     expect_true(parse_drive_offsets("unavailable", identity).detail == "invalid drive catalogue response", "malformed catalogue is distinct from not listed");
 
     auto state = make_backend_state();
-    state.tracks = {{1, 0, 99, 1}, {2, 100, 199, 1}, {3, 200, 309, 1}};
+    state.tracks = {{1, 0, 599, 1}, {2, 600, 1199, 1}, {3, 1200, 1799, 1}};
+    state.last_sector = 1799;
+    state.sectors.resize(1800);
+    uint32_t random = 17;
+    for (auto& sector : state.sectors) {
+        sector.resize(588 * 2);
+        for (auto& sample : sector) {
+            random = random * 1664525U + 1013904223U;
+            sample = static_cast<int16_t>(random >> 16);
+        }
+    }
     FakeBackendScope scope(state);
     const CdRipSettings settings{"", 1, RIP_MODES_FAST, false};
     auto* rip = open_fake_rip(settings);
@@ -1465,24 +1475,29 @@ static void test_offset_measurement() {
     auto* toc = cdrip_build_disc_toc(rip, &error);
     expect_true(toc && !error, "measurement TOC");
     static AccurateRipDatabase database;
-    database = {AccurateRipStatus::Available, {}, {std::vector<AccurateRipTrackEntry>(3)}};
     const int correction = 589;
-    for (size_t track = 0; track < 3; ++track) {
+    const auto reference = [&state](int shift) {
+      AccurateRipDatabase expected{AccurateRipStatus::Available, {}, {std::vector<AccurateRipTrackEntry>(3)}};
+      for (size_t track = 0; track < 3; ++track) {
         const auto& info = state.tracks[track];
-        uint32_t v1 = 0, v2 = 0;
+        uint32_t v1 = 0, v2 = 0, signature = 0;
         const long frames = (info.end - info.start + 1) * 588;
         for (long i = 0; i < frames; ++i) {
             if ((track == 0 && i + 1 < 2940) || (track == 2 && i + 1 > frames - 2940)) continue;
-            const long source = info.start * 588 + i + correction;
+            const long source = info.start * 588 + i + shift;
             const auto& sector = state.sectors[source / 588];
             const uint32_t word = static_cast<uint16_t>(sector[(source % 588) * 2]) |
                 (static_cast<uint32_t>(static_cast<uint16_t>(sector[(source % 588) * 2 + 1])) << 16);
             const uint64_t product = static_cast<uint64_t>(word) * (i + 1);
             v1 += static_cast<uint32_t>(product);
             v2 += static_cast<uint32_t>(product) + static_cast<uint32_t>(product >> 32);
+            if (i >= 450 * 588 && i < 451 * 588) signature += word * (i - 450 * 588 + 1);
         }
-        database.pressings[0][track] = {static_cast<unsigned>(5 + track), track == 1 ? v2 : v1};
-    }
+        expected.pressings[0][track] = {static_cast<unsigned>(5 + track), track == 1 ? v2 : v1, signature};
+      }
+      return expected;
+    };
+    database = reference(correction);
     auto result = measure_offsets(rip, *toc, database, correction, 3, {});
     expect_true(result.error.empty() && result.tracks.size() == 3, "three selected tracks must be measured");
     for (size_t i = 0; i < 3; ++i) {
@@ -1509,14 +1524,75 @@ static void test_offset_measurement() {
     expect_contains(output.str(), "all 3 measured tracks match record 1", "full matches must share a record");
     expect_true(state.eject_calls == 0, "measurement must keep the disc inserted");
 
+    const int before_search = state.read_calls;
+    auto searched = measure_offsets(rip, *toc, database, std::nullopt, 3, {});
+    expect_true(searched.error.empty() && searched.searched, "unlisted drives must search captured PCM");
+    for (const auto& track : searched.tracks) {
+        expect_true(std::any_of(track.matches.begin(), track.matches.end(), [](const auto& match) {
+            return match.samples == 589;
+        }), "search must find the measured offset, including v2-only records");
+    }
+    const int captured_reads = state.read_calls - before_search;
+    const int before_wrong = state.read_calls;
+    searched = measure_offsets(rip, *toc, database, -6, 3, {});
+    expect_true(searched.searched && state.read_calls - before_wrong == captured_reads,
+        "a mismatching listed offset must search without rereading candidate PCM");
+    expect_true(searched.tracks[0].search_range == std::pair{-2939, 2940},
+        "unreadable disc-edge samples must reduce the searched range");
+    for (int shift : {-589, 0}) {
+        searched = measure_offsets(rip, *toc, reference(shift), std::nullopt, 3, {});
+        for (const auto& track : searched.tracks) {
+            expect_true(track.matches.size() == 1 && track.matches[0].samples == shift,
+                "negative and zero corrections must be measured without selecting a default");
+        }
+    }
+    searched = measure_offsets(rip, *toc, database, -4000, 3, {});
+    expect_true(!searched.tracks[0].listed_checksum && searched.tracks[0].matches[0].samples == correction,
+        "missing audio for a listed value must remain distinct from a measured search candidate");
+
+    auto unmatched = database;
+    for (auto& entry : unmatched.pressings[0]) entry = {1, 0, 1};
+    searched = measure_offsets(rip, *toc, unmatched, std::nullopt, 3, {});
+    for (const auto& track : searched.tracks) expect_true(track.matches.empty(), "no match must not become a zero correction");
+    for (auto& entry : unmatched.pressings[0]) entry.confidence = 0;
+    searched = measure_offsets(rip, *toc, unmatched, std::nullopt, 3, {});
+    for (const auto& track : searched.tracks) expect_true(track.matches.empty(), "zero confidence is not measurement evidence");
+
     auto split = measure_offsets(rip, *toc, database, correction, 3, {});
     split.tracks[1].matches[0].record = 1;
     output.str("");
     print_offset_measurement(output, split);
     expect_contains(output.str(), "No single database record matches all", "unrelated per-track records must not form a full match");
+    auto separate = database;
+    separate.pressings.push_back(separate.pressings[0]);
+    separate.pressings[0][1].confidence = 0;
+    separate.pressings[1][0].confidence = 0;
+    separate.pressings[1][2].confidence = 0;
+    searched = measure_offsets(rip, *toc, separate, correction, 3, {});
+    expect_true(searched.searched, "per-track matches to different records must still trigger a search");
     state.fail_read_call = state.read_calls;
     result = measure_offsets(rip, *toc, database, correction, 3, {});
     expect_true(!result.tracks[0].error.empty() && result.tracks[0].matches.empty(), "read failures must not produce matches");
+    cdrip_release_disctoc(toc);
+
+    state.fail_read_call = -1;
+    state.tracks = {{1, 0, 11, 1}, {2, 12, 23, 1}, {3, 24, 35, 1}};
+    state.last_sector = 35;
+    state.sectors.resize(36);
+    toc = cdrip_build_disc_toc(rip, &error);
+    const auto short_database = reference(correction);
+    searched = measure_offsets(rip, *toc, short_database, std::nullopt, 3, {});
+    expect_true(searched.tracks[1].matches.size() == 1 && searched.tracks[1].matches[0].samples == correction &&
+        searched.tracks[1].matches[0].v2, "short tracks without offset signatures must retain v2-only matches");
+
+    for (auto& sector : state.sectors) std::fill(sector.begin(), sector.end(), 0);
+    const auto silence_database = reference(0);
+    searched = measure_offsets(rip, *toc, silence_database, std::nullopt, 3, {});
+    for (const auto& track : searched.tracks) expect_true(track.matches.size() > 1, "silence must report multiple candidates");
+    output.str("");
+    print_offset_measurement(output, searched);
+    expect_contains(output.str(), "Offset +0: all 3", "all silent candidates remain visible");
+    expect_contains(output.str(), "Offset +1: all 3", "silence must not choose just the first candidate");
     cdrip_release_disctoc(toc);
     cdrip_close(rip, false, nullptr);
 }

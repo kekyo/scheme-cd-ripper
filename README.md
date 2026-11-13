@@ -293,6 +293,33 @@ Verification compares v1/v2 checksums calculated during ripping with the Accurat
 
 Verification results do not delete FLAC files or change the exit code. Files are saved even when verification does not match, so check the reported results. The `best` mode checks drive reads and can be selected independently of AccurateRip verification.
 
+### Measuring offsets with a CD
+
+`--measure-offset` obtains a candidate from the AccurateRip drive catalogue and checks it against records for the inserted audio CD. The disc must be registered in AccurateRip.
+It reads the first requested number of tracks in full, reports that disc's results, and exits. The default is three tracks; if the disc has fewer tracks, all available tracks are measured.
+
+```sh
+cdrip --measure-offset
+cdrip --measure-offset 5 -d /dev/sr0
+```
+
+If no listed value is available, or the listed value does not match every measured track in one database record, the command searches offsets using the captured audio.
+The search covers −2940 through +2940 stereo sample frames. A listed value outside this range is also checked directly.
+Candidates requiring unavailable audio at disc edges are excluded; each track shows the range actually searched.
+
+Results include the stable device path, disc ID, listed value, candidate values, checksum versions (v1/v2), and confidence for each track.
+The `record` number identifies a database record. A match across measured tracks requires the same offset and the same record for every track.
+Multiple matching candidates, including those caused by silence, are shown individually. No match means no candidate within the tested range; it does not establish a zero correction.
+Unregistered discs, network failures, read errors, and missing audio are reported separately.
+
+Measurement does not save FLAC files, fetch cover art, scan ReplayGain, or eject the disc. The normal ripping `repeat` setting does not apply.
+The command works even with `accuraterip=false` in the configuration. Combining it with `--no-accurate`, `--read-offset`, or `--update` is an error.
+Use the regular speed and integrity options, such as `--speed-fast` and `--mode`, to control reading.
+
+Different pressings of the same recording may have different audio positions, so a single disc may not distinguish a drive offset from a pressing offset.
+See the [AccurateRip explanation](https://www.accuraterip.com/keydiscs.htm).
+Compare results from your own pressed CDs and choose the value to enter in `[read_offset]`. The command does not aggregate measurements, choose a final setting, or modify configuration files.
+
 ## Filename formatting
 
 The filename format is a template for any path, including directory names, that uses curly braces to automatically and flexibly determine the path using Vorbis comment key names.
@@ -323,20 +350,6 @@ Additionally, it includes the following features:
 - The `.flac` extension will be appended automatically if omitted.
 - Scheme CD ripper supports GNOME GIO, allowing you to specify a direct save URL to a remote host (requires GVfs configuration).
   - ex: `“smb://nas.yourhome.localdomain/smbshare/music/{title:n}.flac”`
-
-### Measuring offsets with a CD
-
-`--measure-offset` obtains a candidate from the AccurateRip drive catalogue and checks it against records for the inserted audio CD. It reads the first requested number of tracks in full and then exits. If the disc has fewer tracks, all available tracks are measured.
-
-```sh
-cdrip --measure-offset
-cdrip --measure-offset 5 -d /dev/sr0
-```
-
-Results include the stable device path, disc ID, listed offset, checksum versions and confidence for each track. Measurement does not save FLAC files, fetch cover art, scan ReplayGain, or eject the disc. The normal ripping `repeat` setting does not apply.
-The command works even with `accuraterip=false` in the configuration. Combining it with `--no-accurate`, `--read-offset`, or `--update` is an error.
-
-Compare results from your own pressed CDs and choose the value to enter in `[read_offset]`. The command does not aggregate measurements or modify configuration files.
 
 ### Update existing FLACs using embedded CDDB tags
 
