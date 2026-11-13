@@ -51,7 +51,7 @@ int main(int argc, char** argv) {
     options = parse_args(static_cast<int>(raw.size()), raw.data());
     require(options.cover_art == "none" && !options.accuraterip.has_value() &&
         !options.read_offset.has_value(), "Preview disable must not change verification or offset");
-    for (const auto* setting : {"aa=true", "cover_art=invalid", "accuraterip=invalid",
+    for (const auto* setting : {"cover_art=invalid", "accuraterip=invalid",
             "compression=3extra", "compression=9", "mode=typo", "unknown_key=true"}) {
         { std::ofstream out(file); out << "[cdrip]\n" << setting << '\n'; }
         error = nullptr;

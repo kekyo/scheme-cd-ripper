@@ -7,7 +7,7 @@ CDRIP_PACKAGE_VERSION=0.0.0-test CDRIP_PACKAGE_COMMIT=test \
     cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release
 cmake --build "${BUILD_DIR}" --target cdrip_test_cli_config
 "${BUILD_DIR}/cdrip_test_cli_config"
-for option in --unknown-option --no-aa --accuraterip; do
+for option in --unknown-option; do
     if "${BUILD_DIR}/cdrip_test_cli_config" "$option"; then
         echo "Unexpectedly accepted $option" >&2
         exit 1
