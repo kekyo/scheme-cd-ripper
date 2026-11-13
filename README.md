@@ -379,6 +379,10 @@ Scheme CD ripper will refer config file. It is INI-like format.
 `cdrip.conf` (current directory) --> `~/.cdrip.conf`: The first file found in this order is loaded.
 You can also explicitly specify the file using the `-i`/`--input` option.
 
+Explicit CLI values override configuration values. If an option is repeated, its last value wins.
+Unknown `[cdrip]` keys and invalid values are errors. Unspecified `[cdrip]` settings use the defaults shown below.
+Omit `device` for automatic detection, `permissions` to derive modes from umask, and `filter_title` to leave candidates unfiltered.
+
 Example config file:
 
 ```ini
@@ -394,12 +398,16 @@ cover_art=auto       # auto / kitty / ascii / none; terminal preview mode
 accuraterip=true     # compare ripped audio with AccurateRip
 discogs=always       # no / always / fallback (cover art preference order, default: always)
 replaygain=true      # true / false (default: true; false = save each track immediately)
-recrawl_percent=2    # Per-track length tolerance for MusicBrainz candidates (default: 2)
-mode=best            # best / fast / default
+recrawl_percent=2    # Per-track length tolerance for MusicBrainz candidates (non-negative %, default: 2)
+mode=best            # best / fast / default (default is equivalent to best)
 repeat=false
 sort=false
 filter_title=         # Filter CDDB candidates by title using regex (empty = no filter, ignore casing)
 auto=false
+
+[read_offset]
+# Enter the value you choose from measurements; unconfigured devices use zero
+# /dev/disk/by-id/usb-VENDOR_MODEL_SERIAL-0:0=6
 
 [cddb]
 servers=musicbrainz,freedb_japan,gnudb,dbpoweramp   # Comma separated labels

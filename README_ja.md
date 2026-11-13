@@ -369,7 +369,11 @@ Scheme CD ripperは設定ファイルを参照します。INI形式に似た形�
 `cdrip.conf` (現在のディレクトリ) --> `~/.cdrip.conf`: この順序で最初に発見されたファイルが読み込まれます。
 `-i`/`--input` オプションを使用してファイルを明示的に指定することもできます。
 
-以下は設定ファイルの例です:
+CLIで明示した値は設定ファイルより優先します。同じ設定をCLIに複数回指定した場合は、最後の値を使います。
+`[cdrip]`の未知のキーや、不正な値はエラーになります。`[cdrip]`の未指定の値には、以下の例に記した既定値を使います。
+`device`、`permissions`、`filter_title`は省略でき、それぞれ自動検出、umaskから算出、絞り込みなしになります。
+
+設定ファイルの例を示します。
 
 ```ini
 [cdrip]
@@ -384,12 +388,16 @@ cover_art=auto       # auto / kitty / ascii / none。端末でのプレビュー
 accuraterip=true     # リップした音声をAccurateRipと照合
 discogs=always       # no / always / fallback（カバーアートの優先順。デフォルト: always）
 replaygain=true      # true / false（デフォルト: true。false ならトラック単位で即時保存）
-recrawl_percent=2    # MusicBrainz候補のトラック長許容差(%)（デフォルト: 2）
-mode=best            # best / fast / default
+recrawl_percent=2    # MusicBrainz候補のトラック長許容差(%)（0以上、デフォルト: 2）
+mode=best            # best / fast / default（defaultはbestと同じ）
 repeat=false
 sort=false
 filter_title=         # CDDB候補のタイトルを正規表現でフィルタ（未指定/空=フィルタなし、大文字小文字無視）
 auto=false
+
+[read_offset]
+# オフセットは測定者が選んだ値を設定。未設定のデバイスは0
+# /dev/disk/by-id/usb-VENDOR_MODEL_SERIAL-0:0=6
 
 [cddb]
 servers=musicbrainz,freedb_japan,gnudb,dbpoweramp   # カンマ区切りのラベル
