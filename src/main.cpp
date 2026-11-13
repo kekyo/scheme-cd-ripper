@@ -1229,11 +1229,34 @@ bool render_rgba_ascii(
         return false;
     }
 
+    if (pixel_mode == CHAFA_PIXEL_MODE_KITTY) {
+        // An explicit Kitty request supplies capabilities that TERM alone may
+        // not advertise. Keep the process environment and automatic policy intact.
+        if (cover_art_mode == "kitty") {
+            auto* fallback = chafa_term_db_get_fallback_info(term_db);
+            if (fallback) {
+                chafa_term_info_supplement(term_info, fallback);
+                chafa_term_info_unref(fallback);
+            }
+        }
+        for (const auto sequence : {CHAFA_TERM_SEQ_BEGIN_KITTY_IMMEDIATE_IMAGE_V1,
+                CHAFA_TERM_SEQ_BEGIN_KITTY_IMAGE_CHUNK, CHAFA_TERM_SEQ_END_KITTY_IMAGE_CHUNK,
+                CHAFA_TERM_SEQ_END_KITTY_IMAGE}) {
+            if (!chafa_term_info_have_seq(term_info, sequence)) {
+                chafa_term_info_unref(term_info);
+                chafa_canvas_unref(canvas);
+                err_out = "Terminal information is missing Kitty graphics sequences";
+                return false;
+            }
+        }
+    }
+
     GString* printed = chafa_canvas_print(canvas, term_info);
-    if (!printed) {
+    if (!printed || printed->len == 0) {
+        err_out = printed ? "Cover art renderer produced empty output" : "Failed to render cover art";
+        if (printed) g_string_free(printed, TRUE);
         chafa_term_info_unref(term_info);
         chafa_canvas_unref(canvas);
-        err_out = "Failed to render cover art";
         return false;
     }
 
@@ -1261,6 +1284,7 @@ bool render_rgba_ascii(
     g_string_free(printed, TRUE);
     chafa_term_info_unref(term_info);
     chafa_canvas_unref(canvas);
+    if (rendered_out.lines.empty()) err_out = "Cover art renderer produced no text lines";
     return !rendered_out.lines.empty();
 }
 
@@ -1314,6 +1338,7 @@ void maybe_print_cover_art_ascii(const CdRipCoverArt& art) {
             compute_cover_art_columns_limit(tty.columns),
             rendered,
             render_err)) {
+        std::cerr << "Cover art preview failed: " << render_err << "\n";
         return;
     }
 
@@ -2033,38 +2058,28 @@ size_t prompt_for_cover_art_attempt_choice(
     bool allow_aa) {
 
     const bool can_preview = allow_aa && cover_art_mode != "none" && (::isatty(STDOUT_FILENO) != 0);
+    bool preview_printed = false;
     if (can_preview) {
         const TerminalSize tty = get_stdout_terminal_size();
         const int columns_per_image = compute_cover_art_pair_columns_limit(tty.columns);
         RgbaImage composite{};
-        std::string composite_err;
-        if (build_cover_art_pair_rgba(left.art, right.art, columns_per_image, composite, composite_err)) {
-            RenderedCoverArtAscii rendered{};
-            std::string render_err;
-            if (render_rgba_ascii(
-                    composite,
-                    columns_per_image * 2 + COVER_ART_AA_GAP,
-                    rendered,
-                    render_err)) {
-                std::cout << "\n"
-                          << build_cover_art_choice_header(
-                                 "[1] " + cover_art_attempt_label(left),
-                                 "[2] " + cover_art_attempt_label(right),
-                                 columns_per_image);
-                print_cover_art(rendered);
-                std::cout << "\x1b[0m";
-            } else {
-                std::cout << "\nCover art candidates:\n";
-                std::cout << "  [1] " << cover_art_attempt_label(left) << "\n";
-                std::cout << "  [2] " << cover_art_attempt_label(right) << "\n";
-            }
-        } else {
+        std::string preview_error;
+        RenderedCoverArtAscii rendered{};
+        if (build_cover_art_pair_rgba(left.art, right.art, columns_per_image, composite, preview_error) &&
+            render_rgba_ascii(composite, columns_per_image * 2 + COVER_ART_AA_GAP, rendered, preview_error)) {
             std::cout << "\n"
-                      << "Cover art candidates:\n";
-            std::cout << "  [1] " << cover_art_attempt_label(left) << "\n";
-            std::cout << "  [2] " << cover_art_attempt_label(right) << "\n";
+                      << build_cover_art_choice_header(
+                             "[1] " + cover_art_attempt_label(left),
+                             "[2] " + cover_art_attempt_label(right),
+                             columns_per_image);
+            print_cover_art(rendered);
+            std::cout << "\x1b[0m";
+            preview_printed = true;
+        } else {
+            std::cerr << "Cover art preview failed: " << preview_error << "\n";
         }
-    } else {
+    }
+    if (!preview_printed) {
         std::cout << "\nCover art candidates:\n";
         std::cout << "  [1] " << cover_art_attempt_label(left) << "\n";
         std::cout << "  [2] " << cover_art_attempt_label(right) << "\n";

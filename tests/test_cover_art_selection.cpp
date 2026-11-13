@@ -229,20 +229,82 @@ auto test_rip_progress_callback_writes_spinner_line_and_completion_newline = [](
 
 }  // namespace
 
+// Exercise renderer failures without altering the shared Chafa term database.
+static bool return_empty_canvas = false;
+extern "C" GString* __real_chafa_canvas_print(ChafaCanvas*, ChafaTermInfo*);
+extern "C" GString* __wrap_chafa_canvas_print(ChafaCanvas* canvas, ChafaTermInfo* info) {
+    return return_empty_canvas ? g_string_new("") : __real_chafa_canvas_print(canvas, info);
+}
+
+struct DecodedKittyImage {
+    int width = 0;
+    int height = 0;
+    int columns = 0;
+    int rows = 0;
+    std::vector<uint8_t> pixels;
+};
+
+static DecodedKittyImage decode_kitty_image(const std::string& graphics) {
+    DecodedKittyImage image;
+    size_t offset = 0;
+    bool complete = false;
+    while ((offset = graphics.find("\x1b_G", offset)) != std::string::npos) {
+        const auto end = graphics.find("\x1b\\", offset);
+        expect_true(end != std::string::npos, "complete Kitty command");
+        const auto separator = std::min(graphics.find(';', offset), end);
+        std::istringstream fields(graphics.substr(offset + 3, separator - offset - 3));
+        std::string field;
+        while (std::getline(fields, field, ',')) {
+            if (field.rfind("f=", 0) == 0) expect_size(32, std::stoi(field.substr(2)), "RGBA payload");
+            if (field.rfind("s=", 0) == 0) image.width = std::stoi(field.substr(2));
+            if (field.rfind("v=", 0) == 0) image.height = std::stoi(field.substr(2));
+            if (field.rfind("c=", 0) == 0) image.columns = std::stoi(field.substr(2));
+            if (field.rfind("r=", 0) == 0) image.rows = std::stoi(field.substr(2));
+            if (field == "m=0") complete = true;
+        }
+        const auto payload = separator < end ? graphics.substr(separator + 1, end - separator - 1) : std::string{};
+        if (!payload.empty()) {
+            gsize size = 0;
+            auto* decoded = g_base64_decode(payload.c_str(), &size);
+            auto* canonical = g_base64_encode(decoded, size);
+            expect_eq(payload, canonical, "each chunk has canonical Base64 padding bits");
+            image.pixels.insert(image.pixels.end(), decoded, decoded + size);
+            g_free(canonical);
+            g_free(decoded);
+        }
+        offset = end + 2;
+    }
+    expect_true(complete && image.width > 0 && image.height > 0, "complete image with dimensions");
+    expect_size(static_cast<size_t>(image.width) * image.height * 4, image.pixels.size(), "decoded image size");
+    return image;
+}
+
 static void test_kitty_output() {
     expect_true(::isatty(STDOUT_FILENO) != 0, "graphics test requires a PTY");
     cover_art_mode = "kitty";
     RgbaImage image{};
-    image.width = image.height = 8;
-    image.pixels.assign(8 * 8 * 4, 255);
+    // Match the 8x16 cell geometry to test exact transfer without resampling.
+    image.width = image.height = 64;
+    for (int i = 0; i < 64 * 64; i++) image.pixels.insert(image.pixels.end(), {255, 0, 0, 255});
     for (bool pair : {false, true}) {
         RgbaImage composed = image;
         std::string error;
-        if (pair) expect_true(compose_rgba_side_by_side(image, image, 2, composed, error), "pair composition");
+        auto right = image;
+        for (size_t i = 0; i < right.pixels.size(); i += 4) {
+            right.pixels[i] = 0;
+            right.pixels[i + 2] = 255;
+        }
+        if (pair) expect_true(compose_rgba_side_by_side(image, right, 16, composed, error), "pair composition");
         RenderedCoverArtAscii rendered{};
-        expect_true(render_rgba_ascii(composed, 8, rendered, error), "Kitty render");
+        expect_true(render_rgba_ascii(composed, pair ? 18 : 8, rendered, error), "Kitty render");
         expect_true(rendered.graphics.find("\x1b_G") != std::string::npos, "Kitty protocol emitted");
         expect_true(rendered.lines.empty(), "graphics payload not split into text lines");
+        const auto decoded = decode_kitty_image(rendered.graphics);
+        expect_size(rendered.display_columns, decoded.columns, "display columns preserved");
+        expect_size(rendered.display_rows, decoded.rows, "display rows preserved");
+        expect_size(composed.width, decoded.width, "image width");
+        expect_size(composed.height, decoded.height, "image height");
+        expect_true(composed.pixels == decoded.pixels, "all cover pixels and the transparent gap survive transfer");
         std::ostringstream out;
         auto* previous = std::cout.rdbuf(out.rdbuf());
         print_cover_art(rendered);
@@ -252,8 +314,102 @@ static void test_kitty_output() {
     }
 }
 
-int main(int argc, char**) {
-    if (argc > 1) { test_kitty_output(); return 0; }
+static std::vector<uint8_t> make_cover_png(uint8_t red, uint8_t blue) {
+    png_image image{};
+    image.version = PNG_IMAGE_VERSION;
+    image.width = image.height = 1;
+    image.format = PNG_FORMAT_RGBA;
+    const uint8_t pixel[] = {red, 0, blue, 255};
+    png_alloc_size_t size = 0;
+    expect_true(png_image_write_to_memory(&image, nullptr, &size, 0, pixel, 0, nullptr), "PNG size");
+    std::vector<uint8_t> bytes(size);
+    expect_true(png_image_write_to_memory(&image, bytes.data(), &size, 0, pixel, 0, nullptr), "PNG encoding");
+    bytes.resize(size);
+    png_image_free(&image);
+    return bytes;
+}
+
+static void test_preview_diagnostics() {
+    cover_art_mode = "kitty";
+    const CdRipCoverArt invalid{};
+    CoverArtFetchAttempt left{}, right{};
+    left.source = CoverArtFetchSource::CoverArtArchive;
+    right.source = CoverArtFetchSource::Discogs;
+    std::istringstream input("2\n");
+    std::ostringstream output, error;
+    with_redirected_stdio(input, output, error, [&]() {
+        maybe_print_cover_art_ascii(invalid);
+    });
+    expect_true(!error.str().empty(), "single preview failure is reported to stderr");
+    error.str("");
+    with_redirected_stdio(input, output, error, [&]() {
+        expect_size(2, prompt_for_cover_art_attempt_choice(left, right, 1, true), "selection survives preview failure");
+    });
+    expect_true(!error.str().empty(), "candidate preview failure is reported to stderr");
+    expect_true(output.str().find("Cover art candidates:") != std::string::npos, "text candidates remain available");
+
+    RgbaImage image{1, 1, {255, 0, 0, 255}};
+    RenderedCoverArtAscii rendered;
+    std::string reason;
+    return_empty_canvas = true;
+    const bool success = render_rgba_ascii(image, 1, rendered, reason);
+    return_empty_canvas = false;
+    expect_true(!success && !reason.empty(), "empty output includes a failure reason");
+
+    const auto png = make_cover_png(255, 0);
+    left.art = right.art = CdRipCoverArt{png.data(), png.size(), "image/png", 1, 1};
+    std::istringstream retry_input("2\n");
+    error.str("");
+    output.str("");
+    return_empty_canvas = true;
+    with_redirected_stdio(retry_input, output, error, [&]() {
+        maybe_print_cover_art_ascii(left.art);
+        expect_size(2, prompt_for_cover_art_attempt_choice(left, right, 1, true), "selection survives empty renderer output");
+    });
+    return_empty_canvas = false;
+    expect_true(error.str().find(reason) != std::string::npos, "renderer failure reason reaches stderr");
+    expect_true(output.str().find("Cover art candidates:") != std::string::npos, "empty renderer falls back to text");
+
+    cover_art_mode = "none";
+    std::istringstream no_preview_input("1\n");
+    error.str("");
+    with_redirected_stdio(no_preview_input, output, error, [&]() {
+        maybe_print_cover_art_ascii(invalid);
+        left.art = right.art = invalid;
+        expect_size(1, prompt_for_cover_art_attempt_choice(left, right, 1, true), "disabled preview still allows selection");
+    });
+    expect_true(error.str().empty(), "disabled preview emits no diagnostics");
+}
+
+// An interactive driver for terminal integration checks without a CD or network.
+static void show_preview_fixture() {
+    cover_art_mode = "kitty";
+    const auto red = make_cover_png(255, 0);
+    const auto blue = make_cover_png(0, 255);
+    CoverArtFetchAttempt left{}, right{};
+    left.source = CoverArtFetchSource::CoverArtArchive;
+    right.source = CoverArtFetchSource::Discogs;
+    left.art = CdRipCoverArt{red.data(), red.size(), "image/png", 1, 1};
+    right.art = CdRipCoverArt{blue.data(), blue.size(), "image/png", 1, 1};
+    std::cout << "Single red cover\n";
+    maybe_print_cover_art_ascii(left.art);
+    std::cout << "Next preview: " << std::flush;
+    std::string line;
+    std::getline(std::cin, line);
+    const auto selected = prompt_for_cover_art_attempt_choice(left, right, 2, true);
+    std::cout << "Selected cover " << selected << '\n';
+    for (int i = 1; i <= 5; i++) std::cout << "Scroll line " << i << '\n';
+    std::cout << "Preview complete: " << std::flush;
+    std::getline(std::cin, line);
+}
+
+int main(int argc, char** argv) {
+    if (argc > 1) {
+        if (std::string(argv[1]) == "--diagnostics") test_preview_diagnostics();
+        else if (std::string(argv[1]) == "--preview") show_preview_fixture();
+        else test_kitty_output();
+        return 0;
+    }
     expect_true(select_cover_pixel_mode("auto", true, "xterm-kitty", false) == CHAFA_PIXEL_MODE_KITTY, "Kitty auto detection");
     expect_true(select_cover_pixel_mode("auto", true, "xterm-kitty", true) == CHAFA_PIXEL_MODE_SYMBOLS, "multiplexer fallback");
     expect_true(select_cover_pixel_mode("kitty", false, "xterm-kitty", false) == CHAFA_PIXEL_MODE_SYMBOLS, "redirect fallback");

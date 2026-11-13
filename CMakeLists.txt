@@ -200,6 +200,7 @@ target_include_directories(cdrip_test_cover_art_selection PRIVATE ${COMMON_INCLU
 target_link_directories(cdrip_test_cover_art_selection PRIVATE ${COMMON_LIB_DIRS} ${CHAFA_LIBRARY_DIRS})
 target_compile_options(cdrip_test_cover_art_selection PRIVATE ${COMMON_CFLAGS} ${CHAFA_CFLAGS_OTHER})
 target_link_libraries(cdrip_test_cover_art_selection PRIVATE cdrip_static ${CHAFA_LIBRARIES})
+target_link_options(cdrip_test_cover_art_selection PRIVATE -Wl,--wrap=chafa_canvas_print)
 add_dependencies(cdrip_test_cover_art_selection version_header)
 
 add_executable(cdrip_test_drive_backend
