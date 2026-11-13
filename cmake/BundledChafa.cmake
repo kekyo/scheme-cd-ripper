@@ -18,6 +18,13 @@ string(TOUPPER "${CMAKE_BUILD_TYPE}" CHAFA_BUILD_TYPE)
 # Chafa 1.14.2 contains unused optional helpers, tables and macros. Keep this
 # exception local to the unmodified dependency; cdrip's warnings stay enabled.
 set(CHAFA_CFLAGS "${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_${CHAFA_BUILD_TYPE}} -Wno-unused-function -Wno-unused-variable -Wno-unused-const-variable -Wno-unused-macros")
+# smolscale calls calloc(sizeof(SmolScaleCtx), 1). Its allocation size is
+# correct; GCC 14's argument-order diagnostic is only a style warning.
+include(CheckCCompilerFlag)
+check_c_compiler_flag(-Wcalloc-transposed-args CHAFA_HAS_CALLOC_ORDER_WARNING)
+if(CHAFA_HAS_CALLOC_ORDER_WARNING)
+    string(APPEND CHAFA_CFLAGS " -Wno-calloc-transposed-args")
+endif()
 
 ExternalProject_Add(chafa_build
     PREFIX "${CMAKE_BINARY_DIR}/chafa"

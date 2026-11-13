@@ -30,7 +30,14 @@ cmp "$ROOT_DIR/deps/chafa/chafa/internal/chafa-base64.c" "$TEST_DIR/source/deps/
 CDRIP_PACKAGE_VERSION=0.0.0-test CDRIP_PACKAGE_COMMIT=test \
     cmake -S "$TEST_DIR/source" -B "$TEST_DIR/build" \
     -DPKG_CONFIG_EXECUTABLE="$TEST_DIR/bin/pkg-config" -DCMAKE_BUILD_TYPE=Release
-cmake --build "$TEST_DIR/build" --target cdrip_app cdrip --parallel 4
+if ! cmake --build "$TEST_DIR/build" --target cdrip_app cdrip --parallel 4 >"$TEST_DIR/build.log" 2>&1; then
+    cat "$TEST_DIR/build.log" >&2
+    exit 1
+fi
+if grep -i 'warning:' "$TEST_DIR/build.log"; then
+    echo 'The bundled build must not introduce compiler warnings' >&2
+    exit 1
+fi
 DESTDIR="$TEST_DIR/stage" cmake --install "$TEST_DIR/build" --prefix /usr --component cli
 
 # Installed executables must keep working after the build tree is removed.
