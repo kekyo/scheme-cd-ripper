@@ -8,6 +8,7 @@
 #include "cdrip/settings.h"
 #include "cdrip/device_settings.h"
 #include "cdrip/offset_measurement.h"
+#include "terminal_input.h"
 #include "version.h"
 
 #include <algorithm>
@@ -755,7 +756,7 @@ static std::string cover_art_mode = "auto";
 static ChafaPixelMode select_cover_pixel_mode(
     const std::string& mode, bool tty, const std::string& term, bool multiplexed) {
     if (!tty || multiplexed || mode == "ascii" || mode == "none") return CHAFA_PIXEL_MODE_SYMBOLS;
-    return (mode == "kitty" || term == "xterm-kitty")
+    return (mode == "kitty" || term == "xterm-kitty" || cdrip::terminal::probe_kitty_graphics())
         ? CHAFA_PIXEL_MODE_KITTY : CHAFA_PIXEL_MODE_SYMBOLS;
 }
 
@@ -1032,9 +1033,9 @@ bool render_rgba_ascii(
     }
 
     if (pixel_mode == CHAFA_PIXEL_MODE_KITTY) {
-        // An explicit Kitty request supplies capabilities that TERM alone may
-        // not advertise. Keep the process environment and automatic policy intact.
-        if (cover_art_mode == "kitty") {
+        // An explicit request or a successful query supplies capabilities that
+        // TERM alone may not advertise. Keep the process environment intact.
+        if (cover_art_mode == "kitty" || !term || std::strcmp(term, "xterm-kitty") != 0) {
             auto* fallback = chafa_term_db_get_fallback_info(term_db);
             if (fallback) {
                 chafa_term_info_supplement(term_info, fallback);
@@ -1459,7 +1460,7 @@ size_t prompt_cover_art_choice_with_default(
     while (true) {
         std::cout << "\nSelect cover art [1-2] (default " << default_choice << "): ";
         std::string line;
-        if (!std::getline(std::cin, line)) {
+        if (!cdrip::terminal::read_console_line(line)) {
             line.clear();
         }
         line = trim_ws(line);
@@ -2304,7 +2305,7 @@ CddbSelection select_cddb_entry_for_toc(
             std::cout << "\nSelect match [0-" << sorted_indices.size()
                       << "] (comma/space separated, default 1): ";
             std::string choice_line;
-            if (!std::getline(std::cin, choice_line)) {
+            if (!cdrip::terminal::read_console_line(choice_line)) {
                 choice_line.clear();
             }
             if (choice_line.empty()) {
@@ -2612,7 +2613,8 @@ MediaWaitResult wait_for_device_media_state(
         tv.tv_sec = 1;
         tv.tv_usec = 0;
 
-        int result = ::select(STDIN_FILENO + 1, &readfds, nullptr, nullptr, &tv);
+        int result = cdrip::terminal::has_buffered_console_input() ? 1 :
+            ::select(STDIN_FILENO + 1, &readfds, nullptr, nullptr, &tv);
         if (result < 0) {
             if (errno == EINTR) continue;
             std::cerr << "Failed while waiting for user input.\n";
@@ -2620,7 +2622,7 @@ MediaWaitResult wait_for_device_media_state(
         }
         if (result > 0 && FD_ISSET(STDIN_FILENO, &readfds)) {
             std::string line;
-            if (!std::getline(std::cin, line)) {
+            if (!cdrip::terminal::read_console_line(line)) {
                 return MediaWaitResult::Error;
             }
             if (line == "q" || line == "Q") {
@@ -3132,7 +3134,7 @@ int main(int argc, char** argv) {
 
             std::cout << "Select device [1-" << candidates->count << "] (default first with media, otherwise 1): ";
             std::string line;
-            std::getline(std::cin, line);
+            cdrip::terminal::read_console_line(line);
 
             size_t choice = 0;
             if (!line.empty()) {

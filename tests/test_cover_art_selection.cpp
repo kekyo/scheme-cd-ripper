@@ -2,6 +2,9 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <termios.h>
 
 #define main cdrip_app_main_for_tests
 #include "../src/main.cpp"
@@ -231,6 +234,12 @@ auto test_rip_progress_callback_writes_spinner_line_and_completion_newline = [](
 
 // Exercise renderer failures without altering the shared Chafa term database.
 static bool return_empty_canvas = false;
+static bool fragment_terminal_reads = false;
+extern "C" ssize_t __real_read(int, void*, size_t);
+extern "C" ssize_t __wrap_read(int fd, void* buffer, size_t size) {
+    return __real_read(fd, buffer,
+        fragment_terminal_reads && ::isatty(fd) ? std::min(size, size_t{1}) : size);
+}
 extern "C" GString* __real_chafa_canvas_print(ChafaCanvas*, ChafaTermInfo*);
 extern "C" GString* __wrap_chafa_canvas_print(ChafaCanvas* canvas, ChafaTermInfo* info) {
     return return_empty_canvas ? g_string_new("") : __real_chafa_canvas_print(canvas, info);
@@ -403,13 +412,179 @@ static void show_preview_fixture() {
     std::getline(std::cin, line);
 }
 
+// Drive a real PTY so detection, rendering, and subsequent input are checked
+// together. Replies are sent in response to commands, without timing sleeps.
+static void test_terminal_detection(
+    const std::string& mode, const std::string& term,
+    const std::string& response, bool expected_kitty,
+    bool expected_query, const std::string& multiplexer,
+    bool redirected_input, bool early_input) {
+    const int master = ::posix_openpt(O_RDWR | O_NOCTTY);
+    expect_true(master >= 0 && ::grantpt(master) == 0 && ::unlockpt(master) == 0,
+        "create terminal for capability detection");
+    const int slave = ::open(::ptsname(master), O_RDWR | O_NOCTTY);
+    expect_true(slave >= 0, "open terminal slave");
+    termios original{};
+    expect_true(::tcgetattr(slave, &original) == 0, "capture terminal settings");
+    int input_pipe[2]{};
+    expect_true(::pipe(input_pipe) == 0, "create redirected input");
+    expect_true(::write(input_pipe[1], "2\n", 2) == 2, "prepare redirected input");
+    ::close(input_pipe[1]);
+    std::cout.flush();
+    std::cerr.flush();
+    const pid_t child = ::fork();
+    expect_true(child >= 0, "fork terminal preview driver");
+    if (child == 0) {
+        ::close(master);
+        ::dup2(redirected_input ? input_pipe[0] : slave, STDIN_FILENO);
+        ::dup2(slave, STDOUT_FILENO);
+        ::dup2(slave, STDERR_FILENO);
+        ::close(input_pipe[0]);
+        ::close(slave);
+        ::unsetenv("TMUX");
+        ::unsetenv("STY");
+        ::unsetenv("COLORTERM");
+        ::unsetenv("KITTY_PID");
+        ::setenv("TERM", term.c_str(), 1);
+        if (!multiplexer.empty()) ::setenv(multiplexer.c_str(), "test", 1);
+        fragment_terminal_reads = response == "fragmented";
+        cover_art_mode = mode;
+        const auto png = make_cover_png(255, 0);
+        const CdRipCoverArt art{png.data(), png.size(), "image/png", 1, 1};
+        for (int preview = 0; preview < 2; ++preview) {
+            RenderedCoverArtAscii rendered;
+            std::string error;
+            expect_true(render_cover_art_ascii(art, 4, rendered, error),
+                "detected capability must render: " + error);
+            expect_true(!rendered.graphics.empty() == expected_kitty,
+                "preview format for " + mode + "/" + term + "/" + response);
+            if (expected_kitty) {
+                expect_true(!decode_kitty_image(rendered.graphics).pixels.empty(),
+                    "detected Kitty output contains image pixels");
+            }
+        }
+        termios restored{};
+        expect_true(::tcgetattr(STDOUT_FILENO, &restored) == 0 &&
+            restored.c_iflag == original.c_iflag && restored.c_oflag == original.c_oflag &&
+            restored.c_lflag == original.c_lflag && restored.c_cflag == original.c_cflag &&
+            std::memcmp(restored.c_cc, original.c_cc, sizeof(original.c_cc)) == 0,
+            "restore terminal settings before prompting");
+        expect_eq(term, std::getenv("TERM"), "detection must not change TERM");
+        std::cout << "READY_FOR_SELECTION\n" << std::flush;
+        expect_size(2, prompt_cover_art_choice_with_default(1),
+            "terminal replies must not consume or contaminate user input");
+        std::cout << "SELECTION_OK\n" << std::flush;
+        ::_exit(0);
+    }
+    ::close(input_pipe[0]);
+    ::close(slave);
+    // A watchdog catches hangs; correctness is determined by the protocol and
+    // the child's assertions, never by how quickly a reply happens to arrive.
+    ::alarm(15);
+    std::string output;
+    bool replied = false;
+    bool input_sent = redirected_input;
+    while (true) {
+        char bytes[1024];
+        const auto count = ::read(master, bytes, sizeof(bytes));
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) break;
+        output.append(bytes, static_cast<size_t>(count));
+        const auto query = output.find("\x1b_G");
+        if (!replied && query != std::string::npos &&
+            output.find("\x1b[c", query) != std::string::npos) {
+            replied = true;
+            const auto id_start = output.find("i=", query);
+            expect_true(id_start != std::string::npos, "query includes an image ID");
+            const auto id_end = output.find_first_not_of("0123456789", id_start + 2);
+            const auto id = output.substr(id_start + 2, id_end - id_start - 2);
+            expect_true(output.find("a=q", query) != std::string::npos,
+                "capability query must not display an image");
+            std::string reply;
+            if (response == "interrupt") {
+                expect_true(::kill(child, SIGINT) == 0, "interrupt capability detection");
+                continue;
+            }
+            if (early_input) {
+                reply = response == "partial-input" ? "2" : "2\n";
+                input_sent = response != "partial-input";
+            }
+            if (response == "da-first") reply += "\x1b[?1;2c";
+            if (response == "ok" || response == "fragmented" || response == "da-first" ||
+                response == "partial-input") reply += "\x1b_Gi=" + id + ";OK\x1b\\";
+            if (response == "error") reply += "\x1b_Gi=" + id + ";EINVAL:unsupported\x1b\\";
+            if (response == "wrong-id") reply += "\x1b_Gi=0;OK\x1b\\";
+            if (response == "late") reply += "\x1b_Gi=" + id + ";O";
+            if (response != "silent" && response != "late") reply += "\x1b[?1;2c";
+            if (!reply.empty()) {
+                expect_true(::write(master, reply.data(), reply.size()) ==
+                    static_cast<ssize_t>(reply.size()), "send terminal response");
+            }
+        }
+        if (!input_sent && output.find("READY_FOR_SELECTION") != std::string::npos) {
+            const std::string selection = response == "partial-input" ? "\n" :
+                response == "late" ? "K\x1b\\\x1b[?1;2c2\n" : "2\n";
+            expect_true(::write(master, selection.data(), selection.size()) ==
+                static_cast<ssize_t>(selection.size()), "select cover after detection");
+            input_sent = true;
+        }
+    }
+    termios final_settings{};
+    expect_true(::tcgetattr(master, &final_settings) == 0 &&
+        final_settings.c_lflag == original.c_lflag &&
+        std::memcmp(final_settings.c_cc, original.c_cc, sizeof(original.c_cc)) == 0,
+        "terminal settings survive normal exit and interruption");
+    ::close(master);
+    int status = 0;
+    expect_true(::waitpid(child, &status, 0) == child, "wait for preview driver");
+    ::alarm(0);
+    if (response == "interrupt") {
+        expect_true(replied && WIFSIGNALED(status) && WTERMSIG(status) == SIGINT,
+            "interruption retains the original signal behavior");
+        return;
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) std::cerr << output;
+    expect_true(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+        "terminal detection driver succeeded");
+    expect_true(replied == expected_query, "only unknown auto terminals are queried");
+    if (replied) {
+        const auto first = output.find("\x1b_G");
+        expect_true(output.find("\x1b_G", first + 3) == std::string::npos,
+            "capability is cached and responses are not echoed");
+    }
+    expect_true(output.find("SELECTION_OK") != std::string::npos,
+        "cover selection remains usable");
+}
+
+static void test_terminal_detection_cases() {
+    test_terminal_detection("auto", "xterm-256color", "da-first", false, true, "", false, false);
+    test_terminal_detection("auto", "xterm-256color", "interrupt", false, true, "", false, false);
+    test_terminal_detection("auto", "xterm-256color", "fragmented", true, true, "", false, true);
+    test_terminal_detection("auto", "xterm-256color", "late", false, true, "", false, false);
+    test_terminal_detection("auto", "xterm-256color", "partial-input", true, true, "", false, true);
+    test_terminal_detection("auto", "xterm-256color", "ok", true, true, "", false, true);
+    test_terminal_detection("auto", "xterm-256color", "da", false, true, "", false, false);
+    test_terminal_detection("auto", "xterm-256color", "error", false, true, "", false, true);
+    test_terminal_detection("auto", "xterm-256color", "wrong-id", false, true, "", false, false);
+    test_terminal_detection("auto", "xterm-256color", "silent", false, true, "", false, true);
+    test_terminal_detection("auto", "xterm-kitty", "silent", true, false, "", false, false);
+    test_terminal_detection("kitty", "xterm-256color", "silent", true, false, "", false, false);
+    test_terminal_detection("ascii", "xterm-kitty", "silent", false, false, "", false, false);
+    test_terminal_detection("none", "xterm-256color", "silent", false, false, "", false, false);
+    test_terminal_detection("auto", "xterm-256color", "silent", false, false, "TMUX", false, false);
+    test_terminal_detection("auto", "xterm-kitty", "silent", false, false, "STY", false, false);
+    test_terminal_detection("auto", "xterm-256color", "silent", false, false, "", true, false);
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) {
-        if (std::string(argv[1]) == "--diagnostics") test_preview_diagnostics();
+        if (std::string(argv[1]) == "--detection") test_terminal_detection_cases();
+        else if (std::string(argv[1]) == "--diagnostics") test_preview_diagnostics();
         else if (std::string(argv[1]) == "--preview") show_preview_fixture();
         else test_kitty_output();
         return 0;
     }
+    test_terminal_detection_cases();
     expect_true(select_cover_pixel_mode("auto", true, "xterm-kitty", false) == CHAFA_PIXEL_MODE_KITTY, "Kitty auto detection");
     expect_true(select_cover_pixel_mode("auto", true, "xterm-kitty", true) == CHAFA_PIXEL_MODE_SYMBOLS, "multiplexer fallback");
     expect_true(select_cover_pixel_mode("kitty", false, "xterm-kitty", false) == CHAFA_PIXEL_MODE_SYMBOLS, "redirect fallback");

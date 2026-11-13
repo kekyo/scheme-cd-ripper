@@ -245,10 +245,14 @@ If the player supports cover art display, the cover art image will be shown:
 ### Terminal cover art
 
 Select the preview format with `--cover-art auto|kitty|ascii|none`.
-The default, `auto`, uses Kitty graphics when `TERM=xterm-kitty`, and ANSI/ASCII otherwise.
+The default, `auto`, uses Kitty graphics without querying the terminal when `TERM=xterm-kitty`.
+For other terminals, it queries Kitty graphics support at the first preview.
+Confirmed support enables Kitty graphics; unsupported terminals and queries that time out use ANSI/ASCII.
+The result is reused for subsequent previews during the same run.
 `kitty` selects Kitty graphics, `ascii` selects ANSI/ASCII, and `none` disables previews.
 
-Even if your terminal supports Kitty images, if you are using a terminal that does not support `TERM=xterm-kitty`, please specify `--cover-art kitty`.
+No query is sent when replies cannot be read from the output terminal, for example when standard input is redirected.
+If your terminal supports Kitty images but automatic detection fails, you can select `--cover-art kitty`.
 You do not need to change `TERM`.
 If a preview cannot be generated, the reason will be displayed on standard error.
 Even if candidate images cannot be displayed, you can still select cover art by number.
@@ -455,7 +459,7 @@ A special server id `musicbrainz` is not required `[cddb.musicbrainz]` section d
 - libjpeg
 - liblcms 2.0
 - Chafa 1.14.2, built automatically from the pinned submodule
-- CMake, C/C++17 compilers, Autoconf, Automake and Libtool
+- CMake, a C compiler, a C++17 compiler, Autoconf, Automake and Libtool
 - Node.js and [screw-up](https://github.com/kekyo/screw-up) (Automated-versioning tool)
 
 `build_package.sh`:

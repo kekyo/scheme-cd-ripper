@@ -239,9 +239,9 @@ MusicBrainzから情報を取得した場合は、追加でカバーアート画
 
 ### 端末でのカバーアート表示
 
-`--cover-art auto|kitty|ascii|none`で表示方式を選べます。初期値の`auto`は`TERM=xterm-kitty`の端末でKitty画像表示を使い、それ以外ではANSI/ASCII表示を使います。`kitty`はKitty方式、`ascii`はANSI/ASCII表示、`none`は非表示です。
+`--cover-art auto|kitty|ascii|none`で表示方式を選べます。初期値は`auto`です。`auto`では、`TERM=xterm-kitty`なら問い合わせを行わずKitty画像表示を使います。それ以外の端末では、初回のプレビュー時にKitty方式への対応を問い合わせます。対応を確認できればKitty方式、未対応や応答待ちの期限切れの場合はANSI/ASCII表示です。判定結果は、その実行中のプレビューで再利用します。
 
-ターミナルがKitty画像に対応していても`TERM=xterm-kitty`を使わない端末では、`--cover-art kitty`を指定してください。`TERM`を変更する必要はありません。
+`kitty`はKitty方式、`ascii`はANSI/ASCII表示、`none`は非表示です。標準入力がリダイレクトされているなど、表示先の端末から応答を読めない場合は問い合わせを行いません。Kitty方式に対応しているのに自動検出できない端末では、`--cover-art kitty`を指定できます。`TERM`を変更する必要はありません。
 プレビューを生成できない場合は、理由を標準エラーへ表示します。候補画像を表示できなくても、番号によるカバーアートの選択は続けられます。
 
 tmuxやscreen経由ではANSI/ASCII表示に戻ります。標準出力をファイルへリダイレクトした場合は画像を表示しません。`--no-cover-art`（`-nv`）は、方式にかかわらず端末表示を無効にします。画像の取得とFLACへの埋め込みには影響しません。
@@ -431,7 +431,8 @@ path=/~cddb/cddb.cgi
 ## ソースからのビルド
 
 Debian/Ubuntuでは、ビルドに必要なパッケージを導入してから実行してください。
-CMake、C/C++コンパイラ、Autoconf、Automake、Libtool、Node.js用の[screw-up](https://github.com/kekyo/screw-up)を使います。
+CMake、Cコンパイラ、C++17対応コンパイラ、Autoconf、Automake、Libtool、Node.js用の[screw-up](https://github.com/kekyo/screw-up)を使います。
+Chafaは、固定したsubmoduleからビルドに取り込みます。
 
 ```bash
 sudo apt-get install build-essential cmake dpkg-dev nodejs npm autoconf automake libtool pkg-config xz-utils \

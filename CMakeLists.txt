@@ -144,12 +144,15 @@ target_compile_options(cdrip PRIVATE ${COMMON_CFLAGS})
 target_link_libraries(cdrip PUBLIC ${COMMON_LIBS})
 add_dependencies(cdrip version_header)
 
+add_library(cdrip_terminal STATIC src/terminal_input.cpp)
+target_compile_options(cdrip_terminal PRIVATE -Wall -Wextra -pedantic)
+
 add_executable(cdrip_app src/main.cpp)
 set_target_properties(cdrip_app PROPERTIES OUTPUT_NAME cdrip INSTALL_RPATH "$ORIGIN/../lib/cdrip")
 target_include_directories(cdrip_app PRIVATE ${COMMON_INCLUDES} ${VERSION_DIR})
 target_link_directories(cdrip_app PRIVATE ${COMMON_LIB_DIRS})
 target_compile_options(cdrip_app PRIVATE ${COMMON_CFLAGS})
-target_link_libraries(cdrip_app PRIVATE cdrip_static cdrip_chafa)
+target_link_libraries(cdrip_app PRIVATE cdrip_static cdrip_chafa cdrip_terminal)
 add_dependencies(cdrip_app version_header)
 install(TARGETS cdrip_app RUNTIME DESTINATION bin COMPONENT cli)
 
@@ -204,8 +207,8 @@ add_executable(cdrip_test_cover_art_selection
 target_include_directories(cdrip_test_cover_art_selection PRIVATE ${COMMON_INCLUDES} ${VERSION_DIR})
 target_link_directories(cdrip_test_cover_art_selection PRIVATE ${COMMON_LIB_DIRS})
 target_compile_options(cdrip_test_cover_art_selection PRIVATE ${COMMON_CFLAGS})
-target_link_libraries(cdrip_test_cover_art_selection PRIVATE cdrip_static cdrip_chafa)
-target_link_options(cdrip_test_cover_art_selection PRIVATE -Wl,--wrap=chafa_canvas_print)
+target_link_libraries(cdrip_test_cover_art_selection PRIVATE cdrip_static cdrip_chafa cdrip_terminal)
+target_link_options(cdrip_test_cover_art_selection PRIVATE -Wl,--wrap=chafa_canvas_print -Wl,--wrap=read)
 add_dependencies(cdrip_test_cover_art_selection version_header)
 
 add_executable(cdrip_test_drive_backend
@@ -232,7 +235,7 @@ add_executable(cdrip_test_rip_progress_display
 target_include_directories(cdrip_test_rip_progress_display PRIVATE ${COMMON_INCLUDES} ${VERSION_DIR})
 target_link_directories(cdrip_test_rip_progress_display PRIVATE ${COMMON_LIB_DIRS})
 target_compile_options(cdrip_test_rip_progress_display PRIVATE ${COMMON_CFLAGS})
-target_link_libraries(cdrip_test_rip_progress_display PRIVATE cdrip_static cdrip_chafa)
+target_link_libraries(cdrip_test_rip_progress_display PRIVATE cdrip_static cdrip_chafa cdrip_terminal)
 add_dependencies(cdrip_test_rip_progress_display version_header)
 
 add_executable(cdrip_test_accuraterip tests/test_accuraterip.cpp)
@@ -241,5 +244,5 @@ target_compile_options(cdrip_test_accuraterip PRIVATE ${COMMON_CFLAGS})
 
 add_executable(cdrip_test_cli_config tests/test_cli_config.cpp)
 target_include_directories(cdrip_test_cli_config PRIVATE ${COMMON_INCLUDES} ${VERSION_DIR})
-target_link_libraries(cdrip_test_cli_config PRIVATE cdrip_static cdrip_chafa)
+target_link_libraries(cdrip_test_cli_config PRIVATE cdrip_static cdrip_chafa cdrip_terminal)
 target_compile_options(cdrip_test_cli_config PRIVATE ${COMMON_CFLAGS})
