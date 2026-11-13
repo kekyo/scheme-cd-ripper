@@ -93,40 +93,6 @@ TIPS: MusicBrainzタグ付けで大量のCDを連続してインポートした�
 
 TIPS: いくつかのハードウェアメディアプレーヤーでは、圧縮レベルを6以上にすると誤動作を起こします。したがって、Scheme CD ripperのデフォルトは5となっています。
 
-### 読み取りオフセットとAccurateRip照合
-
-ドライブの読み取り位置のずれは`--read-offset`で補正できます。値の単位は左右1組のサンプルで、正の値は後方の音声を読みます。初期値は0です。使用する機種の値を[AccurateRipの公式一覧](https://www.accuraterip.com/driveoffsets.htm)で確認してください。値は自動設定されません。
-
-例えば、補正値が+6のドライブでは次のように指定します。
-
-```bash
-cdrip --read-offset 6 --accuraterip --no-eject
-```
-
-補正しても各トラックの長さは変わりません。隣接する音声トラックから必要な分を読み足し、ディスク端やデータトラックとの境界を越える部分は無音で埋めます。補正値と無音で埋めたサンプル数は、FLACの`READ_OFFSET`と`READ_OFFSET_PADDED_SAMPLES`タグに記録します。ReplayGainとAccurateRipにも補正後の音声を使用します。
-
-`--accuraterip`は、リッピング中に計算したv1/v2チェックサムをAccurateRipデータベースと比較します。通常の音楽CDが対象で、データトラックを含むCDは未対応です。トラックごとに次の結果を表示します。
-
-| 表示 | 意味 |
-|---|---|
-| `match` | データベースの値と一致。照合方式と登録件数を表すconfidenceも表示します。 |
-| `mismatch` | 登録はありますが、今回の音声と一致する値がありません。 |
-| `not in database` | CDが未登録です。 |
-| `network error` | 通信に失敗しました。 |
-| `invalid database response` | 応答が不正で照合できませんでした。 |
-| `unsupported disc layout` | 未対応のディスク構成です。 |
-
-照合結果によってFLACを削除したり、終了コードを変更したりはしません。一致しなかった場合も保存されるため、表示された結果を確認してください。`best`モードはドライブの読み取りを検査する設定で、AccurateRip照合とは別に指定できます。
-
-### 端末でのカバーアート表示
-
-`--cover-art auto|kitty|ascii|none`で表示方式を選べます。初期値の`auto`は`TERM=xterm-kitty`の端末でKitty画像表示を使い、それ以外ではANSI/ASCII表示を使います。`kitty`はKitty方式、`ascii`はANSI/ASCII表示、`none`は非表示です。
-
-Elder Termsなど、Kitty画像に対応していても`TERM=xterm-256color`を使う端末では、`--cover-art kitty`を指定してください。`TERM`を変更する必要はありません。
-プレビューを生成できない場合は、理由を標準エラーへ表示します。候補画像を表示できなくても、番号によるカバーアートの選択は続けられます。
-
-tmuxやscreen経由ではANSI/ASCII表示に戻ります。標準出力をファイルへリダイレクトした場合は画像を表示しません。既存の`--no-aa`も方式にかかわらずカバーアートの端末表示を無効にします。
-
 ## CDDBタグの挿入
 
 CDDBサーバー、またはMusicBrainzから楽曲の情報を自動的に取得して、トラック名を自動的に適用したり、
@@ -264,6 +230,40 @@ MusicBrainzから情報を取得した場合は、追加でカバーアート画
 - `-dc`/`--discogs` で優先順を指定できます: `always`（デフォルト: Discogsを優先し失敗時にCAA）、`fallback`（CAA優先で失敗時にDiscogs）、`no`（Discogsを使用しない）。
 - Discogsのデータと画像はDiscogs API経由で取得します。Discogs API Terms of Use: https://support.discogs.com/hc/en-us/articles/360009334593-API-Terms-of-Use
 
+### 端末でのカバーアート表示
+
+`--cover-art auto|kitty|ascii|none`で表示方式を選べます。初期値の`auto`は`TERM=xterm-kitty`の端末でKitty画像表示を使い、それ以外ではANSI/ASCII表示を使います。`kitty`はKitty方式、`ascii`はANSI/ASCII表示、`none`は非表示です。
+
+ターミナルがKitty画像に対応していても`TERM=xterm-kitty`を使わない端末では、`--cover-art kitty`を指定してください。`TERM`を変更する必要はありません。
+プレビューを生成できない場合は、理由を標準エラーへ表示します。候補画像を表示できなくても、番号によるカバーアートの選択は続けられます。
+
+tmuxやscreen経由ではANSI/ASCII表示に戻ります。標準出力をファイルへリダイレクトした場合は画像を表示しません。既存の`--no-aa`も方式にかかわらずカバーアートの端末表示を無効にします。
+
+### 読み取りオフセットとAccurateRip照合
+
+ドライブの読み取り位置のずれは`--read-offset`で補正できます。値の単位は左右1組のサンプルで、正の値は後方の音声を読みます。初期値は0です。使用する機種の値を[AccurateRipの公式一覧](https://www.accuraterip.com/driveoffsets.htm)で確認してください。値は自動設定されません。
+
+例えば、補正値が+6のドライブでは次のように指定します。
+
+```bash
+cdrip --read-offset 6 --accuraterip --no-eject
+```
+
+補正しても各トラックの長さは変わりません。隣接する音声トラックから必要な分を読み足し、ディスク端やデータトラックとの境界を越える部分は無音で埋めます。補正値と無音で埋めたサンプル数は、FLACの`READ_OFFSET`と`READ_OFFSET_PADDED_SAMPLES`タグに記録します。ReplayGainとAccurateRipにも補正後の音声を使用します。
+
+`--accuraterip`は、リッピング中に計算したv1/v2チェックサムをAccurateRipデータベースと比較します。通常の音楽CDが対象で、データトラックを含むCDは未対応です。トラックごとに次の結果を表示します。
+
+| 表示 | 意味 |
+|---|---|
+| `match` | データベースの値と一致。照合方式と登録件数を表すconfidenceも表示します。 |
+| `mismatch` | 登録はありますが、今回の音声と一致する値がありません。 |
+| `not in database` | CDが未登録です。 |
+| `network error` | 通信に失敗しました。 |
+| `invalid database response` | 応答が不正で照合できませんでした。 |
+| `unsupported disc layout` | 未対応のディスク構成です。 |
+
+照合結果によってFLACを削除したり、終了コードを変更したりはしません。一致しなかった場合も保存されるため、表示された結果を確認してください。`best`モードはドライブの読み取りを検査する設定で、AccurateRip照合とは別に指定できます。
+
 ## ファイル名のフォーマット
 
 ファイル名フォーマットは、ディレクトリ名を含むあらゆるパス用のテンプレートであり、中括弧を用いてVorbis commentsのキー名から自動的に柔軟にパスを決定できます。
@@ -375,13 +375,8 @@ path=/~cddb/cddb.cgi
 
 ## ソースからのビルド
 
-画像表示ライブラリChafa 1.14.2を同梱しています。
-この版には[Kitty画像のBase64出力の修正](https://github.com/hpjansson/chafa/commit/f08d59c27c2d3958eead1018e097a2e6d454ece6)が含まれます。
-システムのChafaを更新したり、`libchafa-dev`を導入したりする必要はありません。
-
 Debian/Ubuntuでは、ビルドに必要なパッケージを導入してから実行してください。
-CMake、C/C++コンパイラ、Autoconf、Automake、Libtoolを使います。
-Gitから取得したソースの版番号は、Node.js用の[screw-up](https://github.com/kekyo/screw-up)が決定します。
+CMake、C/C++コンパイラ、Autoconf、Automake、Libtool、Node.js用の[screw-up](https://github.com/kekyo/screw-up)を使います。
 
 ```bash
 sudo apt-get install build-essential cmake dpkg-dev nodejs npm autoconf automake libtool pkg-config xz-utils \
