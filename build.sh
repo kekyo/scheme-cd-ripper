@@ -32,7 +32,7 @@ require_command() {
 detect_version() {
     require_command screw-up
     local detected_version
-    detected_version="$(printf '%s\n' '{version}' | screw-up format | tr -d '\r' | head -n 1)"
+    detected_version="$(printf '%s\n' '{version}' | screw-up -f format | tr -d '\r' | head -n 1)"
     [ -n "${detected_version}" ] || fail 'screw-up did not return a version'
     printf '%s\n' "${detected_version}"
 }
