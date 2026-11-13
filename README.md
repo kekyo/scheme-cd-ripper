@@ -85,6 +85,7 @@ The following are the options:
 - `-nv`, `--no-cover-art`: Disable terminal cover previews; equivalent to `-v none`.
 - `-ro`, `--read-offset <num>`: Correct the read position in stereo sample frames.
 - `-na`, `--no-accurate`: Disable AccurateRip verification, which is enabled by default.
+- `--measure-offset [tracks]`: Measure a read offset using the inserted CD (default: 3 tracks).
 - `-l`, `--logs`: Print debug logs.
 - `--permissions <ugo>`: Set output permissions as a 3-digit octal file mode such as `664`. Ignored by `--update`.
 - `--permission-warnings`, `--no-permission-warnings`: Show or hide warnings when output permission adjustment fails. Ignored by `--update`.
@@ -322,6 +323,20 @@ Additionally, it includes the following features:
 - The `.flac` extension will be appended automatically if omitted.
 - Scheme CD ripper supports GNOME GIO, allowing you to specify a direct save URL to a remote host (requires GVfs configuration).
   - ex: `“smb://nas.yourhome.localdomain/smbshare/music/{title:n}.flac”`
+
+### Measuring offsets with a CD
+
+`--measure-offset` obtains a candidate from the AccurateRip drive catalogue and checks it against records for the inserted audio CD. It reads the first requested number of tracks in full and then exits. If the disc has fewer tracks, all available tracks are measured.
+
+```sh
+cdrip --measure-offset
+cdrip --measure-offset 5 -d /dev/sr0
+```
+
+Results include the stable device path, disc ID, listed offset, checksum versions and confidence for each track. Measurement does not save FLAC files, fetch cover art, scan ReplayGain, or eject the disc. The normal ripping `repeat` setting does not apply.
+The command works even with `accuraterip=false` in the configuration. Combining it with `--no-accurate`, `--read-offset`, or `--update` is an error.
+
+Compare results from your own pressed CDs and choose the value to enter in `[read_offset]`. The command does not aggregate measurements or modify configuration files.
 
 ### Update existing FLACs using embedded CDDB tags
 

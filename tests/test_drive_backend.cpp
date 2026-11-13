@@ -1,4 +1,5 @@
 #include "../src/cdrip/device_settings.h"
+#include "../src/cdrip/offset_measurement.h"
 #include <cstdlib>
 #include <sys/resource.h>
 #include <csignal>
@@ -1439,7 +1440,89 @@ static void test_read_offsets() {
     }
 }
 
+static void test_offset_measurement() {
+    using namespace cdrip::detail;
+    const DriveIdentity identity{"HL-DT-ST", "BD-RE BH16NS58", "1.03"};
+    const std::string row = "<tr><td><font>LG Electronics - BD-RE&nbsp; BH16NS58</font></td><td>+6</td></tr>";
+    expect_true(parse_drive_offsets(row, identity).samples == 6, "catalogue normalization must handle the inquiry vendor and spaces");
+    expect_true(!parse_drive_offsets(row, {"HL-DT-ST", "BD-RE BH16NS58-extra", ""}).samples,
+        "similar model names must not match");
+    expect_true(!parse_drive_offsets(row + "<tr><td>LG Electronics - BD-RE BH16NS58</td><td>12</td></tr>", identity).samples,
+        "conflicting catalogue rows must not select a value");
+    expect_true(!parse_drive_offsets("<tr><td>LG Electronics - BD-RE BH16NS58</td><td>[Purged]</td></tr>", identity).samples,
+        "purged catalogue models must not select zero");
+    expect_true(parse_drive_offsets("<tr><td>Vendor - Model</td><td>0</td></tr>", {"Vendor", "Model", ""}).samples == 0,
+        "a listed zero is a valid candidate");
+    expect_true(parse_drive_offsets("unavailable", identity).detail == "invalid drive catalogue response", "malformed catalogue is distinct from not listed");
+
+    auto state = make_backend_state();
+    state.tracks = {{1, 0, 99, 1}, {2, 100, 199, 1}, {3, 200, 309, 1}};
+    FakeBackendScope scope(state);
+    const CdRipSettings settings{"", 1, RIP_MODES_FAST, false};
+    auto* rip = open_fake_rip(settings);
+    cdrip_set_read_offset(rip, 1234);
+    const char* error = nullptr;
+    auto* toc = cdrip_build_disc_toc(rip, &error);
+    expect_true(toc && !error, "measurement TOC");
+    static AccurateRipDatabase database;
+    database = {AccurateRipStatus::Available, {}, {std::vector<AccurateRipTrackEntry>(3)}};
+    const int correction = 589;
+    for (size_t track = 0; track < 3; ++track) {
+        const auto& info = state.tracks[track];
+        uint32_t v1 = 0, v2 = 0;
+        const long frames = (info.end - info.start + 1) * 588;
+        for (long i = 0; i < frames; ++i) {
+            if ((track == 0 && i + 1 < 2940) || (track == 2 && i + 1 > frames - 2940)) continue;
+            const long source = info.start * 588 + i + correction;
+            const auto& sector = state.sectors[source / 588];
+            const uint32_t word = static_cast<uint16_t>(sector[(source % 588) * 2]) |
+                (static_cast<uint32_t>(static_cast<uint16_t>(sector[(source % 588) * 2 + 1])) << 16);
+            const uint64_t product = static_cast<uint64_t>(word) * (i + 1);
+            v1 += static_cast<uint32_t>(product);
+            v2 += static_cast<uint32_t>(product) + static_cast<uint32_t>(product >> 32);
+        }
+        database.pressings[0][track] = {static_cast<unsigned>(5 + track), track == 1 ? v2 : v1};
+    }
+    auto result = measure_offsets(rip, *toc, database, correction, 3, {});
+    expect_true(result.error.empty() && result.tracks.size() == 3, "three selected tracks must be measured");
+    for (size_t i = 0; i < 3; ++i) {
+        expect_true(result.tracks[i].error.empty() && result.tracks[i].matches.size() == 1, "listed offset must match each full track");
+        expect_true(result.tracks[i].matches[0].samples == correction && result.tracks[i].matches[0].record == 0, "measurement must ignore the configured ripping offset");
+    }
+    expect_true(result.tracks[1].matches[0].v2, "v2-only database records must match");
+    result = measure_offsets(rip, *toc, database, correction, 1, {});
+    expect_true(result.tracks.size() == 1 && result.tracks[0].matches.size() == 1,
+        "the last selected track is not necessarily the last disc track");
+    result = measure_offsets(rip, *toc, database, correction, 99, {});
+    expect_true(result.requested_tracks == 99 && result.tracks.size() == 3, "track count must be clipped to the disc");
+    const int reads = state.read_calls;
+    auto missing = database;
+    missing.status = AccurateRipStatus::NotFound;
+    result = measure_offsets(rip, *toc, missing, correction, 3, {});
+    expect_true(!result.error.empty() && state.read_calls == reads, "unregistered discs must fail before reading PCM");
+
+    const OffsetLookupServices services{
+        [](const DriveIdentity&) { return DriveOffsetLookup{589, "listed"}; },
+        [](const CdRipDiscToc&) { return database; }};
+    std::ostringstream output;
+    expect_true(run_offset_measurement(rip, 3, services, output) == 0, "dedicated command must finish using injected network responses");
+    expect_contains(output.str(), "all 3 measured tracks match record 1", "full matches must share a record");
+    expect_true(state.eject_calls == 0, "measurement must keep the disc inserted");
+
+    auto split = measure_offsets(rip, *toc, database, correction, 3, {});
+    split.tracks[1].matches[0].record = 1;
+    output.str("");
+    print_offset_measurement(output, split);
+    expect_contains(output.str(), "No single database record matches all", "unrelated per-track records must not form a full match");
+    state.fail_read_call = state.read_calls;
+    result = measure_offsets(rip, *toc, database, correction, 3, {});
+    expect_true(!result.tracks[0].error.empty() && result.tracks[0].matches.empty(), "read failures must not produce matches");
+    cdrip_release_disctoc(toc);
+    cdrip_close(rip, false, nullptr);
+}
+
 int main() {
+    test_offset_measurement();
     test_read_offsets();
     test_final_flush_failure();
     test_detect_cd_drives_uses_swapped_backend();

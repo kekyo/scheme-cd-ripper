@@ -20,3 +20,17 @@ for option in -d -f -m -c -w -i -ft -dc -v -ro; do
     fi
 done
 "${BUILD_DIR}/cdrip_test_cli_config" -c auto -v kitty -nv -na -ro -6
+"${BUILD_DIR}/cdrip_test_cli_config" --measure-offset
+"${BUILD_DIR}/cdrip_test_cli_config" --measure-offset 5 -d /dev/sr0
+for value in 0 -1 1.5 abc 2147483648; do
+    if "${BUILD_DIR}/cdrip_test_cli_config" --measure-offset "$value"; then
+        echo "Unexpectedly accepted measurement count $value" >&2
+        exit 1
+    fi
+done
+if "${BUILD_DIR}/cdrip_test_cli_config" --measure-offset --no-accurate ||
+   "${BUILD_DIR}/cdrip_test_cli_config" --measure-offset --update . ||
+   "${BUILD_DIR}/cdrip_test_cli_config" --measure-offset --read-offset 0; then
+    echo "Unexpectedly accepted conflicting measurement options" >&2
+    exit 1
+fi

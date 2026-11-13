@@ -5,6 +5,13 @@
 #include "cdrip/cdrip.h"
 
 namespace cdrip::detail {
+/** Hardware identifiers returned by the drive's SCSI INQUIRY command. */
+struct DriveIdentity {
+    std::string vendor;
+    std::string model;
+    std::string revision;
+};
+
 /** Resolve device symlinks, retaining the original path when unavailable. */
 std::string canonicalize_device_path(const std::string& path);
 

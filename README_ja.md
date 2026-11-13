@@ -81,6 +81,7 @@ cdrip -d /dev/sr1 -f "{artist:n/title:n}.flac" -r
 - `-nv`, `--no-cover-art`: カバーアートの端末表示を無効化する。`-v none`と同じ。
 - `-ro`, `--read-offset <num>`: 左右1組のサンプル単位で読み取り位置を補正する。
 - `-na`, `--no-accurate`: 既定で有効なAccurateRip照合を無効化する。
+- `--measure-offset [tracks]`: 挿入中のCDを使って読み取りオフセットを測定する。トラック数省略時は3。
 - `-l`, `--logs`: デバッグログを出力する。
 - `--permissions <ugo>`: 出力パーミッションを`664`のような3桁8進数で指定する。`--update`では無視。
 - `--permission-warnings`, `--no-permission-warnings`: 出力パーミッション補正失敗時のwarning表示を切り替える。`--update`では無視。
@@ -312,6 +313,21 @@ AccurateRip照合は既定で有効です。`--no-accurate`（`-na`）または`
 - `.flac` 拡張子は省略すると自動的に付加されます。
 - Scheme CD ripperはGNOME GIOをサポートしているため、リモートホストへの直接保存用URLを指定することも可能です（GVfsの設定が必要です）。
   - 例: `"smb://nas.yourhome.localdomain/smbshare/music/{title:n}.flac"`
+
+### CDを使ったオフセット測定
+
+`--measure-offset`は、AccurateRipのドライブ一覧から取得した候補値を、挿入中のCDの登録データと照合します。対象は通常の音楽CDです。
+先頭から指定数のトラックを最後まで読み、1枚分の測定結果を表示して終了します。指定数より曲数が少ないCDでは全トラックを調べます。
+
+```sh
+cdrip --measure-offset
+cdrip --measure-offset 5 -d /dev/sr0
+```
+
+測定結果には、デバイス固有パス、CD識別子、掲載値、トラックごとの照合方式と件数を表示します。FLACの保存、カバー画像取得、ReplayGain処理、ディスクの排出は行いません。通常リップの`repeat`設定も適用しません。
+通常リップ用の`accuraterip=false`でも測定は可能です。`--no-accurate`、`--read-offset`、`--update`との同時指定はエラーになります。
+
+測定者が手元の複数のプレスCDで結果を比較し、採用する値を`[read_offset]`へ設定してください。測定コマンドは結果を集約したり、設定ファイルを書き換えたりしません。
 
 ### 既存のFLACファイルを埋め込まれたCDDBタグを使用して更新する
 

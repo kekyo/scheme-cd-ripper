@@ -14,6 +14,19 @@
 
 #include "internal.h"
 
+static bool live_get_identity(void* drive, cdrip::detail::DriveIdentity& identity, std::string& error) {
+    cdio_hwinfo_t hardware{};
+    if (!drive || !cdio_get_hwinfo(static_cast<cdrom_drive_t*>(drive)->p_cdio, &hardware)) {
+        error = "SCSI INQUIRY did not return hardware identifiers";
+        return false;
+    }
+    identity.vendor = cdrip::detail::trim(hardware.psz_vendor);
+    identity.model = cdrip::detail::trim(hardware.psz_model);
+    identity.revision = cdrip::detail::trim(hardware.psz_revision);
+    error.clear();
+    return true;
+}
+
 namespace {
 
 using cdrip::detail::BackendDetectedDrive;
@@ -266,6 +279,7 @@ const DriveBackend kLiveDriveBackend{
     live_get_disc_last_sector,
     live_seek_reader,
     live_read_sector,
+    live_get_identity,
 };
 
 const DriveBackend* g_override_drive_backend = nullptr;

@@ -7,6 +7,7 @@
 #include "cdrip/internal.h"
 #include "cdrip/settings.h"
 #include "cdrip/device_settings.h"
+#include "cdrip/offset_measurement.h"
 #include "version.h"
 
 #include <algorithm>
@@ -2633,6 +2634,7 @@ MediaWaitResult wait_for_device_media_state(
 
 struct Options {
     std::optional<int> read_offset;
+    std::optional<unsigned> measure_tracks;
     std::optional<bool> accuraterip;
     std::optional<std::string> cover_art;
     std::optional<std::string> device; // empty = auto-detect
@@ -2756,6 +2758,14 @@ Options parse_args(int argc, char** argv) {
             const auto value = cdrip::detail::normalized_setting(next_argument(argc, argv, i));
             if (!cdrip::detail::valid_discogs_mode(value)) invalid_argument(arg, "no|always|fallback");
             opts.discogs = value;
+        } else if (arg == "--measure-offset") {
+            int count = 3;
+            if (i + 1 < argc && (argv[i + 1][0] != '-' ||
+                    std::isdigit(static_cast<unsigned char>(argv[i + 1][1])))) {
+                if (!cdrip::detail::parse_setting_integer(next_argument(argc, argv, i), count) || count <= 0)
+                    invalid_argument(arg, "a positive track count (default: 3)");
+            }
+            opts.measure_tracks = static_cast<unsigned>(count);
         } else if (arg == "--no-accurate" || arg == "-na") {
             opts.accuraterip = false;
         } else if (arg == "--read-offset" || arg == "-ro") {
@@ -2813,8 +2823,9 @@ Options parse_args(int argc, char** argv) {
             opts.update_paths.push_back(next_argument(argc, argv, i));
             while (i + 1 < argc && argv[i + 1][0] != '-') opts.update_paths.push_back(argv[++i]);
         } else if (arg == "-?" || arg == "-h" || arg == "--help") {
-            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-g|-ng] [-dc no|always|fallback] [-v mode|-nv] [-na] [-ro samples] [--permissions ugo] [--permission-warnings|--no-permission-warnings] [--tag key=value] [-i config] [-u file|dir ...]\n";
+            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-g|-ng] [-dc no|always|fallback] [-v mode|-nv] [-na] [-ro samples] [--measure-offset [tracks]] [--permissions ugo] [--permission-warnings|--no-permission-warnings] [--tag key=value] [-i config] [-u file|dir ...]\n";
             std::cout << "  -na / --no-accurate: Disable AccurateRip v1/v2 verification (enabled by default)\n";
+            std::cout << "  --measure-offset [tracks]: Measure the inserted CD without saving FLAC (default: 3 tracks); normal rip output, repeat and metadata options do not apply\n";
             std::cout << "  -ro / --read-offset samples: Signed stereo sample correction (default: 0); disc/data edges are zero-filled\n";
             std::cout << "  -v / --cover-art auto|kitty|ascii|none: Terminal cover preview (default: auto)\n";
             std::cout << "  -d  / --device: CD device path (default: auto-detect)\n";
@@ -2845,6 +2856,10 @@ Options parse_args(int argc, char** argv) {
             std::cerr << "Error: unknown option " << arg << "\n";
             std::exit(1);
         }
+    }
+    if (opts.measure_tracks && (opts.accuraterip == false || opts.read_offset || !opts.update_paths.empty())) {
+        std::cerr << "Error: --measure-offset cannot be combined with --no-accurate, --read-offset, or --update\n";
+        std::exit(1);
     }
     return opts;
 }
@@ -2997,7 +3012,7 @@ int main(int argc, char** argv) {
     std::string filter_title = trim_ws(cli_opts.filter_title.value_or(view_string(cfg->filter_title)));
     using RegexPtr = std::unique_ptr<GRegex, decltype(&g_regex_unref)>;
     RegexPtr title_filter(nullptr, &g_regex_unref);
-    if (!filter_title.empty()) {
+    if (!cli_opts.measure_tracks && !filter_title.empty()) {
         GError* gerr = nullptr;
         GRegex* re = g_regex_new(
             filter_title.c_str(),
@@ -3169,6 +3184,14 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    if (cli_opts.measure_tracks) {
+        print_device_identity(std::cout, device, cdrip::detail::device_id_paths(device, "/dev/disk/by-id"));
+        const cdrip::detail::OffsetLookupServices services{
+            cdrip::detail::lookup_drive_offset, cdrip::detail::accuraterip_lookup};
+        const int status = cdrip::detail::run_offset_measurement(drive, *cli_opts.measure_tracks, services, std::cout);
+        cdrip_close(drive, false, nullptr);
+        return status;
+    }
     const auto offset = cdrip::detail::select_read_offset(*cfg, device, cli_opts.read_offset);
     if (!offset.error.empty()) {
         std::cerr << offset.error << '\n';

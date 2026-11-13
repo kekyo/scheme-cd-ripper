@@ -25,6 +25,7 @@
 
 #include "cdrip/cdrip.h"
 #include "accuraterip.h"
+#include "device_settings.h"
 
 namespace cdrip::detail {
 struct BackendDetectedDrive;
@@ -95,6 +96,7 @@ struct DriveBackend {
         void* reader,
         const int16_t*& out_buffer,
         std::string& err);
+    bool (*get_identity)(void* drive, DriveIdentity& identity, std::string& err){nullptr};
 };
 
 const DriveBackend& current_drive_backend();

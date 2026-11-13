@@ -1,3 +1,4 @@
+#include "pcm_reader.h"
 // Scheme CD music/sound ripper
 // Copyright (c) Kouji Matsui. (@kekyo@mi.kekyo.net)
 // Under MIT.
@@ -443,8 +444,8 @@ bool rip_track_with_options(
         return false;
     }
 
-    if (valid_first < valid_limit &&
-        !backend.seek_reader(rip->reader, static_cast<long>(valid_first / kSamplesPerSector), backend_err)) {
+    PcmReadState pcm_reader{rip};
+    if (valid_first < valid_limit && !seek_pcm_frame(pcm_reader, valid_first, backend_err)) {
         err = backend_err;
         encoder.finish();
         cleanup_encoder_state();
@@ -462,30 +463,7 @@ bool rip_track_with_options(
             .count() / 1000.0
         - wall_start_sec;
 
-    long cached_sector = -1;
-    const int16_t* cached_audio = nullptr;
     int16_t corrected[kSamplesPerSector * kChannels]{};
-    auto read_corrected = [&](int64_t position) {
-        for (int i = 0; i < kSamplesPerSector; ++i) {
-            const int64_t source = position + i;
-            if (source < audio_first || source >= audio_limit) {
-                corrected[i * 2] = corrected[i * 2 + 1] = 0;
-                continue;
-            }
-            const long sector = static_cast<long>(source / kSamplesPerSector);
-            if (sector != cached_sector) {
-                if (!backend.read_sector(rip->reader, cached_audio, backend_err) || !cached_audio) {
-                    backend_err = "source sector " + std::to_string(sector) + ": " + backend_err;
-                    return false;
-                }
-                cached_sector = sector;
-            }
-            const int index = static_cast<int>(source % kSamplesPerSector) * 2;
-            corrected[i * 2] = cached_audio[index];
-            corrected[i * 2 + 1] = cached_audio[index + 1];
-        }
-        return true;
-    };
     long processed = 0;
     while (processed < sectors) {
         const int chunk = static_cast<int>(
@@ -494,7 +472,8 @@ bool rip_track_with_options(
 
         for (int c = 0; c < chunk; ++c) {
             const int16_t* buffer = corrected;
-            if (!read_corrected(source_start + (processed + c) * kSamplesPerSector)) {
+            if (!read_pcm_frames(pcm_reader, source_start + (processed + c) * kSamplesPerSector,
+                    kSamplesPerSector, audio_first, audio_limit, corrected, backend_err)) {
                 err = "Read error on track " + std::to_string(track->number) +
                     " at sector " + std::to_string(track->start + processed + c) + ": " + backend_err;
                 encoder.finish();

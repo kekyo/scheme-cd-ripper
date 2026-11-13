@@ -51,6 +51,16 @@ int main(int argc, char** argv) {
     options = parse_args(static_cast<int>(raw.size()), raw.data());
     require(options.cover_art == "none" && !options.accuraterip.has_value() &&
         !options.read_offset.has_value(), "Preview disable must not change verification or offset");
+    require(!options.measure_tracks, "Normal CLI must not measure offsets");
+    args = {"cdrip", "--measure-offset", "-d", "/dev/sr0"};
+    raw.clear();
+    for (auto& arg : args) raw.push_back(arg.data());
+    options = parse_args(static_cast<int>(raw.size()), raw.data());
+    require(options.measure_tracks == 3 && options.device == "/dev/sr0", "Measurement defaults to three without consuming next option");
+    args = {"cdrip", "--measure-offset", "5"};
+    raw.clear();
+    for (auto& arg : args) raw.push_back(arg.data());
+    require(parse_args(static_cast<int>(raw.size()), raw.data()).measure_tracks == 5, "Explicit measurement count");
     for (const auto* setting : {"cover_art=invalid", "accuraterip=invalid",
             "compression=3extra", "compression=9", "mode=typo", "unknown_key=true"}) {
         { std::ofstream out(file); out << "[cdrip]\n" << setting << '\n'; }
