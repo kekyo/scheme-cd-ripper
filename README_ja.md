@@ -77,13 +77,19 @@ cdrip -d /dev/sr1 -f "{artist:n/title:n}.flac" -r
 - `-ng`, `--no-replaygain`: ReplayGain タグ付与を無効化し、従来どおりトラック単位で即時保存する。
 - `-dc`, `--discogs`: Discogsのカバーアートの使用方法（`no`,`always`,`fallback`、デフォルト: `always`）。
   対話モードでは、DiscogsとCAAの両方が候補になったときのデフォルト選択にも使われます。
-- `-na`, `--no-aa`: カバーアートのANSI/ASCIIアート表示を無効化する。
+- `-v`, `--cover-art <mode>`: 端末でのカバー表示を`auto`、`kitty`、`ascii`、`none`から選ぶ。既定値は`auto`。
+- `-nv`, `--no-cover-art`: カバーアートの端末表示を無効化する。`-v none`と同じ。
+- `-ro`, `--read-offset <num>`: 左右1組のサンプル単位で読み取り位置を補正する。
+- `-na`, `--no-accurate`: 既定で有効なAccurateRip照合を無効化する。
 - `-l`, `--logs`: デバッグログを出力する。
 - `--permissions <ugo>`: 出力パーミッションを`664`のような3桁8進数で指定する。`--update`では無視。
 - `--permission-warnings`, `--no-permission-warnings`: 出力パーミッション補正失敗時のwarning表示を切り替える。`--update`では無視。
 - `--tag`, `--tags <key=value>`: 通常リッピング時にVorbis commentタグを上書きする。複数指定可、`--update`では無視。
 - `-i`, `--input`: cdrip設定ファイルのパス（デフォルト検索: `./cdrip.conf` --> `~/.cdrip.conf`）
 - `-u`, `--update <file|dir> [more ...]`: 埋め込みタグを使用してCDDBから既存のFLACタグを更新（他のオプションは無視）
+
+同じ設定をCLIで複数回指定した場合は後の値を採用します。例えば`-nv -v kitty`ではKitty表示が有効です。
+`mode=fast`はドライブ読み取り時の検査方法を選び、AccurateRip照合とは独立しています。
 
 対応する設定項目を持つコマンドラインオプション（`-u` および `-i` を除く）は、`-i` で指定された設定ファイルの内容を上書きできます。
 
@@ -237,7 +243,7 @@ MusicBrainzから情報を取得した場合は、追加でカバーアート画
 ターミナルがKitty画像に対応していても`TERM=xterm-kitty`を使わない端末では、`--cover-art kitty`を指定してください。`TERM`を変更する必要はありません。
 プレビューを生成できない場合は、理由を標準エラーへ表示します。候補画像を表示できなくても、番号によるカバーアートの選択は続けられます。
 
-tmuxやscreen経由ではANSI/ASCII表示に戻ります。標準出力をファイルへリダイレクトした場合は画像を表示しません。既存の`--no-aa`も方式にかかわらずカバーアートの端末表示を無効にします。
+tmuxやscreen経由ではANSI/ASCII表示に戻ります。標準出力をファイルへリダイレクトした場合は画像を表示しません。`--no-cover-art`（`-nv`）は、方式にかかわらず端末表示を無効にします。画像の取得とFLACへの埋め込みには影響しません。
 
 ### 読み取りオフセットとAccurateRip照合
 
@@ -246,12 +252,14 @@ tmuxやscreen経由ではANSI/ASCII表示に戻ります。標準出力をファ
 例えば、補正値が+6のドライブでは次のように指定します。
 
 ```bash
-cdrip --read-offset 6 --accuraterip --no-eject
+cdrip -ro 6 --no-eject
 ```
 
 補正しても各トラックの長さは変わりません。隣接する音声トラックから必要な分を読み足し、ディスク端やデータトラックとの境界を越える部分は無音で埋めます。補正値と無音で埋めたサンプル数は、FLACの`READ_OFFSET`と`READ_OFFSET_PADDED_SAMPLES`タグに記録します。ReplayGainとAccurateRipにも補正後の音声を使用します。
 
-`--accuraterip`は、リッピング中に計算したv1/v2チェックサムをAccurateRipデータベースと比較します。通常の音楽CDが対象で、データトラックを含むCDは未対応です。トラックごとに次の結果を表示します。
+AccurateRip照合は既定で有効です。`--no-accurate`（`-na`）または`[cdrip] accuraterip=false`で無効化できます。読み取りオフセットの補正は、照合を無効にしても適用されます。
+
+リッピング中に計算したv1/v2チェックサムをAccurateRipデータベースと比較します。通常の音楽CDが対象で、データトラックを含むCDは未対応です。トラックごとに次の結果を表示します。
 
 | 表示 | 意味 |
 |---|---|
@@ -334,7 +342,8 @@ max_width=512        # カバーアート最大幅(px、1以上)
 permissions=664      # 任意の3桁8進数ファイルモード。未指定時はumaskから計算
 permission_warnings=true  # true / false（デフォルト: true。falseならchmod/GIO mode warningを非表示）
 speed=slow           # slow または fast（デフォルト: slow）
-aa=true              # カバーアートをANSI/ASCIIアートで表示（TTYのみ）
+cover_art=auto       # auto / kitty / ascii / none。端末でのプレビュー方式
+accuraterip=true     # リップした音声をAccurateRipと照合
 discogs=always       # no / always / fallback（カバーアートの優先順。デフォルト: always）
 replaygain=true      # true / false（デフォルト: true。false ならトラック単位で即時保存）
 recrawl_percent=2    # MusicBrainz候補のトラック長許容差(%)（デフォルト: 2）

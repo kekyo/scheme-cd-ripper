@@ -5,6 +5,7 @@
 
 #include "cdrip/cdrip.h"
 #include "cdrip/internal.h"
+#include "cdrip/settings.h"
 #include "version.h"
 
 #include <algorithm>
@@ -695,205 +696,6 @@ struct TerminalSize {
     int columns{0};
     int rows{0};
 };
-
-std::string strip_inline_comment_value(
-    const std::string& raw) {
-
-    auto trim_ws_local = [](const std::string& s) {
-        const size_t start = s.find_first_not_of(" \t\r\n");
-        if (start == std::string::npos) return std::string{};
-        const size_t end = s.find_last_not_of(" \t\r\n");
-        return s.substr(start, end - start + 1);
-    };
-
-    bool in_single = false;
-    bool in_double = false;
-    bool escaped = false;
-    for (size_t i = 0; i < raw.size(); ++i) {
-        const char ch = raw[i];
-        if (escaped) {
-            escaped = false;
-            continue;
-        }
-        if (ch == '\\') {
-            escaped = true;
-            continue;
-        }
-        if (ch == '\'' && !in_double) {
-            in_single = !in_single;
-            continue;
-        }
-        if (ch == '"' && !in_single) {
-            in_double = !in_double;
-            continue;
-        }
-        if (!in_single && !in_double && (ch == '#' || ch == ';')) {
-            if (i == 0 || std::isspace(static_cast<unsigned char>(raw[i - 1]))) {
-                return trim_ws_local(raw.substr(0, i));
-            }
-        }
-    }
-    return trim_ws_local(raw);
-}
-
-bool parse_bool_value(
-    const std::string& raw,
-    bool& out) {
-
-    std::string value = strip_inline_comment_value(raw);
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    if (value == "true" || value == "1") {
-        out = true;
-        return true;
-    }
-    if (value == "false" || value == "0") {
-        out = false;
-        return true;
-    }
-    return false;
-}
-
-bool parse_int_value(
-    const std::string& raw,
-    int& out) {
-
-    const std::string value = strip_inline_comment_value(raw);
-    if (value.empty()) return false;
-
-    size_t index = 0;
-    try {
-        const int parsed = std::stoi(value, &index);
-        if (index != value.size()) return false;
-        out = parsed;
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
-bool get_config_bool(
-    const char* config_path,
-    const char* group,
-    const char* key,
-    bool default_value,
-    std::string& err_out) {
-
-    err_out.clear();
-    if (!config_path || !group || !key) return default_value;
-
-    GKeyFile* key_file = g_key_file_new();
-    GError* gerr = nullptr;
-    if (!g_key_file_load_from_file(key_file, config_path, G_KEY_FILE_NONE, &gerr)) {
-        err_out = (gerr && gerr->message) ? gerr->message : "Failed to load config file";
-        if (gerr) g_error_free(gerr);
-        g_key_file_unref(key_file);
-        return default_value;
-    }
-
-    bool value = default_value;
-    if (g_key_file_has_key(key_file, group, key, nullptr)) {
-        gerr = nullptr;
-        char* raw = g_key_file_get_string(key_file, group, key, &gerr);
-        if (!raw) {
-            err_out = (gerr && gerr->message) ? gerr->message : "Failed to parse boolean value";
-            if (gerr) g_error_free(gerr);
-            g_key_file_unref(key_file);
-            return default_value;
-        }
-        bool parsed = false;
-        const std::string cleaned = raw;
-        g_free(raw);
-        if (!parse_bool_value(cleaned, parsed)) {
-            err_out = "Failed to parse boolean value";
-            g_key_file_unref(key_file);
-            return default_value;
-        }
-        value = parsed;
-    }
-
-    g_key_file_unref(key_file);
-    return value;
-}
-
-std::string get_config_string(
-    const char* config_path,
-    const char* group,
-    const char* key,
-    const char* default_value,
-    std::string& err_out) {
-
-    err_out.clear();
-    if (!config_path || !group || !key) return default_value ? std::string{default_value} : std::string{};
-
-    GKeyFile* key_file = g_key_file_new();
-    GError* gerr = nullptr;
-    if (!g_key_file_load_from_file(key_file, config_path, G_KEY_FILE_NONE, &gerr)) {
-        err_out = (gerr && gerr->message) ? gerr->message : "Failed to load config file";
-        if (gerr) g_error_free(gerr);
-        g_key_file_unref(key_file);
-        return default_value ? std::string{default_value} : std::string{};
-    }
-
-    std::string value = default_value ? std::string{default_value} : std::string{};
-    if (g_key_file_has_key(key_file, group, key, nullptr)) {
-        gerr = nullptr;
-        char* raw = g_key_file_get_string(key_file, group, key, &gerr);
-        if (!raw) {
-            err_out = (gerr && gerr->message) ? gerr->message : "Failed to parse string value";
-            if (gerr) g_error_free(gerr);
-            g_key_file_unref(key_file);
-            return default_value ? std::string{default_value} : std::string{};
-        }
-        value = strip_inline_comment_value(raw);
-        g_free(raw);
-    }
-
-    g_key_file_unref(key_file);
-    return value;
-}
-
-int get_config_int(
-    const char* config_path,
-    const char* group,
-    const char* key,
-    int default_value,
-    std::string& err_out) {
-
-    err_out.clear();
-    if (!config_path || !group || !key) return default_value;
-
-    GKeyFile* key_file = g_key_file_new();
-    GError* gerr = nullptr;
-    if (!g_key_file_load_from_file(key_file, config_path, G_KEY_FILE_NONE, &gerr)) {
-        err_out = (gerr && gerr->message) ? gerr->message : "Failed to load config file";
-        if (gerr) g_error_free(gerr);
-        g_key_file_unref(key_file);
-        return default_value;
-    }
-
-    int value = default_value;
-    if (g_key_file_has_key(key_file, group, key, nullptr)) {
-        gerr = nullptr;
-        char* raw = g_key_file_get_string(key_file, group, key, &gerr);
-        if (!raw) {
-            err_out = (gerr && gerr->message) ? gerr->message : "Failed to parse integer value";
-            if (gerr) g_error_free(gerr);
-            g_key_file_unref(key_file);
-            return default_value;
-        }
-        const std::string cleaned = raw;
-        g_free(raw);
-        if (!parse_int_value(cleaned, value)) {
-            err_out = "Failed to parse integer value";
-            g_key_file_unref(key_file);
-            return default_value;
-        }
-    }
-
-    g_key_file_unref(key_file);
-    return value;
-}
 
 TerminalSize get_stdout_terminal_size() {
     TerminalSize out{};
@@ -2055,9 +1857,9 @@ size_t prompt_for_cover_art_attempt_choice(
     const CoverArtFetchAttempt& left,
     const CoverArtFetchAttempt& right,
     size_t default_choice,
-    bool allow_aa) {
+    bool allow_preview) {
 
-    const bool can_preview = allow_aa && cover_art_mode != "none" && (::isatty(STDOUT_FILENO) != 0);
+    const bool can_preview = allow_preview && cover_art_mode != "none" && (::isatty(STDOUT_FILENO) != 0);
     bool preview_printed = false;
     if (can_preview) {
         const TerminalSize tty = get_stdout_terminal_size();
@@ -2092,7 +1894,7 @@ bool prompt_for_cover_art_source(
     const CoverArtFetchAttempt& left,
     const CoverArtFetchAttempt& right,
     DiscogsMode discogs_mode,
-    bool allow_aa,
+    bool allow_preview,
     CoverArtFetchSource& selected_source_out) {
 
     selected_source_out = CoverArtFetchSource::None;
@@ -2101,7 +1903,7 @@ bool prompt_for_cover_art_source(
         left,
         right,
         default_cover_art_choice(discogs_mode),
-        allow_aa);
+        allow_preview);
     selected_source_out = (choice == 2) ? right.source : left.source;
     return true;
 }
@@ -2114,7 +1916,7 @@ bool ensure_cover_art_merged(
     bool allow_source_choice,
     CoverArtFetchSource& source_out,
     std::string& notice_out,
-    bool allow_aa) {
+    bool allow_preview) {
 
     notice_out.clear();
     source_out = CoverArtFetchSource::None;
@@ -2156,7 +1958,7 @@ bool ensure_cover_art_merged(
                 if (e != target) {
                     replace_cover_art(target->cover_art, e->cover_art);
                 }
-                if (allow_aa && !had_data) {
+                if (allow_preview && !had_data) {
                     maybe_print_cover_art_ascii(target->cover_art);
                 }
                 if (!had_data) {
@@ -2204,7 +2006,7 @@ bool ensure_cover_art_merged(
                     discogs_attempts[0],
                     discogs_attempts[1],
                     1,
-                    allow_aa);
+                    allow_preview);
                 const auto& selected_discogs = discogs_attempts[discogs_choice == 2 ? 1 : 0];
                 discogs_attempt.source = CoverArtFetchSource::Discogs;
                 discogs_attempt.label = "Discogs";
@@ -2227,7 +2029,7 @@ bool ensure_cover_art_merged(
                 caa_attempt,
                 discogs_attempt,
                 discogs_mode,
-                allow_aa,
+                allow_preview,
                 selected_source);
             const CdRipCoverArt& selected_art =
                 (selected_source == CoverArtFetchSource::Discogs) ? discogs_attempt.art : caa_attempt.art;
@@ -2241,7 +2043,7 @@ bool ensure_cover_art_merged(
         if (caa_attempt.success) {
             replace_cover_art(target->cover_art, caa_attempt.art);
             source_out = caa_attempt.source;
-            if (allow_aa) maybe_print_cover_art_ascii(target->cover_art);
+            if (allow_preview) maybe_print_cover_art_ascii(target->cover_art);
             clear_cover_art_fetch_attempt(caa_attempt);
             clear_cover_art_fetch_attempt(discogs_attempt);
             clear_attempt_vector(discogs_attempts);
@@ -2250,7 +2052,7 @@ bool ensure_cover_art_merged(
         if (discogs_attempt.success) {
             replace_cover_art(target->cover_art, discogs_attempt.art);
             source_out = discogs_attempt.source;
-            if (allow_aa) maybe_print_cover_art_ascii(target->cover_art);
+            if (allow_preview) maybe_print_cover_art_ascii(target->cover_art);
             clear_cover_art_fetch_attempt(caa_attempt);
             clear_cover_art_fetch_attempt(discogs_attempt);
             clear_attempt_vector(discogs_attempts);
@@ -2831,8 +2633,9 @@ MediaWaitResult wait_for_device_media_state(
 }  // namespace
 
 struct Options {
-    int read_offset{0};
-    bool accuraterip{false};
+    std::optional<int> read_offset;
+    std::optional<bool> accuraterip;
+    std::optional<std::string> cover_art;
     std::optional<std::string> device; // empty = auto-detect
     std::optional<std::string> format;
     std::optional<int> compression_level;
@@ -2849,7 +2652,6 @@ struct Options {
     std::optional<bool> permission_warnings;
     std::string config_file;
     bool no_eject = false;
-    bool no_aa = false;
     bool no_recrawl = false;
     bool logs = false;
     std::vector<std::string> update_paths;
@@ -2896,46 +2698,51 @@ bool parse_tag_override_arg(
     return true;
 }
 
+static std::string next_argument(int argc, char** argv, int& index) {
+    if (index + 1 >= argc || (argv[index + 1][0] == '-' &&
+            !std::isdigit(static_cast<unsigned char>(argv[index + 1][1])))) {
+        std::cerr << "Error: " << argv[index] << " requires a value\n";
+        std::exit(1);
+    }
+    return argv[++index];
+}
+
+static void invalid_argument(const std::string& option, const std::string& expected) {
+    std::cerr << "Error: " << option << " requires " << expected << '\n';
+    std::exit(1);
+}
+
 Options parse_args(int argc, char** argv) {
     Options opts;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if ((arg == "-d" || arg == "--device") && i + 1 < argc) {
-            opts.device = argv[++i];
-        } else if ((arg == "-f" || arg == "--format") && i + 1 < argc) {
-            opts.format = argv[++i];
-        } else if ((arg == "-c" || arg == "--compression") && i + 1 < argc) {
-            opts.compression_level = std::stoi(argv[++i]);
-        } else if ((arg == "-w" || arg == "--max-width") && i + 1 < argc) {
-            int v = 0;
-            try {
-                v = std::stoi(argv[++i]);
-            } catch (...) {
-                std::cerr << "Error: -w/--max-width requires an integer\n";
-                std::exit(1);
-            }
-            if (v <= 0) {
-                std::cerr << "Error: -w/--max-width must be > 0\n";
-                std::exit(1);
-            }
-            opts.max_width = v;
-        } else if ((arg == "-m" || arg == "--mode") && i + 1 < argc) {
-            std::string mode = argv[++i];
-            if (mode == "fast") {
-                opts.rip_mode = RIP_MODES_FAST;
-            } else if (mode == "best") {
-                opts.rip_mode = RIP_MODES_BEST;
-            } else {
-                opts.rip_mode = RIP_MODES_DEFAULT;
-            }
-        } else if ((arg == "-i" || arg == "--input") && i + 1 < argc) {
-            opts.config_file = argv[++i];
+        if ((arg == "-d" || arg == "--device")) {
+            opts.device = next_argument(argc, argv, i);
+        } else if ((arg == "-f" || arg == "--format")) {
+            opts.format = next_argument(argc, argv, i);
+        } else if ((arg == "-c" || arg == "--compression")) {
+            int value = 0;
+            if (!cdrip::detail::parse_setting_compression(next_argument(argc, argv, i), value))
+                invalid_argument(arg, "auto or an integer from 0 through 8");
+            opts.compression_level = value;
+        } else if ((arg == "-w" || arg == "--max-width")) {
+            int value = 0;
+            if (!cdrip::detail::parse_setting_integer(next_argument(argc, argv, i), value) || value <= 0)
+                invalid_argument(arg, "a positive integer");
+            opts.max_width = value;
+        } else if ((arg == "-m" || arg == "--mode")) {
+            CdRipRipModes value;
+            if (!cdrip::detail::parse_setting_mode(next_argument(argc, argv, i), value))
+                invalid_argument(arg, "best|fast|default");
+            opts.rip_mode = value;
+        } else if ((arg == "-i" || arg == "--input")) {
+            opts.config_file = next_argument(argc, argv, i);
         } else if (arg == "-r" || arg == "--repeat") {
             opts.repeat = true;
         } else if (arg == "-s" || arg == "--sort") {
             opts.sort = true;
-        } else if ((arg == "-ft" || arg == "--filter-title") && i + 1 < argc) {
-            opts.filter_title = argv[++i];
+        } else if ((arg == "-ft" || arg == "--filter-title")) {
+            opts.filter_title = next_argument(argc, argv, i);
         } else if (arg == "-a" || arg == "--auto") {
             opts.auto_mode = true;
         } else if (arg == "-ss" || arg == "--speed-slow") {
@@ -2946,28 +2753,23 @@ Options parse_args(int argc, char** argv) {
             opts.replaygain = true;
         } else if (arg == "-ng" || arg == "--no-replaygain") {
             opts.replaygain = false;
-        } else if ((arg == "-dc" || arg == "--discogs") && i + 1 < argc) {
-            opts.discogs = argv[++i];
-        } else if (arg == "--accuraterip") {
-            opts.accuraterip = true;
-        } else if (arg == "--read-offset") {
-            try {
-                if (i + 1 >= argc) throw std::invalid_argument("missing value");
-                const std::string value = argv[++i];
-                size_t used = 0;
-                opts.read_offset = std::stoi(value, &used);
-                if (used != value.size()) throw std::invalid_argument("trailing characters");
-            } catch (...) {
-                std::cerr << "Error: --read-offset requires a signed integer\n"; std::exit(1);
-            }
-        } else if (arg == "--cover-art") {
-            if (i + 1 >= argc) { std::cerr << "Error: --cover-art requires auto|kitty|ascii|none\n"; std::exit(1); }
-            cover_art_mode = argv[++i];
-            if (cover_art_mode != "auto" && cover_art_mode != "kitty" && cover_art_mode != "ascii" && cover_art_mode != "none") {
-                std::cerr << "Error: invalid --cover-art mode\n"; std::exit(1);
-            }
-        } else if (arg == "-na" || arg == "--no-aa") {
-            opts.no_aa = true;
+        } else if ((arg == "-dc" || arg == "--discogs")) {
+            const auto value = cdrip::detail::normalized_setting(next_argument(argc, argv, i));
+            if (!cdrip::detail::valid_discogs_mode(value)) invalid_argument(arg, "no|always|fallback");
+            opts.discogs = value;
+        } else if (arg == "--no-accurate" || arg == "-na") {
+            opts.accuraterip = false;
+        } else if (arg == "--read-offset" || arg == "-ro") {
+            int value = 0;
+            if (!cdrip::detail::parse_setting_integer(next_argument(argc, argv, i), value))
+                invalid_argument(arg, "a signed integer");
+            opts.read_offset = value;
+        } else if (arg == "--cover-art" || arg == "-v") {
+            const auto value = cdrip::detail::normalized_setting(next_argument(argc, argv, i));
+            if (!cdrip::detail::valid_cover_art_mode(value)) invalid_argument(arg, "auto|kitty|ascii|none");
+            opts.cover_art = value;
+        } else if (arg == "--no-cover-art" || arg == "-nv") {
+            opts.cover_art = "none";
         } else if (arg == "-nr" || arg == "--no-recrawl") {
             opts.no_recrawl = true;
         } else if (arg == "-l" || arg == "--logs") {
@@ -2983,7 +2785,7 @@ Options parse_args(int argc, char** argv) {
                 std::exit(1);
             }
             unsigned int permissions = 0;
-            const std::string raw_permissions = argv[++i];
+            const std::string raw_permissions = next_argument(argc, argv, i);
             if (!cdrip::detail::parse_output_permissions_value(raw_permissions, permissions)) {
                 std::cerr << "Error: invalid --permissions value \"" << raw_permissions
                           << "\" (expected: 000..777)\n";
@@ -3002,27 +2804,23 @@ Options parse_args(int argc, char** argv) {
             std::string key;
             std::string value;
             std::string tag_err;
-            const std::string raw_tag = argv[++i];
+            const std::string raw_tag = next_argument(argc, argv, i);
             if (!parse_tag_override_arg(raw_tag, key, value, tag_err)) {
                 std::cerr << "Error: invalid " << arg << " value \"" << raw_tag << "\": " << tag_err << "\n";
                 std::exit(1);
             }
             opts.tag_overrides[key] = value;
         } else if (arg == "-u" || arg == "--update") {
-            if (i + 1 < argc) {
-                opts.update_paths.push_back(argv[++i]);
-            } else {
-                std::cerr << "Error: -u/--update requires at least one path\n";
-                std::exit(1);
-            }
+            opts.update_paths.push_back(next_argument(argc, argv, i));
+            while (i + 1 < argc && argv[i + 1][0] != '-') opts.update_paths.push_back(argv[++i]);
         } else if (arg == "-?" || arg == "-h" || arg == "--help") {
-            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-g|-ng] [-dc no|always|fallback] [-na] [--permissions ugo] [--permission-warnings|--no-permission-warnings] [--tag key=value] [-i config] [-u file|dir ...]\n";
-            std::cout << "  --accuraterip: Compare corrected audio with AccurateRip v1/v2 (audio-only discs)\n";
-            std::cout << "  --read-offset samples: Signed stereo sample correction (default: 0); disc/data edges are zero-filled\n";
-            std::cout << "  --cover-art auto|kitty|ascii|none: Terminal cover preview (default: auto)\n";
+            std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-g|-ng] [-dc no|always|fallback] [-v mode|-nv] [-na] [-ro samples] [--permissions ugo] [--permission-warnings|--no-permission-warnings] [--tag key=value] [-i config] [-u file|dir ...]\n";
+            std::cout << "  -na / --no-accurate: Disable AccurateRip v1/v2 verification (enabled by default)\n";
+            std::cout << "  -ro / --read-offset samples: Signed stereo sample correction (default: 0); disc/data edges are zero-filled\n";
+            std::cout << "  -v / --cover-art auto|kitty|ascii|none: Terminal cover preview (default: auto)\n";
             std::cout << "  -d  / --device: CD device path (default: auto-detect)\n";
             std::cout << "  -f  / --format: FLAC destination path format (default: \"{album:n/medium:n/tracknumber:02d}_{title:n}.flac\")\n";
-            std::cout << "  -m  / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disabled any checks)\n";
+            std::cout << "  -m  / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disable drive read integrity checks; AccurateRip is independent)\n";
             std::cout << "  -c  / --compression: FLAC compression level (default: auto (best --> 5, fast --> 1))\n";
             std::cout << "  -w  / --max-width: Cover art max width in pixels (default: 512)\n";
             std::cout << "  -s  / --sort: Sort CDDB results by album name on the prompt\n";
@@ -3036,7 +2834,7 @@ Options parse_args(int argc, char** argv) {
             std::cout << "  -g  / --replaygain: Enable ReplayGain tagging (default)\n";
             std::cout << "  -ng / --no-replaygain: Disable ReplayGain tagging and save each track immediately\n";
             std::cout << "  -dc / --discogs: Cover art preference for Discogs: no, always (default), fallback\n";
-            std::cout << "  -na / --no-aa: Disable cover art ANSI/ASCII art output\n";
+            std::cout << "  -nv / --no-cover-art: Disable terminal cover previews (same as -v none)\n";
             std::cout << "  -l  / --logs: Print debug logs for MusicBrainz recrawl and selected metadata\n";
             std::cout << "  --permissions: Set output file permissions as 3-digit octal (default: derived from umask; ignored with -u)\n";
             std::cout << "  --permission-warnings / --no-permission-warnings: Show or hide output permission adjustment warnings (default: show; ignored with -u)\n";
@@ -3044,6 +2842,9 @@ Options parse_args(int argc, char** argv) {
             std::cout << "  -i  / --input: cdrip config file path (default search: ./cdrip.conf --> ~/.cdrip.conf)\n";
             std::cout << "  -u  / --update <file|dir> [more ...]: Update existing FLAC tags from CDDB using embedded tags (other options ignored)\n";
             std::exit(0);
+        } else {
+            std::cerr << "Error: unknown option " << arg << "\n";
+            std::exit(1);
         }
     }
     return opts;
@@ -3058,7 +2859,7 @@ int run_update_mode(
     int recrawl_track_length_tolerance_percent,
     bool log_recrawl,
     DiscogsMode discogs_mode,
-    bool allow_aa,
+    bool allow_preview,
     const GRegex* title_filter) {
 
     if (!servers || servers->count == 0) {
@@ -3129,7 +2930,7 @@ int run_update_mode(
                     !auto_mode,
                     cover_source,
                     cover_notice,
-                    allow_aa)) {
+                    allow_preview)) {
                 if (!cover_notice.empty()) {
                     std::cerr << "  Cover art fetch notice: " << cover_notice << "\n";
                 }
@@ -3214,89 +3015,15 @@ int main(int argc, char** argv) {
         title_filter.reset(re);
     }
 
-    std::string aa_err;
-    bool allow_aa = true;
-    if (cfg->config_path && cfg->config_path[0]) {
-        allow_aa = get_config_bool(cfg->config_path, "cdrip", "aa", /*default_value=*/true, aa_err);
-        if (!aa_err.empty()) {
-            std::cerr << "Failed to parse cdrip.aa from \"" << view_string(cfg->config_path) << "\": " << aa_err << "\n";
-            return 1;
-        }
-    }
-    if (cli_opts.no_aa) allow_aa = false;
-
-    std::string speed_err;
-    bool speed_fast = false;
-    if (cfg->config_path && cfg->config_path[0]) {
-        std::string speed_value = get_config_string(cfg->config_path, "cdrip", "speed", "slow", speed_err);
-        if (!speed_err.empty()) {
-            std::cerr << "Failed to parse cdrip.speed from \"" << view_string(cfg->config_path) << "\": " << speed_err << "\n";
-            return 1;
-        }
-        std::transform(speed_value.begin(), speed_value.end(), speed_value.begin(),
-                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-        if (speed_value == "fast") {
-            speed_fast = true;
-        } else if (speed_value == "slow") {
-            speed_fast = false;
-        } else {
-            std::cerr << "Invalid cdrip.speed in \"" << view_string(cfg->config_path) << "\": " << speed_value << "\n";
-            return 1;
-        }
-    }
-    if (cli_opts.speed_fast.has_value()) speed_fast = *cli_opts.speed_fast;
-
-    std::string replaygain_err;
-    bool replaygain = true;
-    if (cfg->config_path && cfg->config_path[0]) {
-        replaygain = get_config_bool(cfg->config_path, "cdrip", "replaygain", /*default_value=*/true, replaygain_err);
-        if (!replaygain_err.empty()) {
-            std::cerr << "Failed to parse cdrip.replaygain from \"" << view_string(cfg->config_path) << "\": " << replaygain_err << "\n";
-            return 1;
-        }
-    }
-    if (cli_opts.replaygain.has_value()) replaygain = *cli_opts.replaygain;
-
-    std::string discogs_err;
-    std::string discogs_value = "always";
-    if (cfg->config_path && cfg->config_path[0]) {
-        discogs_value = get_config_string(cfg->config_path, "cdrip", "discogs", "always", discogs_err);
-        if (!discogs_err.empty()) {
-            std::cerr << "Failed to parse cdrip.discogs from \"" << view_string(cfg->config_path) << "\": " << discogs_err << "\n";
-            return 1;
-        }
-    }
-    if (cli_opts.discogs.has_value()) discogs_value = *cli_opts.discogs;
-
+    cover_art_mode = cli_opts.cover_art.value_or(view_string(cfg->cover_art));
+    const bool allow_preview = cover_art_mode != "none";
+    const bool accuraterip = cli_opts.accuraterip.value_or(cfg->accuraterip);
+    const bool speed_fast = cli_opts.speed_fast.value_or(cfg->speed_fast);
+    const bool replaygain = cli_opts.replaygain.value_or(cfg->replaygain);
+    const auto discogs_value = cli_opts.discogs.value_or(view_string(cfg->discogs));
     DiscogsMode discogs_mode = DiscogsMode::Always;
-    if (!parse_discogs_mode(discogs_value, discogs_mode)) {
-        const bool from_cli = cli_opts.discogs.has_value();
-        std::cerr << "Invalid " << (from_cli ? "-dc/--discogs" : "cdrip.discogs")
-                  << " value: " << discogs_value << " (expected: no|always|fallback)\n";
-        return 1;
-    }
-    int recrawl_track_length_tolerance_percent =
-        kDefaultMusicBrainzRecrawlTrackLengthTolerancePercent;
-    std::string recrawl_tolerance_err;
-    if (cfg->config_path && cfg->config_path[0]) {
-        recrawl_track_length_tolerance_percent = get_config_int(
-            cfg->config_path,
-            "cdrip",
-            "recrawl_percent",
-            kDefaultMusicBrainzRecrawlTrackLengthTolerancePercent,
-            recrawl_tolerance_err);
-        if (!recrawl_tolerance_err.empty()) {
-            std::cerr << "Failed to parse cdrip.recrawl_percent from \""
-                      << view_string(cfg->config_path) << "\": " << recrawl_tolerance_err << "\n";
-            return 1;
-        }
-        if (recrawl_track_length_tolerance_percent < 0) {
-            std::cerr << "Invalid cdrip.recrawl_percent in \""
-                      << view_string(cfg->config_path) << "\": "
-                      << recrawl_track_length_tolerance_percent << " (expected: >= 0)\n";
-            return 1;
-        }
-    }
+    parse_discogs_mode(discogs_value, discogs_mode);
+    const int recrawl_track_length_tolerance_percent = cfg->recrawl_percent;
 
     cdrip_set_cover_art_max_width(max_width);
 
@@ -3304,7 +3031,7 @@ int main(int argc, char** argv) {
         // Ignore other options when update mode is specified.
         return run_update_mode(cli_opts.update_paths, servers_from_config, cfg->sort, auto_mode,
                                allow_recrawl, recrawl_track_length_tolerance_percent, log_recrawl,
-                               discogs_mode, allow_aa, title_filter.get());
+                               discogs_mode, allow_preview, title_filter.get());
     }
 
     const unsigned int* cli_permissions_ptr =
@@ -3458,7 +3185,7 @@ int main(int argc, char** argv) {
     std::cout << "  mode        : ";
     switch (rip_mode) {
         case RIP_MODES_FAST:
-            std::cout << "fast (disable any checks)";
+            std::cout << "fast (drive read integrity checks disabled)";
             break;
         case RIP_MODES_BEST:
             std::cout << "best (full integrity checks)";
@@ -3468,6 +3195,9 @@ int main(int argc, char** argv) {
             break;
     }
     std::cout << "\n";
+    std::cout << "  cover art   : " << cover_art_mode << "\n";
+    std::cout << "  accuraterip : " << (accuraterip ? "enabled" : "disabled") << "\n";
+    std::cout << "  read offset : " << cli_opts.read_offset.value_or(0) << "\n";
     std::cout << "  speed       : " << (speed_fast ? "fast (max)" : "slow (1x)") << "\n";
     std::cout << "  replaygain  : " << (replaygain ? "enabled (save after full album rip)" : "disabled (save each track immediately)") << "\n";
     std::cout << "  permissions : file " << format_permission_mode(output_permissions.file_mode)
@@ -3485,7 +3215,7 @@ int main(int argc, char** argv) {
             std::cerr << "Drive not available\n";
             return 1;
         }
-        cdrip_set_read_offset(drive, cli_opts.read_offset);
+        cdrip_set_read_offset(drive, cli_opts.read_offset.value_or(0));
         const char* toc_err = nullptr;
         CdRipDiscToc* toc = cdrip_build_disc_toc(drive, &toc_err);
         if (!toc || !toc->tracks || toc->tracks_count == 0) {
@@ -3543,7 +3273,7 @@ int main(int argc, char** argv) {
                 !auto_mode && !repeat,
                 cover_source,
                 cover_notice,
-                allow_aa)) {
+                allow_preview)) {
             if (meta->cover_art.data && meta->cover_art.size > 0 && cover_source != CoverArtFetchSource::None) {
                 std::cout << "\nCover art fetched from " << cover_art_source_label(cover_source) << ".\n";
             }
@@ -3567,7 +3297,7 @@ int main(int argc, char** argv) {
         }
 
         cdrip::detail::AccurateRipDatabase ar_database{};
-        if (cli_opts.accuraterip) {
+        if (accuraterip) {
             std::cout << "Looking up AccurateRip...\n";
             ar_database = cdrip::detail::accuraterip_lookup(*toc);
         }
@@ -3637,7 +3367,7 @@ int main(int argc, char** argv) {
                     }
 
                     cdrip::detail::RipTrackWriteOptions write_options{};
-                    write_options.accuraterip_result = cli_opts.accuraterip ? &ar_checksum : nullptr;
+                    write_options.accuraterip_result = accuraterip ? &ar_checksum : nullptr;
                     const std::string staged_path_str = staged_path.string();
                     write_options.output_path = staged_path_str.c_str();
                     write_options.display_path = final_path.c_str();
@@ -3678,7 +3408,7 @@ int main(int argc, char** argv) {
                     });
                 } else {
                     cdrip::detail::RipTrackWriteOptions write_options{};
-                    write_options.accuraterip_result = cli_opts.accuraterip ? &ar_checksum : nullptr;
+                    write_options.accuraterip_result = accuraterip ? &ar_checksum : nullptr;
                     write_options.tag_overrides = tag_override_ptr;
                     write_options.output_permissions = &output_permissions;
                     std::string rip_err;
@@ -3704,7 +3434,7 @@ int main(int argc, char** argv) {
                     }
                     rip_spinner.finish(true);
                 }
-                if (cli_opts.accuraterip) {
+                if (accuraterip) {
                     std::cout << "AccurateRip track " << track->number << ": "
                               << cdrip::detail::accuraterip_report(ar_database, idx, ar_checksum) << "\n";
                 }

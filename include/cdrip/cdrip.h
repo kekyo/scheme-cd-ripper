@@ -82,6 +82,18 @@ typedef struct CdRipConfig {
     int compression_level;
     /** Cover art maximum width in pixels (<=0 => default). */
     int max_width;
+    /** Owned terminal preview mode: auto, kitty, ascii, or none; default auto. */
+    const char* cover_art;
+    /** Compare corrected PCM with AccurateRip; enabled by default. */
+    bool accuraterip;
+    /** Request maximum read speed instead of 1x; disabled by default. */
+    bool speed_fast;
+    /** Scan and write ReplayGain tags; enabled by default. */
+    bool replaygain;
+    /** Owned Discogs preference: no, always, or fallback; default always. */
+    const char* discogs;
+    /** Nonnegative MusicBrainz track length tolerance percentage; default 2. */
+    int recrawl_percent;
     /** Output permissions as 3-digit octal file mode, or <0 for umask-derived default. */
     int permissions;
     /** Non-zero to show warnings when output permission adjustments fail. */

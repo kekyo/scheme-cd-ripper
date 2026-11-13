@@ -235,3 +235,8 @@ add_dependencies(cdrip_test_rip_progress_display version_header)
 add_executable(cdrip_test_accuraterip tests/test_accuraterip.cpp)
 target_link_libraries(cdrip_test_accuraterip PRIVATE cdrip_static)
 target_compile_options(cdrip_test_accuraterip PRIVATE ${COMMON_CFLAGS})
+
+add_executable(cdrip_test_cli_config tests/test_cli_config.cpp)
+target_include_directories(cdrip_test_cli_config PRIVATE ${COMMON_INCLUDES} ${VERSION_DIR})
+target_link_libraries(cdrip_test_cli_config PRIVATE cdrip_static cdrip_chafa)
+target_compile_options(cdrip_test_cli_config PRIVATE ${COMMON_CFLAGS})

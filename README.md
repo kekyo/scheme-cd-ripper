@@ -81,13 +81,18 @@ The following are the options:
 - `-ng`, `--no-replaygain`: Disable ReplayGain tagging and save each track immediately as before.
 - `-dc`, `--discogs`: Discogs cover art preference: `no`, `always` (default), `fallback`.
   In interactive mode, this also controls the default choice when both Discogs and CAA cover art candidates are available.
-- `-na`, `--no-aa`: Disable cover art ANSI/ASCII art output.
+- `-v`, `--cover-art <mode>`: Select `auto`, `kitty`, `ascii`, or `none` for terminal previews (default: `auto`).
+- `-nv`, `--no-cover-art`: Disable terminal cover previews; equivalent to `-v none`.
+- `-ro`, `--read-offset <num>`: Correct the read position in stereo sample frames.
+- `-na`, `--no-accurate`: Disable AccurateRip verification, which is enabled by default.
 - `-l`, `--logs`: Print debug logs.
 - `--permissions <ugo>`: Set output permissions as a 3-digit octal file mode such as `664`. Ignored by `--update`.
 - `--permission-warnings`, `--no-permission-warnings`: Show or hide warnings when output permission adjustment fails. Ignored by `--update`.
 - `--tag`, `--tags <key=value>`: Override a Vorbis comment tag for normal ripping. Repeatable, ignored by `--update`.
 - `-i`, `--input`: cdrip config file path (default search: `./cdrip.conf` --> `~/.cdrip.conf`)
 - `-u`, `--update <file|dir> [more ...]`: Update existing FLAC tags from CDDB using embedded tags (other options ignored)
+
+CLI settings override configuration values. If an option is repeated, the last value wins; for example, `-nv -v kitty` enables Kitty previews. `mode=fast` controls drive reading checks independently of AccurateRip verification.
 
 Command-line options with config counterparts (except `-u` and `-i`) can override the contents of the config file specified with `-i`.
 
@@ -249,7 +254,7 @@ Even if candidate images cannot be displayed, you can still select cover art by 
 
 Inside tmux or screen, previews fall back to ANSI/ASCII.
 No images are printed when standard output is redirected to a file.
-The existing `--no-aa` option disables terminal cover previews in all formats.
+`--no-cover-art` (`-nv`) disables terminal cover previews in all formats. Cover downloads and embedding in FLAC files remain enabled.
 
 ### Read offsets and AccurateRip verification
 
@@ -261,12 +266,14 @@ Offsets are not configured automatically.
 For example, for a drive with a +6 correction offset:
 
 ```bash
-cdrip --read-offset 6 --accuraterip --no-eject
+cdrip -ro 6 --no-eject
 ```
 
 Correction preserves each track's length. Audio is read from adjacent audio tracks when needed. Samples beyond disc edges or data-track boundaries are filled with silence. FLAC tags `READ_OFFSET` and `READ_OFFSET_PADDED_SAMPLES` record the correction and the number of padded sample frames. ReplayGain and AccurateRip also use the corrected audio.
 
-`--accuraterip` compares v1/v2 checksums calculated during ripping with the AccurateRip database. It supports ordinary audio CDs; discs containing data tracks are unsupported. Results are displayed for each track:
+AccurateRip verification is enabled by default. Disable it with `--no-accurate` (`-na`) or `[cdrip] accuraterip=false`. Read offset correction still applies when verification is disabled.
+
+Verification compares v1/v2 checksums calculated during ripping with the AccurateRip database. It supports ordinary audio CDs; discs containing data tracks are unsupported. Results are displayed for each track:
 
 | Result | Meaning |
 |---|---|
@@ -349,7 +356,8 @@ max_width=512        # cover art max width in pixels (> 0)
 permissions=664      # optional 3-digit octal file mode; default is derived from umask
 permission_warnings=true  # true / false (default: true; false hides chmod/GIO mode warnings)
 speed=slow           # slow or fast (default: slow)
-aa=true              # show cover art as ANSI/ASCII art (TTY only)
+cover_art=auto       # auto / kitty / ascii / none; terminal preview mode
+accuraterip=true     # compare ripped audio with AccurateRip
 discogs=always       # no / always / fallback (cover art preference order, default: always)
 replaygain=true      # true / false (default: true; false = save each track immediately)
 recrawl_percent=2    # Per-track length tolerance for MusicBrainz candidates (default: 2)

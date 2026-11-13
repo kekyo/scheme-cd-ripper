@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "internal.h"
+#include "settings.h"
 
 using namespace cdrip::detail;
 
@@ -103,40 +104,6 @@ static std::string strip_inline_comment_value(
     return trim(raw);
 }
 
-static bool parse_bool_value(
-    const std::string& raw,
-    bool& out) {
-
-    const std::string value = to_lower(trim(raw));
-    if (value == "true" || value == "1") {
-        out = true;
-        return true;
-    }
-    if (value == "false" || value == "0") {
-        out = false;
-        return true;
-    }
-    return false;
-}
-
-static bool parse_int_strict_value(
-    const std::string& raw,
-    int& out) {
-
-    const std::string value = trim(raw);
-    if (value.empty()) return false;
-
-    size_t idx = 0;
-    try {
-        const int v = std::stoi(value, &idx);
-        if (idx != value.size()) return false;
-        out = v;
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
 static void release_cddb_servers(
     std::vector<CdRipCddbServer>& servers) {
 
@@ -148,21 +115,18 @@ static void release_cddb_servers(
     servers.clear();
 }
 
-static CdRipRipModes parse_mode(
-    const std::string& value) {
-
-    const std::string upper = to_lower(trim(value));
-    if (upper == "fast") return RIP_MODES_FAST;
-    if (upper == "best") return RIP_MODES_BEST;
-    return RIP_MODES_DEFAULT;
-}
-
 static CdRipConfig* make_default_config() {
     auto* cfg = new CdRipConfig{};
     cfg->device = nullptr;
     cfg->format = make_cstr_copy("{album:n/medium:n/tracknumber:02d}_{title:n}.flac");
     cfg->compression_level = -1;
     cfg->max_width = 512;
+    cfg->cover_art = make_cstr_copy("auto");
+    cfg->accuraterip = true;
+    cfg->speed_fast = false;
+    cfg->replaygain = true;
+    cfg->discogs = make_cstr_copy("always");
+    cfg->recrawl_percent = 2;
     cfg->permissions = -1;
     cfg->permission_warnings = true;
     cfg->mode = RIP_MODES_DEFAULT;
@@ -173,6 +137,39 @@ static CdRipConfig* make_default_config() {
     cfg->servers = make_builtin_servers();
     cfg->config_path = nullptr;
     return cfg;
+}
+
+// All [cdrip] values are interpreted once, before CLI overrides are applied.
+static bool apply_config_value(CdRipConfig& cfg, const std::string& key, const std::string& value) {
+    const auto normalized = normalized_setting(value);
+    if (key == "device") { if (!value.empty()) replace_cstr(cfg.device, value); }
+    else if (key == "format") { if (!value.empty()) replace_cstr(cfg.format, value); }
+    else if (key == "filter_title") replace_cstr(cfg.filter_title, value);
+    else if (key == "compression") return parse_setting_compression(value, cfg.compression_level);
+    else if (key == "max_width") return parse_setting_integer(value, cfg.max_width) && cfg.max_width > 0;
+    else if (key == "recrawl_percent") return parse_setting_integer(value, cfg.recrawl_percent) && cfg.recrawl_percent >= 0;
+    else if (key == "mode") return parse_setting_mode(value, cfg.mode);
+    else if (key == "repeat") return parse_setting_boolean(value, cfg.repeat);
+    else if (key == "sort") return parse_setting_boolean(value, cfg.sort);
+    else if (key == "auto") return parse_setting_boolean(value, cfg.auto_mode);
+    else if (key == "accuraterip") return parse_setting_boolean(value, cfg.accuraterip);
+    else if (key == "replaygain") return parse_setting_boolean(value, cfg.replaygain);
+    else if (key == "permission_warnings") return parse_setting_boolean(value, cfg.permission_warnings);
+    else if (key == "speed") {
+        if (normalized != "slow" && normalized != "fast") return false;
+        cfg.speed_fast = normalized == "fast";
+    } else if (key == "cover_art") {
+        if (!valid_cover_art_mode(normalized)) return false;
+        replace_cstr(cfg.cover_art, normalized);
+    } else if (key == "discogs") {
+        if (!valid_discogs_mode(normalized)) return false;
+        replace_cstr(cfg.discogs, normalized);
+    } else if (key == "permissions") {
+        unsigned int parsed = 0;
+        if (!parse_output_permissions_value(value, parsed)) return false;
+        cfg.permissions = static_cast<int>(parsed);
+    } else return false;
+    return true;
 }
 
 /* ------------------------------------------------------------------- */
@@ -226,7 +223,7 @@ CdRipConfig* cdrip_load_config(
             break;
         }
         if (gerr) {
-            if (path) {
+            if (path || gerr->domain != G_FILE_ERROR || gerr->code != G_FILE_ERROR_NOENT) {
                 return fail_gerror(gerr, "Failed to load config");
             }
             g_error_free(gerr);
@@ -239,175 +236,24 @@ CdRipConfig* cdrip_load_config(
     }
 
     // [cdrip] group
-    if (g_key_file_has_key(key_file, "cdrip", "device", nullptr)) {
+    gsize key_count = 0;
+    char** keys = g_key_file_get_keys(key_file, "cdrip", &key_count, nullptr);
+    for (gsize i = 0; i < key_count; ++i) {
+        const std::string key = keys[i];
         GError* gerr = nullptr;
-        char* value = g_key_file_get_string(key_file, "cdrip", "device", &gerr);
-        if (value) {
-            const std::string device = strip_inline_comment_value(value);
-            g_free(value);
-            if (!device.empty()) replace_cstr(cfg->device, device);
-        } else if (gerr) {
-            return fail_gerror(gerr, "Failed to parse device");
+        char* raw = g_key_file_get_string(key_file, "cdrip", key.c_str(), &gerr);
+        if (!raw) {
+            g_strfreev(keys);
+            return fail_gerror(gerr, "Failed to parse cdrip setting");
+        }
+        const auto value = strip_inline_comment_value(raw);
+        g_free(raw);
+        if (!apply_config_value(*cfg, key, value)) {
+            g_strfreev(keys);
+            return fail(("Invalid " + key + " value").c_str());
         }
     }
-
-    if (g_key_file_has_key(key_file, "cdrip", "format", nullptr)) {
-        GError* gerr = nullptr;
-        char* value = g_key_file_get_string(key_file, "cdrip", "format", &gerr);
-        if (value) {
-            const std::string fmt = strip_inline_comment_value(value);
-            g_free(value);
-            if (!fmt.empty()) replace_cstr(cfg->format, fmt);
-        } else if (gerr) {
-            return fail_gerror(gerr, "Failed to parse format");
-        }
-    }
-
-    if (g_key_file_has_key(key_file, "cdrip", "compression", nullptr)) {
-        GError* gerr = nullptr;
-        char* value = g_key_file_get_string(key_file, "cdrip", "compression", &gerr);
-        if (value) {
-            const std::string v = strip_inline_comment_value(value);
-            g_free(value);
-            const std::string upper = to_lower(v);
-            if (upper == "auto") {
-                cfg->compression_level = -1;
-            } else {
-                try {
-                    cfg->compression_level = std::stoi(v);
-                } catch (...) {
-                    return fail("Invalid compression value");
-                }
-            }
-        } else if (gerr) {
-            return fail_gerror(gerr, "Failed to parse compression");
-        }
-    }
-
-    if (g_key_file_has_key(key_file, "cdrip", "max_width", nullptr)) {
-        GError* gerr = nullptr;
-        char* value = g_key_file_get_string(key_file, "cdrip", "max_width", &gerr);
-        if (value) {
-            int parsed = 0;
-            const std::string v = strip_inline_comment_value(value);
-            g_free(value);
-            if (!parse_int_strict_value(v, parsed) || parsed <= 0) {
-                return fail("Invalid max_width value");
-            }
-            cfg->max_width = parsed;
-        } else if (gerr) {
-            return fail_gerror(gerr, "Failed to parse max_width");
-        }
-    }
-
-    if (g_key_file_has_key(key_file, "cdrip", "permissions", nullptr)) {
-        GError* gerr = nullptr;
-        char* value = g_key_file_get_string(key_file, "cdrip", "permissions", &gerr);
-        if (value) {
-            unsigned int parsed = 0;
-            const std::string v = strip_inline_comment_value(value);
-            g_free(value);
-            if (!parse_output_permissions_value(v, parsed)) {
-                return fail("Invalid permissions value");
-            }
-            cfg->permissions = static_cast<int>(parsed);
-        } else if (gerr) {
-            return fail_gerror(gerr, "Failed to parse permissions");
-        }
-    }
-
-    if (g_key_file_has_key(key_file, "cdrip", "permission_warnings", nullptr)) {
-        GError* gerr = nullptr;
-        char* value = g_key_file_get_string(key_file, "cdrip", "permission_warnings", &gerr);
-        if (value) {
-            bool parsed = false;
-            const std::string v = strip_inline_comment_value(value);
-            g_free(value);
-            if (!parse_bool_value(v, parsed)) {
-                return fail("Invalid permission_warnings value");
-            }
-            cfg->permission_warnings = parsed;
-        } else if (gerr) {
-            return fail_gerror(gerr, "Failed to parse permission_warnings");
-        }
-    }
-
-    if (g_key_file_has_key(key_file, "cdrip", "mode", nullptr)) {
-        GError* gerr = nullptr;
-        char* value = g_key_file_get_string(key_file, "cdrip", "mode", &gerr);
-        if (value) {
-            const std::string v = strip_inline_comment_value(value);
-            cfg->mode = parse_mode(v);
-            g_free(value);
-        } else if (gerr) {
-            return fail_gerror(gerr, "Failed to parse mode");
-        }
-    }
-
-    if (g_key_file_has_key(key_file, "cdrip", "repeat", nullptr)) {
-        GError* gerr = nullptr;
-        char* value = g_key_file_get_string(key_file, "cdrip", "repeat", &gerr);
-        if (value) {
-            bool parsed = false;
-            const std::string v = strip_inline_comment_value(value);
-            g_free(value);
-            if (!parse_bool_value(v, parsed)) {
-                return fail("Invalid repeat value");
-            }
-            cfg->repeat = parsed;
-        } else if (gerr) {
-            return fail_gerror(gerr, "Failed to parse repeat");
-        }
-    }
-
-    if (g_key_file_has_key(key_file, "cdrip", "sort", nullptr)) {
-        GError* gerr = nullptr;
-        char* value = g_key_file_get_string(key_file, "cdrip", "sort", &gerr);
-        if (value) {
-            bool parsed = false;
-            const std::string v = strip_inline_comment_value(value);
-            g_free(value);
-            if (!parse_bool_value(v, parsed)) {
-                return fail("Invalid sort value");
-            }
-            cfg->sort = parsed;
-        } else if (gerr) {
-            return fail_gerror(gerr, "Failed to parse sort");
-        }
-    }
-
-    if (g_key_file_has_key(key_file, "cdrip", "filter_title", nullptr)) {
-        GError* gerr = nullptr;
-        char* value = g_key_file_get_string(key_file, "cdrip", "filter_title", &gerr);
-        if (value) {
-            const std::string v = strip_inline_comment_value(value);
-            g_free(value);
-            if (!v.empty()) {
-                replace_cstr(cfg->filter_title, v);
-            } else {
-                release_cstr(cfg->filter_title);
-                cfg->filter_title = nullptr;
-            }
-        } else if (gerr) {
-            return fail_gerror(gerr, "Failed to parse filter_title");
-        }
-    }
-
-    if (g_key_file_has_key(key_file, "cdrip", "auto", nullptr)) {
-        GError* gerr = nullptr;
-        char* value = g_key_file_get_string(key_file, "cdrip", "auto", &gerr);
-        if (value) {
-            bool parsed = false;
-            const std::string v = strip_inline_comment_value(value);
-            g_free(value);
-            if (!parse_bool_value(v, parsed)) {
-                return fail("Invalid auto value");
-            }
-            cfg->auto_mode = parsed;
-        } else if (gerr) {
-            return fail_gerror(gerr, "Failed to parse auto");
-        }
-    }
+    g_strfreev(keys);
 
     // [cddb] group: servers list
     std::vector<std::string> server_ids;
@@ -450,7 +296,7 @@ CdRipConfig* cdrip_load_config(
         {
             const std::string v = strip_inline_comment_value(port_value);
             g_free(port_value);
-            if (!parse_int_strict_value(v, port)) {
+            if (!parse_setting_integer(v, port)) {
                 g_free(host);
                 continue;
             }
@@ -519,6 +365,8 @@ void cdrip_release_config(
     if (!cfg) return;
     release_cstr(cfg->device);
     release_cstr(cfg->format);
+    release_cstr(cfg->cover_art);
+    release_cstr(cfg->discogs);
     release_cstr(cfg->filter_title);
     release_cstr(cfg->config_path);
     if (cfg->servers) {
