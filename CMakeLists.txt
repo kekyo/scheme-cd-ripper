@@ -37,7 +37,7 @@ pkg_check_modules(PNG REQUIRED libpng)
 pkg_check_modules(JPEG REQUIRED libjpeg)
 pkg_check_modules(LCMS2 REQUIRED lcms2)
 pkg_check_modules(EBUR128 REQUIRED libebur128)
-pkg_check_modules(CHAFA REQUIRED chafa)
+pkg_check_modules(CHAFA REQUIRED chafa>=1.14.2)
 
 set(VERSION_HEADER ${CMAKE_BINARY_DIR}/generated/version.h)
 get_filename_component(VERSION_DIR ${VERSION_HEADER} DIRECTORY)

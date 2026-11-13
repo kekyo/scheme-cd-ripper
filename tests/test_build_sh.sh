@@ -23,8 +23,9 @@ set -eu
 if [ "$1" = "--build" ]; then
 	build_dir=$2
 	mkdir -p "$build_dir"
-	printf '%s\n' '#!/bin/sh' >"$build_dir/cdrip"
-	chmod +x "$build_dir/cdrip"
+	# A real Chafa consumer exercises dpkg-shlibdeps and the generated Depends.
+	printf '%s\n' '#include <chafa.h>' 'int main() { return chafa_term_db_get_default() == nullptr; }' \
+		| c++ -x c++ - -o "$build_dir/cdrip" $(pkg-config --cflags --libs chafa)
 	: >"$build_dir/libcdrip.so"
 	: >"$build_dir/libcdrip.a"
 	exit 0
@@ -60,12 +61,6 @@ fi
 exit 1
 EOF
 
-cat >"${STUB_BIN_DIR}/dpkg-shlibdeps" <<'EOF'
-#!/bin/sh
-set -eu
-printf '%s\n' 'shlibs:Depends=libc6 (>= 2.38)'
-EOF
-
 cat >"${STUB_BIN_DIR}/dpkg-deb" <<'EOF'
 #!/bin/sh
 set -eu
@@ -81,7 +76,6 @@ EOF
 chmod +x "${STUB_BIN_DIR}/screw-up" \
     "${STUB_BIN_DIR}/cmake" \
     "${STUB_BIN_DIR}/dpkg" \
-    "${STUB_BIN_DIR}/dpkg-shlibdeps" \
     "${STUB_BIN_DIR}/dpkg-deb"
 
 PATH="${STUB_BIN_DIR}:${PATH}" BUILD_DIR="${BUILD_DIR}" "${ROOT_DIR}/build.sh"
@@ -115,3 +109,8 @@ assert_contains_text() {
 assert_eq "9.9.9-test" "$(cat "${BUILD_DIR}/cmake-version.txt")" "build.sh should pass screw-up version to cmake"
 assert_contains_text "${BUILD_DIR}/deb/libcdrip-dev/DEBIAN/control" "Version: 9.9.9-test" "dev package control should use screw-up version"
 assert_contains_text "${BUILD_DIR}/deb/cdrip/DEBIAN/control" "Version: 9.9.9-test" "cli package control should use screw-up version"
+grep -E 'libchafa0(t64)? \(>= 1\.14\.2\)' "${BUILD_DIR}/deb/cdrip/DEBIAN/control" >/dev/null || {
+    cat "${BUILD_DIR}/deb/cdrip/DEBIAN/control" >&2
+    echo 'CLI runtime dependencies must require the Kitty Base64 fix' >&2
+    exit 1
+}

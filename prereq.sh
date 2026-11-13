@@ -67,6 +67,10 @@ EOF
 		done
 		cat <<'EOF'
     && rm -rf /var/lib/apt/lists/*
+
+RUN pkg-config --atleast-version=1.14.2 chafa || { \
+    echo 'Chafa 1.14.2 or later is required. Install updated libchafa packages; see README.md.' >&2; \
+    exit 1; }
 EOF
 	} >"$containerfile"
 }

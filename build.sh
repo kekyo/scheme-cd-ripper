@@ -97,6 +97,7 @@ Section: sound
 Priority: optional
 Maintainer: cd-ripper
 Standards-Version: 4.6.2
+Build-Depends: libchafa-dev (>= 1.14.2)
 
 Package: cdrip
 Architecture: ${ARCH}

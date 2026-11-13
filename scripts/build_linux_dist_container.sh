@@ -93,6 +93,7 @@ Section: misc
 Priority: optional
 Maintainer: $CDRIP_PACKAGE_MAINTAINER
 Standards-Version: 4.6.2
+Build-Depends: libchafa-dev (>= 1.14.2)
 
 Package: $package_name
 Architecture: $deb_arch
@@ -180,7 +181,7 @@ require_command dpkg-architecture
 require_command dpkg-shlibdeps
 require_command pkg-config
 
-require_pkg_config_module chafa
+require_pkg_config_module 'chafa >= 1.14.2'
 require_pkg_config_module flac++
 require_pkg_config_module gio-2.0
 require_pkg_config_module json-glib-1.0
