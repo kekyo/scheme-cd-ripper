@@ -395,8 +395,8 @@ A special server id `musicbrainz` is not required `[cddb.musicbrainz]` section d
 - libpng
 - libjpeg
 - liblcms 2.0
-- chafa (libchafa), version 1.14.2 or later at build time and runtime
-- CMake and a C++17 compiler
+- Chafa 1.14.2, built automatically from the pinned submodule
+- CMake, C/C++17 compilers, Autoconf, Automake and Libtool
 - Node.js and [screw-up](https://github.com/kekyo/screw-up) (Automated-versioning tool)
 
 `build_package.sh`:
@@ -411,34 +411,21 @@ A special server id `musicbrainz` is not required `[cddb.musicbrainz]` section d
 Install the build dependencies on Debian/Ubuntu:
 
 ```bash
-sudo apt-get install build-essential cmake dpkg-dev nodejs \
-  libcdio-paranoia-dev libcddb2-dev libebur128-dev libflac++-dev libglib2.0-dev libsoup-3.0-dev libjson-glib-dev libchafa-dev libpng-dev libjpeg-dev liblcms2-dev
+sudo apt-get install build-essential cmake dpkg-dev nodejs npm autoconf automake libtool pkg-config xz-utils \
+  libcdio-paranoia-dev libcddb2-dev libebur128-dev libflac++-dev libglib2.0-dev libsoup-3.0-dev libjson-glib-dev libpng-dev libjpeg-dev liblcms2-dev
 npm install -g screw-up
 
-pkg-config --atleast-version=1.14.2 chafa
+git submodule update --init --recursive
 ./build.sh
 ```
 
-Chafa 1.14.2 or later is required because earlier versions contain a [Kitty Base64 encoding bug](https://github.com/hpjansson/chafa/commit/f08d59c27c2d3958eead1018e097a2e6d454ece6).
-The standard packages in [Ubuntu 22.04](https://packages.ubuntu.com/jammy/libchafa-dev) and [Ubuntu 24.04](https://packages.ubuntu.com/noble/libchafa-dev) do not meet this requirement. Update both `libchafa-dev` and the runtime package (`libchafa0` or `libchafa0t64`) to version 1.14.2 or later, using packages built for your distribution. Apply the same update to package build containers; `prereq.sh` and the build stop if Chafa is too old.
+The bundled Chafa 1.14.2 includes the [Kitty Base64 encoding fix](https://github.com/hpjansson/chafa/commit/f08d59c27c2d3958eead1018e097a2e6d454ece6).
+There is no need to install `libchafa-dev` or upgrade the system Chafa.
+The build creates CLI and development Debian packages and a corresponding source archive in `build/deb/`.
+Refresh existing package build images with `./prereq.sh --force` to include the required build tools.
 
-For local preview testing, you can also build the [official Chafa source](https://hpjansson.org/chafa/download.html) into a user directory after installing the other build dependencies:
-
-```bash
-curl -fLO https://hpjansson.org/chafa/releases/chafa-1.14.2.tar.xz
-tar -xf chafa-1.14.2.tar.xz
-cd chafa-1.14.2
-./configure --prefix="$HOME/.local/chafa" --without-tools --disable-gtk-doc --disable-man
-make -j4
-make install
-cd ../scheme-cd-ripper
-export PKG_CONFIG_PATH="$HOME/.local/chafa/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-export LD_LIBRARY_PATH="$HOME/.local/chafa/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j4
-```
-
-This local installation does not register a Debian package that satisfies runtime dependencies. Use updated Chafa development and runtime packages when building or installing `.deb` packages.
+The CLI loads its private shared library from `/usr/lib/cdrip/`.
+See [bundled libraries and corresponding source](THIRD_PARTY.md) for replacement instructions, source rebuilds and distribution requirements.
 
 ### Build packages
 
@@ -500,3 +487,5 @@ Pull requests are welcome! Please submit them as diffs against the `develop` bra
 ## License
 
 Under MIT.
+
+The bundled Chafa is licensed under LGPLv3 or later. See [bundled libraries and corresponding source](THIRD_PARTY.md) for copyright notices and the locations of the complete license texts.

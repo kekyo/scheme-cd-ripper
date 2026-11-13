@@ -58,3 +58,13 @@ add_dependencies(cdrip_chafa chafa_build)
 install(DIRECTORY "${CHAFA_SDK_DIR}/lib/" DESTINATION lib/cdrip
     COMPONENT cli FILES_MATCHING PATTERN "libchafa.so.*"
     PATTERN chafa EXCLUDE PATTERN pkgconfig EXCLUDE)
+install(FILES "${CHAFA_SOURCE_DIR}/COPYING" "${CHAFA_SOURCE_DIR}/COPYING.LESSER"
+    DESTINATION share/doc/cdrip/chafa COMPONENT cli)
+install(FILES
+    "${CHAFA_SOURCE_DIR}/chafa/internal/smolscale/COPYING"
+    "${CHAFA_SOURCE_DIR}/chafa/internal/smolscale/COPYING.LGPLv3"
+    "${CHAFA_SOURCE_DIR}/chafa/internal/smolscale/COPYING.BSD-4"
+    DESTINATION share/doc/cdrip/chafa/smolscale COMPONENT cli)
+install(FILES "${CMAKE_SOURCE_DIR}/THIRD_PARTY.md" "${CMAKE_SOURCE_DIR}/THIRD_PARTY_ja.md"
+    "${CMAKE_SOURCE_DIR}/README.md" "${CMAKE_SOURCE_DIR}/README_ja.md"
+    DESTINATION share/doc/cdrip COMPONENT cli)

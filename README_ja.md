@@ -373,41 +373,29 @@ path=/~cddb/cddb.cgi
 
 -----
 
-## Chafaの必要バージョン
+## ソースからのビルド
 
-画像表示ライブラリChafaは、ビルド時と実行時の両方で1.14.2以上が必要です。
-古い版にはKitty画像のBase64出力に不具合があります。詳細は[上流の修正](https://github.com/hpjansson/chafa/commit/f08d59c27c2d3958eead1018e097a2e6d454ece6)を参照してください。
+画像表示ライブラリChafa 1.14.2を同梱しています。
+この版には[Kitty画像のBase64出力の修正](https://github.com/hpjansson/chafa/commit/f08d59c27c2d3958eead1018e097a2e6d454ece6)が含まれます。
+システムのChafaを更新したり、`libchafa-dev`を導入したりする必要はありません。
 
-ソースからビルドする場合は、次のコマンドで開発ライブラリの版を確認できます。
-
-```bash
-pkg-config --modversion chafa
-pkg-config --atleast-version=1.14.2 chafa
-```
-
-[Ubuntu 22.04](https://packages.ubuntu.com/jammy/libchafa-dev)と[Ubuntu 24.04](https://packages.ubuntu.com/noble/libchafa-dev)の標準パッケージは、この条件を満たしません。
-開発用の`libchafa-dev`と実行用の`libchafa0`または`libchafa0t64`を、使用するディストリビューション向けの1.14.2以上のパッケージへ更新してください。
-配布パッケージをビルドするコンテナにも、同じ更新が必要です。古い版のままでは`prereq.sh`とビルド処理が停止します。
-
-ローカルで表示を試す場合は、[Chafaの公式ソース](https://hpjansson.org/chafa/download.html)をユーザー用のディレクトリへビルドする方法もあります。
-以下は1.14.2の例です。プロジェクトのほかのビルド依存ライブラリは、先に導入してください。
+Debian/Ubuntuでは、ビルドに必要なパッケージを導入してから実行してください。
+CMake、C/C++コンパイラ、Autoconf、Automake、Libtoolを使います。
+Gitから取得したソースの版番号は、Node.js用の[screw-up](https://github.com/kekyo/screw-up)が決定します。
 
 ```bash
-curl -fLO https://hpjansson.org/chafa/releases/chafa-1.14.2.tar.xz
-tar -xf chafa-1.14.2.tar.xz
-cd chafa-1.14.2
-./configure --prefix="$HOME/.local/chafa" --without-tools --disable-gtk-doc --disable-man
-make -j4
-make install
-cd ../scheme-cd-ripper
-export PKG_CONFIG_PATH="$HOME/.local/chafa/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-export LD_LIBRARY_PATH="$HOME/.local/chafa/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j4
+sudo apt-get install build-essential cmake dpkg-dev nodejs npm autoconf automake libtool pkg-config xz-utils \
+  libcdio-paranoia-dev libcddb2-dev libebur128-dev libflac++-dev libglib2.0-dev libsoup-3.0-dev libjson-glib-dev libpng-dev libjpeg-dev liblcms2-dev
+npm install -g screw-up
+git submodule update --init --recursive
+./build.sh
 ```
 
-この方法で入れたライブラリは、Debianパッケージの依存条件を満たすパッケージとしては登録されません。
-`.deb`の作成・導入には、更新済みChafaの開発用・実行用パッケージを使用してください。
+生成先は`build/deb/`です。CLIと開発用ライブラリのDebianパッケージ、および対応するソースアーカイブが入ります。
+既存の配布用コンテナを使う場合は、`./prereq.sh --force`でビルドツールを含むイメージに更新してください。
+
+Chafaの共有ライブラリは`/usr/lib/cdrip/`に配置され、CLIがそこから読み込みます。
+改変版ライブラリへの差し替え方、対応ソースの再ビルドと配布条件は、[同梱ライブラリの説明](THIRD_PARTY_ja.md)を参照してください。
 
 ## 備考
 
@@ -420,3 +408,5 @@ cmake --build build -j4
 ## License
 
 Under MIT.
+
+同梱するChafaにはLGPLv3以降が適用されます。著作権表示とライセンス全文の場所は[同梱ライブラリの説明](THIRD_PARTY_ja.md)を参照してください。

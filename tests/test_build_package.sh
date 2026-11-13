@@ -235,6 +235,13 @@ if [[ "${1:-}" == "build" ]]; then
     printf '%s\n' "$*" >"${CDRIP_PREREQ_STUB_RECORDS}"
     grep -F "libcdio-paranoia-dev" "${containerfile}" >>"${CDRIP_PREREQ_STUB_RECORDS}"
     grep -F "libsoup-3.0-dev" "${containerfile}" >>"${CDRIP_PREREQ_STUB_RECORDS}"
+    grep -F "autoconf" "${containerfile}" >>"${CDRIP_PREREQ_STUB_RECORDS}"
+    grep -F "automake" "${containerfile}" >>"${CDRIP_PREREQ_STUB_RECORDS}"
+    grep -F "libtool" "${containerfile}" >>"${CDRIP_PREREQ_STUB_RECORDS}"
+    if grep -F "libchafa-dev" "${containerfile}"; then
+        echo 'System Chafa must not be installed for package builds' >&2
+        exit 1
+    fi
     exit 0
 fi
 
@@ -253,6 +260,9 @@ EOF
     assert_contains_text "${records_path}" "localhost/scheme-cd-ripper-pack-deb-debian-bookworm-x86_64:latest"
     assert_contains_text "${records_path}" "libcdio-paranoia-dev"
     assert_contains_text "${records_path}" "libsoup-3.0-dev"
+    assert_contains_text "${records_path}" "autoconf"
+    assert_contains_text "${records_path}" "automake"
+    assert_contains_text "${records_path}" "libtool"
     assert_contains_text "${tmp_dir}/stdout.txt" "Prerequisite images are ready."
 
     rm -rf "${tmp_dir}"

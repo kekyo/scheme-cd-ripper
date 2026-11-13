@@ -14,7 +14,7 @@ if(CDRIP_VERSION_VALUE STREQUAL "")
     endif()
 
     execute_process(
-        COMMAND /bin/bash -lc "set -euo pipefail; printf '%s\n' '{version}' | \"${SCREW_UP_EXE}\" format | head -n 1"
+        COMMAND /bin/bash -lc "set -euo pipefail; printf '%s\n' '{version}' | \"${SCREW_UP_EXE}\" -f format | head -n 1"
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
         OUTPUT_VARIABLE CDRIP_VERSION_VALUE
         OUTPUT_STRIP_TRAILING_WHITESPACE

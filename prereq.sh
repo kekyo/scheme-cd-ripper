@@ -28,6 +28,8 @@ EOF
 
 container_packages() {
 	cat <<'EOF'
+autoconf
+automake
 binutils
 build-essential
 ca-certificates
@@ -36,7 +38,6 @@ dpkg-dev
 libcdio-paranoia-dev
 libcddb2-dev
 libebur128-dev
-libchafa-dev
 libflac++-dev
 libglib2.0-dev
 libjpeg-dev
@@ -44,6 +45,7 @@ libjson-glib-dev
 liblcms2-dev
 libpng-dev
 libsoup-3.0-dev
+libtool
 pkg-config
 EOF
 }
@@ -68,9 +70,6 @@ EOF
 		cat <<'EOF'
     && rm -rf /var/lib/apt/lists/*
 
-RUN pkg-config --atleast-version=1.14.2 chafa || { \
-    echo 'Chafa 1.14.2 or later is required. Install updated libchafa packages; see README.md.' >&2; \
-    exit 1; }
 EOF
 	} >"$containerfile"
 }
