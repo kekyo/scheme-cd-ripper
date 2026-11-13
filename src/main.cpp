@@ -2826,11 +2826,11 @@ Options parse_args(int argc, char** argv) {
             std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-g|-ng] [-dc no|always|fallback] [-v mode|-nv] [-na] [-ro samples] [--measure-offset [tracks]] [--permissions ugo] [--permission-warnings|--no-permission-warnings] [--tag key=value] [-i config] [-u file|dir ...]\n";
             std::cout << "  -na / --no-accurate: Disable AccurateRip v1/v2 verification (enabled by default)\n";
             std::cout << "  --measure-offset [tracks]: Measure the inserted CD without saving FLAC (default: 3 tracks); normal rip output, repeat and metadata options do not apply\n";
-            std::cout << "  -ro / --read-offset samples: Signed stereo sample correction (default: 0); disc/data edges are zero-filled\n";
+            std::cout << "  -ro / --read-offset samples: Signed stereo sample correction; overrides [read_offset] device settings (default: 0 if unconfigured); disc/data edges are zero-filled\n";
             std::cout << "  -v / --cover-art auto|kitty|ascii|none: Terminal cover preview (default: auto)\n";
             std::cout << "  -d  / --device: CD device path (default: auto-detect)\n";
             std::cout << "  -f  / --format: FLAC destination path format (default: \"{album:n/medium:n/tracknumber:02d}_{title:n}.flac\")\n";
-            std::cout << "  -m  / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disable drive read integrity checks; AccurateRip is independent)\n";
+            std::cout << "  -m  / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disable drive read integrity checks), \"default\" (same as best); AccurateRip is independent\n";
             std::cout << "  -c  / --compression: FLAC compression level (default: auto (best --> 5, fast --> 1))\n";
             std::cout << "  -w  / --max-width: Cover art max width in pixels (default: 512)\n";
             std::cout << "  -s  / --sort: Sort CDDB results by album name on the prompt\n";
@@ -3192,48 +3192,6 @@ int main(int argc, char** argv) {
         cdrip_close(drive, false, nullptr);
         return status;
     }
-    const auto offset = cdrip::detail::select_read_offset(*cfg, device, cli_opts.read_offset);
-    if (!offset.error.empty()) {
-        std::cerr << offset.error << '\n';
-        cdrip_close(drive, false, nullptr);
-        return 1;
-    }
-    std::cout << "\nOptions:\n";
-    std::string config_source = cfg->config_path ? view_string(cfg->config_path) : std::string{"(defaults)"};
-    std::cout << "  config      : \"" << config_source << "\"\n";
-    print_device_identity(std::cout, device, cdrip::detail::device_id_paths(device, "/dev/disk/by-id"));
-    std::cout << "  format      : \"" << format << "\"\n";
-    CdRipRipModes effective_mode = (rip_mode == RIP_MODES_DEFAULT) ? RIP_MODES_BEST : rip_mode;
-    int resolved_compression = compression_level >= 0
-        ? compression_level
-        : (effective_mode == RIP_MODES_FAST ? 1 : 5);
-    std::cout << "  compression : " << resolved_compression;
-    if (compression_level < 0) std::cout << " (auto)";
-    std::cout << "\n";
-    std::cout << "  mode        : ";
-    switch (rip_mode) {
-        case RIP_MODES_FAST:
-            std::cout << "fast (drive read integrity checks disabled)";
-            break;
-        case RIP_MODES_BEST:
-            std::cout << "best (full integrity checks)";
-            break;
-        default:
-            std::cout << "default (best - full integrity checks)";
-            break;
-    }
-    std::cout << "\n";
-    std::cout << "  cover art   : " << cover_art_mode << "\n";
-    std::cout << "  accuraterip : " << (accuraterip ? "enabled" : "disabled") << "\n";
-    std::cout << "  read offset : " << offset.samples << " (" << offset.source << ")\n";
-    std::cout << "  speed       : " << (speed_fast ? "fast (max)" : "slow (1x)") << "\n";
-    std::cout << "  replaygain  : " << (replaygain ? "enabled (save after full album rip)" : "disabled (save each track immediately)") << "\n";
-    std::cout << "  permissions : file " << format_permission_mode(output_permissions.file_mode)
-              << ", dir " << format_permission_mode(output_permissions.dir_mode)
-              << ", warnings " << (output_permissions.warn_on_failure ? "enabled" : "disabled") << "\n";
-    std::cout << "  auto        : " << (auto_mode ? "enabled" : "disabled");
-    std::cout << "\n\n";
-
     CdRipProgressCallback progress = &RipProgressSpinner::progress_cb;
     const auto* tag_override_ptr =
         cli_opts.tag_overrides.empty() ? nullptr : &cli_opts.tag_overrides;
@@ -3243,6 +3201,47 @@ int main(int argc, char** argv) {
             std::cerr << "Drive not available\n";
             return 1;
         }
+        const auto offset = cdrip::detail::select_read_offset(*cfg, device, cli_opts.read_offset);
+        if (!offset.error.empty()) {
+            std::cerr << offset.error << '\n';
+            cdrip_close(drive, false, nullptr);
+            return 1;
+        }
+        std::cout << "\nOptions:\n";
+        std::string config_source = cfg->config_path ? view_string(cfg->config_path) : std::string{"(defaults)"};
+        std::cout << "  config      : \"" << config_source << "\"\n";
+        print_device_identity(std::cout, device, cdrip::detail::device_id_paths(device, "/dev/disk/by-id"));
+        std::cout << "  format      : \"" << format << "\"\n";
+        CdRipRipModes effective_mode = (rip_mode == RIP_MODES_DEFAULT) ? RIP_MODES_BEST : rip_mode;
+        int resolved_compression = compression_level >= 0
+            ? compression_level
+            : (effective_mode == RIP_MODES_FAST ? 1 : 5);
+        std::cout << "  compression : " << resolved_compression;
+        if (compression_level < 0) std::cout << " (auto)";
+        std::cout << "\n";
+        std::cout << "  mode        : ";
+        switch (rip_mode) {
+            case RIP_MODES_FAST:
+                std::cout << "fast (drive read integrity checks disabled)";
+                break;
+            case RIP_MODES_BEST:
+                std::cout << "best (full integrity checks)";
+                break;
+            default:
+                std::cout << "default (best - full integrity checks)";
+                break;
+        }
+        std::cout << "\n";
+        std::cout << "  cover art   : " << cover_art_mode << "\n";
+        std::cout << "  accuraterip : " << (accuraterip ? "enabled" : "disabled") << "\n";
+        std::cout << "  read offset : " << offset.samples << " (" << offset.source << ")\n";
+        std::cout << "  speed       : " << (speed_fast ? "fast (max)" : "slow (1x)") << "\n";
+        std::cout << "  replaygain  : " << (replaygain ? "enabled (save after full album rip)" : "disabled (save each track immediately)") << "\n";
+        std::cout << "  permissions : file " << format_permission_mode(output_permissions.file_mode)
+                  << ", dir " << format_permission_mode(output_permissions.dir_mode)
+                  << ", warnings " << (output_permissions.warn_on_failure ? "enabled" : "disabled") << "\n";
+        std::cout << "  auto        : " << (auto_mode ? "enabled" : "disabled");
+        std::cout << "\n\n";
         cdrip_set_read_offset(drive, offset.samples);
         const char* toc_err = nullptr;
         CdRipDiscToc* toc = cdrip_build_disc_toc(drive, &toc_err);
