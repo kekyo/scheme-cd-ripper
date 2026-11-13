@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(cd_ripper LANGUAGES CXX)
+project(cd_ripper LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -37,7 +37,8 @@ pkg_check_modules(PNG REQUIRED libpng)
 pkg_check_modules(JPEG REQUIRED libjpeg)
 pkg_check_modules(LCMS2 REQUIRED lcms2)
 pkg_check_modules(EBUR128 REQUIRED libebur128)
-pkg_check_modules(CHAFA REQUIRED chafa>=1.14.2)
+include(cmake/BundledChafa.cmake)
+set(CMAKE_BUILD_RPATH_USE_ORIGIN ON)
 
 set(VERSION_HEADER ${CMAKE_BINARY_DIR}/generated/version.h)
 get_filename_component(VERSION_DIR ${VERSION_HEADER} DIRECTORY)
@@ -141,12 +142,13 @@ target_link_libraries(cdrip PUBLIC ${COMMON_LIBS})
 add_dependencies(cdrip version_header)
 
 add_executable(cdrip_app src/main.cpp)
-set_target_properties(cdrip_app PROPERTIES OUTPUT_NAME cdrip)
-target_include_directories(cdrip_app PRIVATE ${COMMON_INCLUDES} ${CHAFA_INCLUDE_DIRS} ${VERSION_DIR})
-target_link_directories(cdrip_app PRIVATE ${COMMON_LIB_DIRS} ${CHAFA_LIBRARY_DIRS})
-target_compile_options(cdrip_app PRIVATE ${COMMON_CFLAGS} ${CHAFA_CFLAGS_OTHER})
-target_link_libraries(cdrip_app PRIVATE cdrip_static ${CHAFA_LIBRARIES})
+set_target_properties(cdrip_app PROPERTIES OUTPUT_NAME cdrip INSTALL_RPATH "$ORIGIN/../lib/cdrip")
+target_include_directories(cdrip_app PRIVATE ${COMMON_INCLUDES} ${VERSION_DIR})
+target_link_directories(cdrip_app PRIVATE ${COMMON_LIB_DIRS})
+target_compile_options(cdrip_app PRIVATE ${COMMON_CFLAGS})
+target_link_libraries(cdrip_app PRIVATE cdrip_static cdrip_chafa)
 add_dependencies(cdrip_app version_header)
+install(TARGETS cdrip_app RUNTIME DESTINATION bin COMPONENT cli)
 
 add_executable(cdrip_test_musicbrainz_recrawl_filter
     tests/test_musicbrainz_recrawl_filter.cpp
@@ -196,10 +198,10 @@ add_dependencies(cdrip_test_discogs_title_search version_header)
 add_executable(cdrip_test_cover_art_selection
     tests/test_cover_art_selection.cpp
 )
-target_include_directories(cdrip_test_cover_art_selection PRIVATE ${COMMON_INCLUDES} ${CHAFA_INCLUDE_DIRS} ${VERSION_DIR})
-target_link_directories(cdrip_test_cover_art_selection PRIVATE ${COMMON_LIB_DIRS} ${CHAFA_LIBRARY_DIRS})
-target_compile_options(cdrip_test_cover_art_selection PRIVATE ${COMMON_CFLAGS} ${CHAFA_CFLAGS_OTHER})
-target_link_libraries(cdrip_test_cover_art_selection PRIVATE cdrip_static ${CHAFA_LIBRARIES})
+target_include_directories(cdrip_test_cover_art_selection PRIVATE ${COMMON_INCLUDES} ${VERSION_DIR})
+target_link_directories(cdrip_test_cover_art_selection PRIVATE ${COMMON_LIB_DIRS})
+target_compile_options(cdrip_test_cover_art_selection PRIVATE ${COMMON_CFLAGS})
+target_link_libraries(cdrip_test_cover_art_selection PRIVATE cdrip_static cdrip_chafa)
 target_link_options(cdrip_test_cover_art_selection PRIVATE -Wl,--wrap=chafa_canvas_print)
 add_dependencies(cdrip_test_cover_art_selection version_header)
 
@@ -224,10 +226,10 @@ add_dependencies(cdrip_test_real_rip_tags version_header)
 add_executable(cdrip_test_rip_progress_display
     tests/test_rip_progress_display.cpp
 )
-target_include_directories(cdrip_test_rip_progress_display PRIVATE ${COMMON_INCLUDES} ${CHAFA_INCLUDE_DIRS} ${VERSION_DIR})
-target_link_directories(cdrip_test_rip_progress_display PRIVATE ${COMMON_LIB_DIRS} ${CHAFA_LIBRARY_DIRS})
-target_compile_options(cdrip_test_rip_progress_display PRIVATE ${COMMON_CFLAGS} ${CHAFA_CFLAGS_OTHER})
-target_link_libraries(cdrip_test_rip_progress_display PRIVATE cdrip_static ${CHAFA_LIBRARIES})
+target_include_directories(cdrip_test_rip_progress_display PRIVATE ${COMMON_INCLUDES} ${VERSION_DIR})
+target_link_directories(cdrip_test_rip_progress_display PRIVATE ${COMMON_LIB_DIRS})
+target_compile_options(cdrip_test_rip_progress_display PRIVATE ${COMMON_CFLAGS})
+target_link_libraries(cdrip_test_rip_progress_display PRIVATE cdrip_static cdrip_chafa)
 add_dependencies(cdrip_test_rip_progress_display version_header)
 
 add_executable(cdrip_test_accuraterip tests/test_accuraterip.cpp)
