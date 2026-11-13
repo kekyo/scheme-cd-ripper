@@ -23,6 +23,12 @@ int main(int argc, char** argv) {
     };
     { std::ofstream out(file); out << "[cdrip]\n"; }
     const char* error = nullptr;
+    const auto missing_file = directory / "missing-config-file.conf";
+    auto* missing_config = cdrip_load_config(missing_file.c_str(), &error);
+    require(!missing_config && error && std::string(error).find("No such file or directory") != std::string::npos,
+        "Missing configuration errors must preserve the failure reason");
+    cdrip_release_error(error);
+    error = nullptr;
     auto* config = cdrip_load_config(file.c_str(), &error);
     require(config && !error, "Default settings must load");
     require(config->accuraterip && config->replaygain && !config->speed_fast,

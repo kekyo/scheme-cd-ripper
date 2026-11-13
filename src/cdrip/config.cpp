@@ -198,9 +198,9 @@ CdRipConfig* cdrip_load_config(
     };
 
     auto fail_gerror = [&](GError* gerr, const char* fallback) -> CdRipConfig* {
-        const char* msg = (gerr && gerr->message) ? gerr->message : fallback;
+        const std::string msg = (gerr && gerr->message) ? gerr->message : fallback;
         if (gerr) g_error_free(gerr);
-        return fail(msg);
+        return fail(msg.c_str());
     };
 
     std::vector<std::string> candidates;
