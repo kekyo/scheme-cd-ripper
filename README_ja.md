@@ -122,6 +122,9 @@ cdrip --read-offset 6 --accuraterip --no-eject
 
 `--cover-art auto|kitty|ascii|none`で表示方式を選べます。初期値の`auto`は`TERM=xterm-kitty`の端末でKitty画像表示を使い、それ以外ではANSI/ASCII表示を使います。`kitty`はKitty方式、`ascii`はANSI/ASCII表示、`none`は非表示です。
 
+Elder Termsなど、Kitty画像に対応していても`TERM=xterm-256color`を使う端末では、`--cover-art kitty`を指定してください。`TERM`を変更する必要はありません。
+プレビューを生成できない場合は、理由を標準エラーへ表示します。候補画像を表示できなくても、番号によるカバーアートの選択は続けられます。
+
 tmuxやscreen経由ではANSI/ASCII表示に戻ります。標準出力をファイルへリダイレクトした場合は画像を表示しません。既存の`--no-aa`も方式にかかわらずカバーアートの端末表示を無効にします。
 
 ## CDDBタグの挿入
@@ -369,6 +372,42 @@ path=/~cddb/cddb.cgi
 特別なサーバーID `musicbrainz` は `[cddb.musicbrainz]` セクション定義を必要としません。
 
 -----
+
+## Chafaの必要バージョン
+
+画像表示ライブラリChafaは、ビルド時と実行時の両方で1.14.2以上が必要です。
+古い版にはKitty画像のBase64出力に不具合があります。詳細は[上流の修正](https://github.com/hpjansson/chafa/commit/f08d59c27c2d3958eead1018e097a2e6d454ece6)を参照してください。
+
+ソースからビルドする場合は、次のコマンドで開発ライブラリの版を確認できます。
+
+```bash
+pkg-config --modversion chafa
+pkg-config --atleast-version=1.14.2 chafa
+```
+
+[Ubuntu 22.04](https://packages.ubuntu.com/jammy/libchafa-dev)と[Ubuntu 24.04](https://packages.ubuntu.com/noble/libchafa-dev)の標準パッケージは、この条件を満たしません。
+開発用の`libchafa-dev`と実行用の`libchafa0`または`libchafa0t64`を、使用するディストリビューション向けの1.14.2以上のパッケージへ更新してください。
+配布パッケージをビルドするコンテナにも、同じ更新が必要です。古い版のままでは`prereq.sh`とビルド処理が停止します。
+
+ローカルで表示を試す場合は、[Chafaの公式ソース](https://hpjansson.org/chafa/download.html)をユーザー用のディレクトリへビルドする方法もあります。
+以下は1.14.2の例です。プロジェクトのほかのビルド依存ライブラリは、先に導入してください。
+
+```bash
+curl -fLO https://hpjansson.org/chafa/releases/chafa-1.14.2.tar.xz
+tar -xf chafa-1.14.2.tar.xz
+cd chafa-1.14.2
+./configure --prefix="$HOME/.local/chafa" --without-tools --disable-gtk-doc --disable-man
+make -j4
+make install
+cd ../scheme-cd-ripper
+export PKG_CONFIG_PATH="$HOME/.local/chafa/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+export LD_LIBRARY_PATH="$HOME/.local/chafa/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j4
+```
+
+この方法で入れたライブラリは、Debianパッケージの依存条件を満たすパッケージとしては登録されません。
+`.deb`の作成・導入には、更新済みChafaの開発用・実行用パッケージを使用してください。
 
 ## 備考
 

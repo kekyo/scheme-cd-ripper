@@ -127,6 +127,9 @@ Verification results do not delete FLAC files or change the exit code. Files are
 
 Select the preview format with `--cover-art auto|kitty|ascii|none`. The default, `auto`, uses Kitty graphics when `TERM=xterm-kitty`, and ANSI/ASCII otherwise. `kitty` selects Kitty graphics, `ascii` selects ANSI/ASCII, and `none` disables previews.
 
+Use `--cover-art kitty` with terminals such as Elder Terms that support Kitty graphics while advertising `TERM=xterm-256color`. You do not need to change `TERM`.
+Preview failures report their reason to standard error. If candidate images cannot be displayed, you can still select cover art by number.
+
 Inside tmux or screen, previews fall back to ANSI/ASCII. No images are printed when standard output is redirected to a file. The existing `--no-aa` option disables terminal cover previews in all formats.
 
 ## Inserting CDDB Tags
@@ -392,7 +395,7 @@ A special server id `musicbrainz` is not required `[cddb.musicbrainz]` section d
 - libpng
 - libjpeg
 - liblcms 2.0
-- chafa (libchafa)
+- chafa (libchafa), version 1.14.2 or later at build time and runtime
 - CMake and a C++17 compiler
 - Node.js and [screw-up](https://github.com/kekyo/screw-up) (Automated-versioning tool)
 
@@ -405,15 +408,37 @@ A special server id `musicbrainz` is not required `[cddb.musicbrainz]` section d
 
 ### Build
 
-In Ubuntu noble/jammy:
+Install the build dependencies on Debian/Ubuntu:
 
 ```bash
 sudo apt-get install build-essential cmake dpkg-dev nodejs \
   libcdio-paranoia-dev libcddb2-dev libebur128-dev libflac++-dev libglib2.0-dev libsoup-3.0-dev libjson-glib-dev libchafa-dev libpng-dev libjpeg-dev liblcms2-dev
 npm install -g screw-up
 
+pkg-config --atleast-version=1.14.2 chafa
 ./build.sh
 ```
+
+Chafa 1.14.2 or later is required because earlier versions contain a [Kitty Base64 encoding bug](https://github.com/hpjansson/chafa/commit/f08d59c27c2d3958eead1018e097a2e6d454ece6).
+The standard packages in [Ubuntu 22.04](https://packages.ubuntu.com/jammy/libchafa-dev) and [Ubuntu 24.04](https://packages.ubuntu.com/noble/libchafa-dev) do not meet this requirement. Update both `libchafa-dev` and the runtime package (`libchafa0` or `libchafa0t64`) to version 1.14.2 or later, using packages built for your distribution. Apply the same update to package build containers; `prereq.sh` and the build stop if Chafa is too old.
+
+For local preview testing, you can also build the [official Chafa source](https://hpjansson.org/chafa/download.html) into a user directory after installing the other build dependencies:
+
+```bash
+curl -fLO https://hpjansson.org/chafa/releases/chafa-1.14.2.tar.xz
+tar -xf chafa-1.14.2.tar.xz
+cd chafa-1.14.2
+./configure --prefix="$HOME/.local/chafa" --without-tools --disable-gtk-doc --disable-man
+make -j4
+make install
+cd ../scheme-cd-ripper
+export PKG_CONFIG_PATH="$HOME/.local/chafa/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+export LD_LIBRARY_PATH="$HOME/.local/chafa/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j4
+```
+
+This local installation does not register a Debian package that satisfies runtime dependencies. Use updated Chafa development and runtime packages when building or installing `.deb` packages.
 
 ### Build packages
 
