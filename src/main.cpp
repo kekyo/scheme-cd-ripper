@@ -6,6 +6,7 @@
 #include "cdrip/cdrip.h"
 #include "cdrip/internal.h"
 #include "cdrip/settings.h"
+#include "cdrip/device_settings.h"
 #include "version.h"
 
 #include <algorithm>
@@ -93,15 +94,13 @@ std::string display_version() {
 
 std::string trim_ws(const std::string& s);
 
-std::string canonicalize_device_path(const std::string& path) {
-    if (path.empty()) return {};
-    // realpath() resolves symlinks (e.g., /dev/cdrom -> /dev/sr0).
-    // If it fails (non-path style device name, permission, etc.), fall back to the original string.
-    char* resolved = ::realpath(path.c_str(), nullptr);
-    if (!resolved) return path;
-    std::string out = resolved;
-    std::free(resolved);
-    return out;
+using cdrip::detail::canonicalize_device_path;
+
+static void print_device_identity(std::ostream& out, const std::string& device,
+    const std::vector<std::string>& ids) {
+    out << "  device      : \"" << device << "\"\n";
+    if (ids.empty()) out << "  device id   : (unavailable)\n";
+    for (const auto& id : ids) out << "  device id   : \"" << id << "\"\n";
 }
 
 const char* dup_cstr(const std::string& s) {
@@ -3170,10 +3169,16 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    const auto offset = cdrip::detail::select_read_offset(*cfg, device, cli_opts.read_offset);
+    if (!offset.error.empty()) {
+        std::cerr << offset.error << '\n';
+        cdrip_close(drive, false, nullptr);
+        return 1;
+    }
     std::cout << "\nOptions:\n";
     std::string config_source = cfg->config_path ? view_string(cfg->config_path) : std::string{"(defaults)"};
     std::cout << "  config      : \"" << config_source << "\"\n";
-    std::cout << "  device      : \"" << device << "\"\n";
+    print_device_identity(std::cout, device, cdrip::detail::device_id_paths(device, "/dev/disk/by-id"));
     std::cout << "  format      : \"" << format << "\"\n";
     CdRipRipModes effective_mode = (rip_mode == RIP_MODES_DEFAULT) ? RIP_MODES_BEST : rip_mode;
     int resolved_compression = compression_level >= 0
@@ -3197,7 +3202,7 @@ int main(int argc, char** argv) {
     std::cout << "\n";
     std::cout << "  cover art   : " << cover_art_mode << "\n";
     std::cout << "  accuraterip : " << (accuraterip ? "enabled" : "disabled") << "\n";
-    std::cout << "  read offset : " << cli_opts.read_offset.value_or(0) << "\n";
+    std::cout << "  read offset : " << offset.samples << " (" << offset.source << ")\n";
     std::cout << "  speed       : " << (speed_fast ? "fast (max)" : "slow (1x)") << "\n";
     std::cout << "  replaygain  : " << (replaygain ? "enabled (save after full album rip)" : "disabled (save each track immediately)") << "\n";
     std::cout << "  permissions : file " << format_permission_mode(output_permissions.file_mode)
@@ -3215,7 +3220,7 @@ int main(int argc, char** argv) {
             std::cerr << "Drive not available\n";
             return 1;
         }
-        cdrip_set_read_offset(drive, cli_opts.read_offset.value_or(0));
+        cdrip_set_read_offset(drive, offset.samples);
         const char* toc_err = nullptr;
         CdRipDiscToc* toc = cdrip_build_disc_toc(drive, &toc_err);
         if (!toc || !toc->tracks || toc->tracks_count == 0) {

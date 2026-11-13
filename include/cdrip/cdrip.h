@@ -72,6 +72,14 @@ typedef enum CdRipRipModes {
     RIP_MODES_DEFAULT = 2,
 } CdRipRipModes;
 
+/** A configured read correction for one device path. */
+typedef struct CdRipReadOffset {
+    /** Owned absolute device path, including stable symlinks. */
+    const char* device;
+    /** Signed correction in stereo sample frames. */
+    int samples;
+} CdRipReadOffset;
+
 /** Global configuration loaded from INI or defaults. */
 typedef struct CdRipConfig {
     /** CD device path (nullable => auto-detect). */
@@ -94,6 +102,10 @@ typedef struct CdRipConfig {
     const char* discogs;
     /** Nonnegative MusicBrainz track length tolerance percentage; default 2. */
     int recrawl_percent;
+    /** Owned device-specific offsets; null when no offsets are configured. */
+    CdRipReadOffset* read_offsets;
+    /** Number of entries in read_offsets. */
+    size_t read_offsets_count;
     /** Output permissions as 3-digit octal file mode, or <0 for umask-derived default. */
     int permissions;
     /** Non-zero to show warnings when output permission adjustments fail. */

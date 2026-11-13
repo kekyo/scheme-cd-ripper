@@ -1,3 +1,4 @@
+#include "../src/cdrip/device_settings.h"
 #include <cstdlib>
 #include <sys/resource.h>
 #include <csignal>
@@ -1379,7 +1380,13 @@ static void test_read_offsets() {
         FakeBackendScope scope(state);
         const CdRipSettings settings{"", 1, RIP_MODES_FAST, false};
         auto* rip = open_fake_rip(settings);
-        cdrip_set_read_offset(rip, offset);
+        CdRipReadOffset device_offset{"/dev/fake-cdrom", offset};
+        CdRipConfig config{};
+        config.read_offsets = &device_offset;
+        config.read_offsets_count = 1;
+        const auto selected = cdrip::detail::select_read_offset(config, "/dev/fake-cdrom", std::nullopt);
+        expect_true(selected.error.empty(), "configured offset should resolve before ripping");
+        cdrip_set_read_offset(rip, selected.samples);
         const char* error = nullptr;
         auto* toc = cdrip_build_disc_toc(rip, &error);
         const auto entry = make_test_entry();

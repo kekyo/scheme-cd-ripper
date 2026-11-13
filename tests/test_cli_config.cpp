@@ -66,5 +66,54 @@ int main(int argc, char** argv) {
         }
     }
     std::filesystem::remove_all(directory);
+    std::filesystem::create_directories(directory);
+    for (const auto* entry : {"/dev/sr0=bad", "relative=6", "/dev/sr0=2147483648"}) {
+        { std::ofstream out(file); out << "[read_offset]\n" << entry << '\n'; }
+        error = nullptr;
+        config = cdrip_load_config(file.c_str(), &error);
+        const bool rejected = !config && error;
+        cdrip_release_config(config);
+        cdrip_release_error(error);
+        require(rejected, "Invalid device offset entry must be rejected");
+    }
+    const auto first = (directory / "drive0").string();
+    const auto second = (directory / "drive1").string();
+    { std::ofstream out(first); }
+    { std::ofstream out(second); }
+    const auto ids = directory / "by-id";
+    std::filesystem::create_directory(ids);
+    std::filesystem::create_symlink(first, ids / "z-drive");
+    std::filesystem::create_symlink(first, ids / "a-drive");
+    std::filesystem::create_symlink(second, ids / "other-drive");
+    std::filesystem::create_symlink(directory / "absent", ids / "disconnected");
+    const auto paths = cdrip::detail::device_id_paths(first, ids.string());
+    require(paths == std::vector<std::string>{(ids / "a-drive").string(), (ids / "z-drive").string()},
+        "Stable paths must identify only the selected drive in sorted order");
+    require(cdrip::detail::device_id_paths((ids / "a-drive").string(), ids.string()) == paths,
+        "An explicitly selected stable path must identify the same drive");
+    require(cdrip::detail::device_id_paths(first, (directory / "missing").string()).empty(),
+        "Stable paths may be unavailable");
+    std::ostringstream display;
+    print_device_identity(display, first, paths);
+    require(display.str().find(paths[0]) != std::string::npos && display.str().find(paths[1]) != std::string::npos,
+        "Startup display must include the selected drive's stable paths");
+    display.str("");
+    print_device_identity(display, first, {});
+    require(display.str().find("(unavailable)") != std::string::npos, "Missing identity must be explicit");
+    { std::ofstream out(file); out << "[read_offset]\n" << first << "=21\n"
+        << paths[0] << "=21\n" << second << "=-6\n" << (directory / "offline").string() << "=0\n"; }
+    error = nullptr;
+    config = cdrip_load_config(file.c_str(), &error);
+    require(config && !error, "Device offsets must load");
+    auto offset = cdrip::detail::select_read_offset(*config, paths[1], std::nullopt);
+    require(offset.error.empty() && offset.samples == 21 && offset.source != "default", "Device aliases must select offset");
+    require(cdrip::detail::select_read_offset(*config, second, std::nullopt).samples == -6, "Drives have independent offsets");
+    require(cdrip::detail::select_read_offset(*config, "/unconfigured", std::nullopt).samples == 0, "Missing offset defaults to zero");
+    config->read_offsets[1].samples = -6;
+    require(!cdrip::detail::select_read_offset(*config, first, std::nullopt).error.empty(), "Conflicting aliases must fail");
+    offset = cdrip::detail::select_read_offset(*config, first, 0);
+    require(offset.error.empty() && offset.samples == 0 && offset.source == "CLI", "Explicit zero overrides device entries");
+    cdrip_release_config(config);
+    std::filesystem::remove_all(directory);
     std::cout << "CLI/config tests passed\n";
 }

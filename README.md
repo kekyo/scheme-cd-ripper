@@ -260,13 +260,19 @@ No images are printed when standard output is redirected to a file.
 
 Use `--read-offset` to correct a drive's read position.
 The unit is one stereo sample frame; positive values read later audio.
-The default is zero. Find the value for your model in the [official AccurateRip offset list](https://www.accuraterip.com/driveoffsets.htm).
-Offsets are not configured automatically.
+Without a CLI override, the value is selected from `[read_offset]` for the active device, falling back to zero. An explicit `-ro 0` also overrides configuration. Startup output includes matching `/dev/disk/by-id/` paths, or `(unavailable)` when none exist. Use a stable path as a configuration key; symlinks to the same device are resolved, and conflicting offsets are rejected.
 
 For example, for a drive with a +6 correction offset:
 
 ```bash
 cdrip -ro 6 --no-eject
+```
+
+For example, configure a drive as follows, replacing the path and value with those appropriate for your device:
+
+```ini
+[read_offset]
+/dev/disk/by-id/usb-VENDOR_MODEL_SERIAL-0:0=6
 ```
 
 Correction preserves each track's length. Audio is read from adjacent audio tracks when needed. Samples beyond disc edges or data-track boundaries are filled with silence. FLAC tags `READ_OFFSET` and `READ_OFFSET_PADDED_SAMPLES` record the correction and the number of padded sample frames. ReplayGain and AccurateRip also use the corrected audio.

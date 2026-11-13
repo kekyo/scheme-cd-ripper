@@ -255,6 +255,30 @@ CdRipConfig* cdrip_load_config(
     }
     g_strfreev(keys);
 
+    // Device entries are validated even when their drives are disconnected.
+    key_count = 0;
+    keys = g_key_file_get_keys(key_file, "read_offset", &key_count, nullptr);
+    cfg->read_offsets = key_count ? new CdRipReadOffset[key_count]{} : nullptr;
+    cfg->read_offsets_count = key_count;
+    for (gsize i = 0; i < key_count; ++i) {
+        const std::string device = keys[i];
+        GError* gerr = nullptr;
+        char* raw = g_key_file_get_string(key_file, "read_offset", device.c_str(), &gerr);
+        if (!raw) {
+            g_strfreev(keys);
+            return fail_gerror(gerr, "Failed to parse read offset");
+        }
+        const auto value = strip_inline_comment_value(raw);
+        g_free(raw);
+        int samples = 0;
+        if (!std::filesystem::path(device).is_absolute() || !parse_setting_integer(value, samples)) {
+            g_strfreev(keys);
+            return fail(("Invalid read_offset entry: " + device).c_str());
+        }
+        cfg->read_offsets[i] = {make_cstr_copy(device), samples};
+    }
+    g_strfreev(keys);
+
     // [cddb] group: servers list
     std::vector<std::string> server_ids;
     if (g_key_file_has_key(key_file, "cddb", "servers", nullptr)) {
@@ -369,6 +393,8 @@ void cdrip_release_config(
     release_cstr(cfg->discogs);
     release_cstr(cfg->filter_title);
     release_cstr(cfg->config_path);
+    for (size_t i = 0; i < cfg->read_offsets_count; ++i) release_cstr(cfg->read_offsets[i].device);
+    delete[] cfg->read_offsets;
     if (cfg->servers) {
         for (size_t i = 0; i < cfg->servers->count; ++i) {
             release_cstr(cfg->servers->servers[i].name);
