@@ -1242,17 +1242,21 @@ std::string build_musicbrainz_cache_key(const CdRipDiscToc* toc) {
 }
 
 std::string build_metadata_cache_key(const CdRipDiscToc* toc) {
-    const std::string mb_key = build_musicbrainz_cache_key(toc);
-    if (!mb_key.empty()) return mb_key;
-
-    const std::string cddb = view_string(toc ? toc->cddb_discid : nullptr);
-    if (!cddb.empty()) {
-        std::string lowered = cddb;
-        std::transform(lowered.begin(), lowered.end(), lowered.begin(),
-            [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-        return "cddb:" + lowered;
+    if (!toc || !toc->tracks || toc->tracks_count == 0) return {};
+    std::string id = build_musicbrainz_cache_key(toc);
+    if (id.empty()) {
+        const std::string cddb = view_string(toc->cddb_discid);
+        if (cddb.empty()) return {};
+        id = "cddb:" + cdrip::detail::to_lower(cddb);
     }
-    return {};
+
+    // CDDB IDs can collide, and a tagged MusicBrainz release can contain several discs.
+    std::ostringstream key;
+    key << id << '|' << toc->leadout_sector << '/' << toc->length_seconds;
+    for (size_t i = 0; i < toc->tracks_count; ++i) {
+        key << '|' << toc->tracks[i].start << '/' << toc->tracks[i].end;
+    }
+    return key.str();
 }
 
 struct EntryListDeleter {

@@ -159,6 +159,18 @@ static void test_cddb_candidates(const CdRipDiscToc& toc) {
         "a manual choice may explicitly use an unverified album");
     cdrip_release_cddbentry_list(by_default.entries);
     cdrip_release_cddbentry_list(by_number.entries);
+
+    // Both layouts produce 06016802: the second track starts at 202 or 112 absolute seconds.
+    const auto first_id = query_id;
+    CdRipTrackInfo other_tracks[]{{1, 0, 8249, 1}, {2, 8250, 26999, 1}};
+    auto other_toc = toc;
+    other_toc.tracks = other_tracks;
+    records = {{"Other Recording", {150, 8400}, 362}};
+    auto other = select_cddb_entry_for_toc(&other_toc, &servers, false, "", true, false, true, 2, false, &cache);
+    check(query_id == 0x06016802 && query_id == first_id && other.selected &&
+        get_album_tag(other.selected, "ALBUM") == "Other Recording",
+        "two discs with the same CDDB ID and different track lengths get independently verified candidates");
+    cdrip_release_cddbentry_list(other.entries);
 }
 
 static std::string medium_json(const std::string& id, const std::string& format, int first_ms) {
@@ -285,7 +297,7 @@ int main() {
     toc.tracks_count = 2;
     toc.length_seconds = 360;
     toc.leadout_sector = 27000;
-    toc.cddb_discid = "01016802";
+    toc.cddb_discid = "06016802";
     test_cddb_candidates(toc);
     test_release_cache(toc);
     test_title_search(toc);
