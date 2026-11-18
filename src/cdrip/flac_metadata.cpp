@@ -149,12 +149,13 @@ bool update_flac_tags(
         track_name,
         safe_title);
 
-    if (preserve_replaygain_tags) {
+    {
         std::map<std::string, std::string> existing_tags;
         if (collect_vorbis_comments(path, existing_tags)) {
             for (const auto& [key, value] : existing_tags) {
                 const std::string key_upper = to_upper(key);
-                if (is_replaygain_tag_key(key_upper) && !value.empty()) {
+                if (((preserve_replaygain_tags && is_replaygain_tag_key(key_upper)) ||
+                    key_upper == "READ_OFFSET" || key_upper == "READ_OFFSET_PADDED_SAMPLES") && !value.empty()) {
                     tags[key_upper] = value;
                 }
             }

@@ -24,6 +24,8 @@
 #include <FLAC/metadata.h>
 
 #include "cdrip/cdrip.h"
+#include "accuraterip.h"
+#include "device_settings.h"
 
 namespace cdrip::detail {
 struct BackendDetectedDrive;
@@ -39,6 +41,7 @@ struct CdRip {
     std::string format;
     int compression_level{-1};
     bool speed_fast{false};
+    int read_offset{0};
 };
 
 /* ------------------------------------------------------------------- */
@@ -93,6 +96,7 @@ struct DriveBackend {
         void* reader,
         const int16_t*& out_buffer,
         std::string& err);
+    bool (*get_identity)(void* drive, DriveIdentity& identity, std::string& err){nullptr};
 };
 
 const DriveBackend& current_drive_backend();
@@ -498,6 +502,7 @@ struct OutputPermissions {
 };
 
 struct RipTrackWriteOptions {
+    AccurateRipChecksum* accuraterip_result{nullptr};
     const char* output_path{nullptr};
     const char* display_path{nullptr};
     const std::map<std::string, std::string>* tag_overrides{nullptr};

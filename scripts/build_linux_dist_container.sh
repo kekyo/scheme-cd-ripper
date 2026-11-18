@@ -81,35 +81,6 @@ write_control_file() {
 	} >"$control_path"
 }
 
-calculate_shlibdeps() {
-	target_path=$1
-	package_name=$2
-	tmp_dir=$(mktemp -d)
-
-	mkdir -p "$tmp_dir/debian"
-	cat >"$tmp_dir/debian/control" <<EOF
-Source: $package_name
-Section: misc
-Priority: optional
-Maintainer: $CDRIP_PACKAGE_MAINTAINER
-Standards-Version: 4.6.2
-
-Package: $package_name
-Architecture: $deb_arch
-Description: temporary package metadata for dependency calculation
-EOF
-
-	depends_value=$(cd "$tmp_dir" && dpkg-shlibdeps -O "$target_path" | sed -n 's/^shlibs:Depends=//p')
-	rm -rf "$tmp_dir"
-
-	[ -n "$depends_value" ] || {
-		printf '%s\n' "dpkg-shlibdeps failed to calculate runtime dependencies for $target_path" >&2
-		exit 1
-	}
-
-	printf '%s\n' "$depends_value"
-}
-
 stage_lib_package() {
 	stage_dir=$work_dir/stage/$CDRIP_LIB_PACKAGE_NAME
 	lib_dir="$stage_dir/usr/lib/$multiarch"
@@ -124,7 +95,7 @@ stage_lib_package() {
 	cp include/cdrip/* "$include_dir/"
 	copy_docs "$CDRIP_LIB_PACKAGE_NAME" "$stage_dir"
 
-	lib_depends=$(calculate_shlibdeps "$lib_dir/libcdrip.so" "$CDRIP_LIB_PACKAGE_NAME")
+	lib_depends=$(./scripts/package_shlibdeps.sh "$stage_dir" "$CDRIP_LIB_PACKAGE_NAME" "$lib_dir/libcdrip.so")
 	write_control_file \
 		"$control_dir/control" \
 		"$CDRIP_LIB_PACKAGE_NAME" \
@@ -141,10 +112,10 @@ stage_cli_package() {
 	rm -rf "$stage_dir"
 	mkdir -p "$bin_dir" "$control_dir"
 
-	cp "$build_dir/cdrip" "$bin_dir/"
-	copy_docs "$CDRIP_CLI_PACKAGE_NAME" "$stage_dir"
+	DESTDIR="$stage_dir" cmake --install "$build_dir" --prefix /usr --component cli
 
-	cli_depends=$(calculate_shlibdeps "$bin_dir/cdrip" "$CDRIP_CLI_PACKAGE_NAME")
+	cli_depends=$(./scripts/package_shlibdeps.sh "$stage_dir" "$CDRIP_CLI_PACKAGE_NAME" \
+		"$bin_dir/cdrip" "$stage_dir/usr/lib/cdrip/libchafa.so.0")
 	write_control_file \
 		"$control_dir/control" \
 		"$CDRIP_CLI_PACKAGE_NAME" \
@@ -180,7 +151,6 @@ require_command dpkg-architecture
 require_command dpkg-shlibdeps
 require_command pkg-config
 
-require_pkg_config_module chafa
 require_pkg_config_module flac++
 require_pkg_config_module gio-2.0
 require_pkg_config_module json-glib-1.0

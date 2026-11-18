@@ -1,4 +1,8 @@
+#include "../src/cdrip/device_settings.h"
+#include "../src/cdrip/offset_measurement.h"
 #include <cstdlib>
+#include <sys/resource.h>
+#include <csignal>
 #include <fstream>
 #include <filesystem>
 #include <iostream>
@@ -1181,7 +1185,7 @@ auto test_rip_track_reports_seek_and_read_failures = []() {
                 nullptr,
                 rip_err),
             "read failure should fail the rip");
-        expect_eq("Read error on track 1", rip_err, "read failure should preserve the public error message");
+        expect_contains(rip_err, "Fake read failure", "read failure should retain backend diagnostics");
         expect_true(!std::filesystem::exists(flac_path), "failed read should not publish a FLAC file");
 
         cdrip_release_disctoc(toc);
@@ -1309,7 +1313,294 @@ auto test_rip_track_emits_progress_updates = []() {
 
 }  // namespace
 
+static void test_final_flush_failure() {
+    {
+        auto state = make_backend_state();
+        state.tracks[0].end = 0;
+        struct rlimit original{};
+        getrlimit(RLIMIT_FSIZE, &original);
+        auto limited = original;
+        limited.rlim_cur = 128;
+        auto old_handler = std::signal(SIGXFSZ, SIG_IGN);
+        setrlimit(RLIMIT_FSIZE, &limited);
+        FakeBackendScope scope(state);
+
+        const auto temp_dir = std::filesystem::temp_directory_path() / "cdrip-test-drive-backend-read-failure";
+        std::filesystem::remove_all(temp_dir);
+        std::filesystem::create_directories(temp_dir);
+        const auto flac_path = (temp_dir / "read-failure.flac").string();
+
+        const CdRipSettings settings{"", 1, RIP_MODES_FAST, false};
+        CdRip* rip = open_fake_rip(settings);
+        const char* err = nullptr;
+        CdRipDiscToc* toc = cdrip_build_disc_toc(rip, &err);
+        expect_true(toc != nullptr, err ? err : "TOC build should succeed before read failure test");
+        release_error(err);
+
+        const auto entry = make_test_entry();
+        cdrip::detail::RipTrackWriteOptions options{};
+        options.output_path = flac_path.c_str();
+        options.display_path = flac_path.c_str();
+        std::string rip_err;
+        expect_true(
+            !cdrip::detail::rip_track_with_options(
+                rip,
+                &toc->tracks[0],
+                &entry,
+                toc,
+                nullptr,
+                static_cast<int>(toc->tracks_count),
+                0.0,
+                0.0,
+                0.0,
+                &options,
+                nullptr,
+                rip_err),
+            "read failure should fail the rip");
+        setrlimit(RLIMIT_FSIZE, &original);
+        std::signal(SIGXFSZ, old_handler);
+        expect_contains(rip_err, "finalize FLAC", "final flush failure should be reported");
+        expect_true(!std::filesystem::exists(flac_path), "failed read should not publish a FLAC file");
+
+        cdrip_release_disctoc(toc);
+        cdrip_close(rip, false, &err);
+        release_error(err);
+        std::filesystem::remove_all(temp_dir);
+    }
+}
+
+static void test_read_offsets() {
+    for (int layout : {0, 1, 2}) {
+    for (int offset : {0, 1, -1, 589, -589, 88201, -88201}) {
+        auto state = make_backend_state();
+        if (layout != 0) state.tracks = {CdRipTrackInfo{1, 0, 149, 1}, CdRipTrackInfo{2, 150, 309, 1}};
+        const int track_index = layout == 2 ? 1 : 0;
+        const int frames = layout == 2 ? 160 * 588 : 150 * 588;
+        const int start = layout == 2 ? 150 * 588 : 0;
+        const int limit = layout == 0 ? 150 * 588 : 310 * 588;
+        FakeBackendScope scope(state);
+        const CdRipSettings settings{"", 1, RIP_MODES_FAST, false};
+        auto* rip = open_fake_rip(settings);
+        CdRipReadOffset device_offset{"/dev/fake-cdrom", offset};
+        CdRipConfig config{};
+        config.read_offsets = &device_offset;
+        config.read_offsets_count = 1;
+        const auto selected = cdrip::detail::select_read_offset(config, "/dev/fake-cdrom", std::nullopt);
+        expect_true(selected.error.empty(), "configured offset should resolve before ripping");
+        cdrip_set_read_offset(rip, selected.samples);
+        const char* error = nullptr;
+        auto* toc = cdrip_build_disc_toc(rip, &error);
+        const auto entry = make_test_entry();
+        const auto path = (std::filesystem::temp_directory_path() / "cdrip-offset-test.flac").string();
+        cdrip::detail::RipTrackWriteOptions options{};
+        options.output_path = path.c_str();
+        options.apply_output_permissions = false;
+        cdrip::detail::AccurateRipChecksum checksum{};
+        options.accuraterip_result = &checksum;
+        std::string err;
+        expect_true(cdrip::detail::rip_track_with_options(rip, &toc->tracks[track_index], &entry, toc,
+            nullptr, 2, 0, 0, 0, &options, nullptr, err), err);
+        const auto raw = path + ".raw";
+        expect_true(std::system(("flac -d -f -s --force-raw-format --endian=little --sign=signed -o " + raw + " " + path).c_str()) == 0,
+            "decode corrected FLAC");
+        std::ifstream input(raw, std::ios::binary);
+        uint32_t expected_v1 = 0, expected_v2 = 0;
+        for (int frame = 0; frame < frames; ++frame) {
+            const long source = static_cast<long>(start) + frame + offset;
+            uint32_t packed = 0;
+            for (int channel = 0; channel < 2; ++channel) {
+                unsigned char bytes[2]{};
+                expect_true(static_cast<bool>(input.read(reinterpret_cast<char*>(bytes), 2)), "track length preserved");
+                const auto actual = static_cast<int16_t>(bytes[0] | (bytes[1] << 8));
+                const auto expected = source >= 0 && source < limit
+                    ? state.sectors[source / 588][(source % 588) * 2 + channel] : 0;
+                packed |= static_cast<uint32_t>(static_cast<uint16_t>(actual)) << (16 * channel);
+                expect_true(actual == expected, "corrected audio and data-boundary silence");
+            }
+            const auto position = static_cast<uint64_t>(frame + 1);
+            if ((track_index != 0 || position >= 2940) &&
+                (track_index != 1 || position <= static_cast<uint64_t>(frames - 2940))) {
+                const uint64_t product = packed * position;
+                expected_v1 += static_cast<uint32_t>(product);
+                expected_v2 += static_cast<uint32_t>(product) + static_cast<uint32_t>(product >> 32);
+            }
+        }
+        expect_true(checksum.v1 == expected_v1 && checksum.v2 == expected_v2, "checksum describes decoded corrected PCM");
+        expect_true(input.peek() == EOF, "no extra audio frames");
+        expect_true(cdrip::detail::update_flac_tags(path, toc, track_index + 1, &entry,
+            {}, false, err), "ReplayGain metadata rewrite");
+        const auto tags = read_vorbis_comments(path);
+        expect_eq(std::to_string(offset), tags.at("READ_OFFSET"), "offset recorded");
+        std::filesystem::remove(path);
+        std::filesystem::remove(raw);
+        cdrip_release_disctoc(toc);
+        cdrip_close(rip, false, &error);
+        release_error(error);
+    }
+    }
+}
+
+static void test_offset_measurement() {
+    using namespace cdrip::detail;
+    const DriveIdentity identity{"HL-DT-ST", "BD-RE BH16NS58", "1.03"};
+    const std::string row = "<tr><td><font>LG Electronics - BD-RE&nbsp; BH16NS58</font></td><td>+6</td></tr>";
+    expect_true(parse_drive_offsets(row, identity).samples == 6, "catalogue normalization must handle the inquiry vendor and spaces");
+    expect_true(!parse_drive_offsets(row, {"HL-DT-ST", "BD-RE BH16NS58-extra", ""}).samples,
+        "similar model names must not match");
+    expect_true(!parse_drive_offsets(row + "<tr><td>LG Electronics - BD-RE BH16NS58</td><td>12</td></tr>", identity).samples,
+        "conflicting catalogue rows must not select a value");
+    expect_true(!parse_drive_offsets("<tr><td>LG Electronics - BD-RE BH16NS58</td><td>[Purged]</td></tr>", identity).samples,
+        "purged catalogue models must not select zero");
+    expect_true(parse_drive_offsets("<tr><td>Vendor - Model</td><td>0</td></tr>", {"Vendor", "Model", ""}).samples == 0,
+        "a listed zero is a valid candidate");
+    expect_true(parse_drive_offsets("unavailable", identity).detail == "invalid drive catalogue response", "malformed catalogue is distinct from not listed");
+
+    auto state = make_backend_state();
+    state.tracks = {{1, 0, 599, 1}, {2, 600, 1199, 1}, {3, 1200, 1799, 1}};
+    state.last_sector = 1799;
+    state.sectors.resize(1800);
+    uint32_t random = 17;
+    for (auto& sector : state.sectors) {
+        sector.resize(588 * 2);
+        for (auto& sample : sector) {
+            random = random * 1664525U + 1013904223U;
+            sample = static_cast<int16_t>(random >> 16);
+        }
+    }
+    FakeBackendScope scope(state);
+    const CdRipSettings settings{"", 1, RIP_MODES_FAST, false};
+    auto* rip = open_fake_rip(settings);
+    cdrip_set_read_offset(rip, 1234);
+    const char* error = nullptr;
+    auto* toc = cdrip_build_disc_toc(rip, &error);
+    expect_true(toc && !error, "measurement TOC");
+    static AccurateRipDatabase database;
+    const int correction = 589;
+    const auto reference = [&state](int shift) {
+      AccurateRipDatabase expected{AccurateRipStatus::Available, {}, {std::vector<AccurateRipTrackEntry>(3)}};
+      for (size_t track = 0; track < 3; ++track) {
+        const auto& info = state.tracks[track];
+        uint32_t v1 = 0, v2 = 0, signature = 0;
+        const long frames = (info.end - info.start + 1) * 588;
+        for (long i = 0; i < frames; ++i) {
+            if ((track == 0 && i + 1 < 2940) || (track == 2 && i + 1 > frames - 2940)) continue;
+            const long source = info.start * 588 + i + shift;
+            const auto& sector = state.sectors[source / 588];
+            const uint32_t word = static_cast<uint16_t>(sector[(source % 588) * 2]) |
+                (static_cast<uint32_t>(static_cast<uint16_t>(sector[(source % 588) * 2 + 1])) << 16);
+            const uint64_t product = static_cast<uint64_t>(word) * (i + 1);
+            v1 += static_cast<uint32_t>(product);
+            v2 += static_cast<uint32_t>(product) + static_cast<uint32_t>(product >> 32);
+            if (i >= 450 * 588 && i < 451 * 588) signature += word * (i - 450 * 588 + 1);
+        }
+        expected.pressings[0][track] = {static_cast<unsigned>(5 + track), track == 1 ? v2 : v1, signature};
+      }
+      return expected;
+    };
+    database = reference(correction);
+    auto result = measure_offsets(rip, *toc, database, correction, 3, {});
+    expect_true(result.error.empty() && result.tracks.size() == 3, "three selected tracks must be measured");
+    for (size_t i = 0; i < 3; ++i) {
+        expect_true(result.tracks[i].error.empty() && result.tracks[i].matches.size() == 1, "listed offset must match each full track");
+        expect_true(result.tracks[i].matches[0].samples == correction && result.tracks[i].matches[0].record == 0, "measurement must ignore the configured ripping offset");
+    }
+    expect_true(result.tracks[1].matches[0].v2, "v2-only database records must match");
+    result = measure_offsets(rip, *toc, database, correction, 1, {});
+    expect_true(result.tracks.size() == 1 && result.tracks[0].matches.size() == 1,
+        "the last selected track is not necessarily the last disc track");
+    result = measure_offsets(rip, *toc, database, correction, 99, {});
+    expect_true(result.requested_tracks == 99 && result.tracks.size() == 3, "track count must be clipped to the disc");
+    const int reads = state.read_calls;
+    auto missing = database;
+    missing.status = AccurateRipStatus::NotFound;
+    result = measure_offsets(rip, *toc, missing, correction, 3, {});
+    expect_true(!result.error.empty() && state.read_calls == reads, "unregistered discs must fail before reading PCM");
+
+    const OffsetLookupServices services{
+        [](const DriveIdentity&) { return DriveOffsetLookup{589, "listed"}; },
+        [](const CdRipDiscToc&) { return database; }};
+    std::ostringstream output;
+    expect_true(run_offset_measurement(rip, 3, services, output) == 0, "dedicated command must finish using injected network responses");
+    expect_contains(output.str(), "all 3 measured tracks match record 1", "full matches must share a record");
+    expect_true(state.eject_calls == 0, "measurement must keep the disc inserted");
+
+    const int before_search = state.read_calls;
+    auto searched = measure_offsets(rip, *toc, database, std::nullopt, 3, {});
+    expect_true(searched.error.empty() && searched.searched, "unlisted drives must search captured PCM");
+    for (const auto& track : searched.tracks) {
+        expect_true(std::any_of(track.matches.begin(), track.matches.end(), [](const auto& match) {
+            return match.samples == 589;
+        }), "search must find the measured offset, including v2-only records");
+    }
+    const int captured_reads = state.read_calls - before_search;
+    const int before_wrong = state.read_calls;
+    searched = measure_offsets(rip, *toc, database, -6, 3, {});
+    expect_true(searched.searched && state.read_calls - before_wrong == captured_reads,
+        "a mismatching listed offset must search without rereading candidate PCM");
+    expect_true(searched.tracks[0].search_range == std::pair{-2939, 2940},
+        "unreadable disc-edge samples must reduce the searched range");
+    for (int shift : {-589, 0}) {
+        searched = measure_offsets(rip, *toc, reference(shift), std::nullopt, 3, {});
+        for (const auto& track : searched.tracks) {
+            expect_true(track.matches.size() == 1 && track.matches[0].samples == shift,
+                "negative and zero corrections must be measured without selecting a default");
+        }
+    }
+    searched = measure_offsets(rip, *toc, database, -4000, 3, {});
+    expect_true(!searched.tracks[0].listed_checksum && searched.tracks[0].matches[0].samples == correction,
+        "missing audio for a listed value must remain distinct from a measured search candidate");
+
+    auto unmatched = database;
+    for (auto& entry : unmatched.pressings[0]) entry = {1, 0, 1};
+    searched = measure_offsets(rip, *toc, unmatched, std::nullopt, 3, {});
+    for (const auto& track : searched.tracks) expect_true(track.matches.empty(), "no match must not become a zero correction");
+    for (auto& entry : unmatched.pressings[0]) entry.confidence = 0;
+    searched = measure_offsets(rip, *toc, unmatched, std::nullopt, 3, {});
+    for (const auto& track : searched.tracks) expect_true(track.matches.empty(), "zero confidence is not measurement evidence");
+
+    auto split = measure_offsets(rip, *toc, database, correction, 3, {});
+    split.tracks[1].matches[0].record = 1;
+    output.str("");
+    print_offset_measurement(output, split);
+    expect_contains(output.str(), "No single database record matches all", "unrelated per-track records must not form a full match");
+    auto separate = database;
+    separate.pressings.push_back(separate.pressings[0]);
+    separate.pressings[0][1].confidence = 0;
+    separate.pressings[1][0].confidence = 0;
+    separate.pressings[1][2].confidence = 0;
+    searched = measure_offsets(rip, *toc, separate, correction, 3, {});
+    expect_true(searched.searched, "per-track matches to different records must still trigger a search");
+    state.fail_read_call = state.read_calls;
+    result = measure_offsets(rip, *toc, database, correction, 3, {});
+    expect_true(!result.tracks[0].error.empty() && result.tracks[0].matches.empty(), "read failures must not produce matches");
+    cdrip_release_disctoc(toc);
+
+    state.fail_read_call = -1;
+    state.tracks = {{1, 0, 11, 1}, {2, 12, 23, 1}, {3, 24, 35, 1}};
+    state.last_sector = 35;
+    state.sectors.resize(36);
+    toc = cdrip_build_disc_toc(rip, &error);
+    const auto short_database = reference(correction);
+    searched = measure_offsets(rip, *toc, short_database, std::nullopt, 3, {});
+    expect_true(searched.tracks[1].matches.size() == 1 && searched.tracks[1].matches[0].samples == correction &&
+        searched.tracks[1].matches[0].v2, "short tracks without offset signatures must retain v2-only matches");
+
+    for (auto& sector : state.sectors) std::fill(sector.begin(), sector.end(), 0);
+    const auto silence_database = reference(0);
+    searched = measure_offsets(rip, *toc, silence_database, std::nullopt, 3, {});
+    for (const auto& track : searched.tracks) expect_true(track.matches.size() > 1, "silence must report multiple candidates");
+    output.str("");
+    print_offset_measurement(output, searched);
+    expect_contains(output.str(), "Offset +0: all 3", "all silent candidates remain visible");
+    expect_contains(output.str(), "Offset +1: all 3", "silence must not choose just the first candidate");
+    cdrip_release_disctoc(toc);
+    cdrip_close(rip, false, nullptr);
+}
+
 int main() {
+    test_offset_measurement();
+    test_read_offsets();
+    test_final_flush_failure();
     test_detect_cd_drives_uses_swapped_backend();
     test_open_build_toc_rip_and_close_use_swapped_backend();
     test_year_format_tag_is_derived_from_single_valid_date_token();

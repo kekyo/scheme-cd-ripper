@@ -72,6 +72,14 @@ typedef enum CdRipRipModes {
     RIP_MODES_DEFAULT = 2,
 } CdRipRipModes;
 
+/** A configured read correction for one device path. */
+typedef struct CdRipReadOffset {
+    /** Owned absolute device path, including stable symlinks. */
+    const char* device;
+    /** Signed correction in stereo sample frames. */
+    int samples;
+} CdRipReadOffset;
+
 /** Global configuration loaded from INI or defaults. */
 typedef struct CdRipConfig {
     /** CD device path (nullable => auto-detect). */
@@ -82,6 +90,22 @@ typedef struct CdRipConfig {
     int compression_level;
     /** Cover art maximum width in pixels (<=0 => default). */
     int max_width;
+    /** Owned terminal preview mode: auto, kitty, ascii, or none; default auto. */
+    const char* cover_art;
+    /** Compare corrected PCM with AccurateRip; enabled by default. */
+    bool accuraterip;
+    /** Request maximum read speed instead of 1x; disabled by default. */
+    bool speed_fast;
+    /** Scan and write ReplayGain tags; enabled by default. */
+    bool replaygain;
+    /** Owned Discogs preference: no, always, or fallback; default always. */
+    const char* discogs;
+    /** Nonnegative MusicBrainz track length tolerance percentage; default 2. */
+    int recrawl_percent;
+    /** Owned device-specific offsets; null when no offsets are configured. */
+    CdRipReadOffset* read_offsets;
+    /** Number of entries in read_offsets. */
+    size_t read_offsets_count;
     /** Output permissions as 3-digit octal file mode, or <0 for umask-derived default. */
     int permissions;
     /** Non-zero to show warnings when output permission adjustments fail. */
@@ -186,6 +210,14 @@ CdRip* cdrip_open(
     const CdRipSettings* settings,
     const char** error /* nullable */);
 /**
+ * Set the drive read correction offset (default: zero).
+ * @param rip Open drive handle; null is ignored.
+ * @param samples Signed stereo sample frames. Positive values read later audio.
+ * @remarks Unreadable disc/data boundaries are zero-filled; track length is preserved.
+ */
+void cdrip_set_read_offset(CdRip* rip, int samples);
+
+/**
  * Close Scheme CD Ripper and optionally eject the disc.
  * @param cdrip Ripper handle.
  * @param will_eject True to eject the disc.
@@ -212,6 +244,8 @@ typedef struct CdRipTrackInfo {
 
 /** Disc TOC information. */
 typedef struct CdRipDiscToc {
+    /** True when the original disc includes data tracks. */
+    bool has_data_tracks;
     /** CDDB disc ID (hex). */
     const char* cddb_discid;
     /** MusicBrainz disc ID (base64 variant). */
