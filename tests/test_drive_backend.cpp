@@ -1,5 +1,6 @@
 #include "../src/cdrip/device_settings.h"
 #include "../src/cdrip/offset_measurement.h"
+#include <algorithm>
 #include <cstdlib>
 #include <sys/resource.h>
 #include <csignal>
