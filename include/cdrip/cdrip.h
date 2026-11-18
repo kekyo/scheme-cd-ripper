@@ -100,7 +100,7 @@ typedef struct CdRipConfig {
     bool replaygain;
     /** Owned Discogs preference: no, always, or fallback; default always. */
     const char* discogs;
-    /** Nonnegative MusicBrainz track length tolerance percentage; default 2. */
+    /** Per-track tolerance (%) for CDDB matches and MusicBrainz title searches; nonnegative, default 2. */
     int recrawl_percent;
     /** Owned device-specific offsets; null when no offsets are configured. */
     CdRipReadOffset* read_offsets;
@@ -326,6 +326,8 @@ typedef struct CdRipCddbEntry {
     size_t tracks_count;
     /** Cover art info and cached image data (front cover only). */
     CdRipCoverArt cover_art;
+    /** True when CDDB track lengths could not be verified. Only offer this entry for manual selection. */
+    bool manual_only;
 } CdRipCddbEntry;
 
 /** List of CDDB entries. */
@@ -439,7 +441,7 @@ typedef struct CdRipDiagnosticObserver {
  * @param servers Server list to query.
  * @param allow_recrawl When true, always re-search MusicBrainz by title if CDDB candidates exist.
  *                      When false, only re-search when MusicBrainz returned no entries.
- * @param recrawl_track_length_tolerance_percent Allowed per-track length drift for MusicBrainz candidates.
+ * @param recrawl_track_length_tolerance_percent Allowed per-track length drift for CDDB candidates and MusicBrainz title searches.
  * @param log_recrawl When true, emit debug logs for recrawl queries.
  * @param observer Optional activity observer for long-running work.
  * @param diagnostic_observer Optional verbose diagnostic observer.

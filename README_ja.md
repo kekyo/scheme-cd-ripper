@@ -215,6 +215,8 @@ repeat/autoモードを含むコマンド実行全体に適用されるため、
 - CDDBサーバーは主にトラックタイトルなどのテキストフィールドを返しますが、MusicBrainzは正確なリリースレベルのメタデータと安定したIDを返すため、タグ付けの精度が向上します。
 - Scheme CD ripperでは、`[cddb]`セクションの`servers`リストに`musicbrainz`を追加するだけで有効化できます。デフォルトのサーバーリストには既に含まれています。
 
+CDDBの候補は、曲数と各曲の長さを手元のCDと照合します。長さを確認できなかった候補には選択画面で`unverified track lengths`と表示します。こうした候補を使う場合は番号を指定してください。自動選択とMusicBrainzのタイトル再検索には、照合できた候補を使います。
+
 ### カバーアートの埋め込み
 
 MusicBrainzから情報を取得した場合は、追加でカバーアート画像の取得を試みます。
@@ -388,7 +390,7 @@ cover_art=auto       # auto / kitty / ascii / none。端末でのプレビュー
 accuraterip=true     # リップした音声をAccurateRipと照合
 discogs=always       # no / always / fallback（カバーアートの優先順。デフォルト: always）
 replaygain=true      # true / false（デフォルト: true。false ならトラック単位で即時保存）
-recrawl_percent=2    # MusicBrainz候補のトラック長許容差(%)（0以上、デフォルト: 2）
+recrawl_percent=2    # CDDB候補とMusicBrainzタイトル再検索の曲長許容差（0以上の%、既定値2）
 mode=best            # best / fast / default（defaultはbestと同じ）
 repeat=false
 sort=false

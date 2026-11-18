@@ -1185,6 +1185,7 @@ CdRipTrackTags clone_track_tags(const CdRipTrackTags& src) {
 
 CdRipCddbEntry clone_cddb_entry(const CdRipCddbEntry& src) {
     CdRipCddbEntry dest{};
+    dest.manual_only = src.manual_only;
     dest.cddb_discid = dup_cstr_nullable(src.cddb_discid);
     dest.source_label = dup_cstr_nullable(src.source_label);
     dest.source_url = dup_cstr_nullable(src.source_url);
@@ -2205,6 +2206,7 @@ CddbSelection select_cddb_entry_for_toc(
     if (entries && entries->count > 0) {
         for (size_t i = 0; i < entries->count; ++i) {
             const auto& e = entries->entries[i];
+            if (auto_mode && e.manual_only) continue;
             const std::string title = get_album_media_tag(&e);
             if (!title_filter || g_regex_match(title_filter, title.c_str(), static_cast<GRegexMatchFlags>(0), nullptr)) {
                 sorted_indices.push_back(i);
@@ -2276,10 +2278,13 @@ CddbSelection select_cddb_entry_for_toc(
         return (source_lower == "musicbrainz") &&
             (e.cover_art.available != 0 || (e.cover_art.data && e.cover_art.size > 0));
     };
+    size_t default_choice = 0;
     for (size_t i = 0; i < sorted_indices.size(); ++i) {
         const auto& e = entries->entries[sorted_indices[i]];
+        if (default_choice == 0 && !e.manual_only) default_choice = i + 1;
         std::string source = view_string(e.source_label);
         std::string source_display = source;
+        if (e.manual_only) source_display += ", unverified track lengths";
         bool has_cover = has_cover_art(e);
         if (has_cover) {
             source_display += " with cover art";
@@ -2303,13 +2308,13 @@ CddbSelection select_cddb_entry_for_toc(
     } else {
         while (true) {
             std::cout << "\nSelect match [0-" << sorted_indices.size()
-                      << "] (comma/space separated, default 1): ";
+                      << "] (comma/space separated, default " << default_choice << "): ";
             std::string choice_line;
             if (!cdrip::terminal::read_console_line(choice_line)) {
                 choice_line.clear();
             }
             if (choice_line.empty()) {
-                choices = {1};
+                choices = {default_choice};
                 break;
             }
 

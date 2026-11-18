@@ -5,6 +5,7 @@
 
 #include <stdint.h>
 
+#include <iomanip>
 #include <sstream>
 
 #include <cdio/cdio.h>
@@ -23,13 +24,43 @@ static std::string to_hex(
     uint32_t value) {
 
     std::ostringstream oss;
-    oss << std::hex << std::nouppercase << value;
+    oss << std::hex << std::setw(8) << std::setfill('0') << value;
     return oss.str();
 }
 
 /* ------------------------------------------------------------------- */
 
 namespace cdrip::detail {
+
+cddb_disc_t* build_cddb_query_disc(const CdRipDiscToc* toc, std::string& discid) {
+    cddb_disc_t* disc = cddb_disc_new();
+    if (!disc) return nullptr;
+    // xmcd uses absolute frame offsets, including the 150 frames before logical sector zero.
+    // Keep drive/FLAC offsets in logical sectors and convert only at the CDDB boundary.
+    for (size_t i = 0; i < toc->tracks_count; ++i) {
+        const long start = toc->tracks[i].start;
+        if (start < 0 || start > std::numeric_limits<int>::max() - CDIO_PREGAP_SECTORS) {
+            cddb_disc_destroy(disc);
+            return nullptr;
+        }
+        cddb_track_t* track = cddb_track_new();
+        if (!track) {
+            cddb_disc_destroy(disc);
+            return nullptr;
+        }
+        cddb_track_set_frame_offset(track, static_cast<int>(start) + CDIO_PREGAP_SECTORS);
+        cddb_disc_add_track(disc, track);
+    }
+    const long seconds = toc->leadout_sector > 0
+        ? toc->leadout_sector / CDIO_CD_FRAMES_PER_SEC : toc->length_seconds;
+    cddb_disc_set_length(disc, seconds + CDIO_PREGAP_SECTORS / CDIO_CD_FRAMES_PER_SEC);
+    if (!cddb_disc_calc_discid(disc)) {
+        cddb_disc_destroy(disc);
+        return nullptr;
+    }
+    discid = to_hex(cddb_disc_get_discid(disc));
+    return disc;
+}
 
 bool compute_musicbrainz_discid(
     const CdRipDiscToc* toc,
@@ -160,18 +191,10 @@ CdRipDiscToc* cdrip_build_disc_toc(
         toc->tracks[i] = audio_tracks[i];
     }
 
-    cddb_disc_t* disc = cddb_disc_new();
+    std::string cddb_discid;
+    cddb_disc_t* disc = build_cddb_query_disc(toc, cddb_discid);
     if (disc) {
-        for (size_t i = 0; i < toc->tracks_count; ++i) {
-            const long offset = toc->tracks[i].start;
-            cddb_track_t* track = cddb_track_new();
-            cddb_track_set_frame_offset(track, static_cast<int>(offset));
-            cddb_disc_add_track(disc, track);
-        }
-        cddb_disc_set_length(disc, toc->length_seconds);
-        cddb_disc_calc_discid(disc);
-        toc->cddb_discid = make_cstr_copy(
-            to_hex(static_cast<uint32_t>(cddb_disc_get_discid(disc))));
+        toc->cddb_discid = make_cstr_copy(cddb_discid);
         cddb_disc_destroy(disc);
     } else {
         set_error(error, "Failed to create CDDB disc object");

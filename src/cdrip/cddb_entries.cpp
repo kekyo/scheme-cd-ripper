@@ -378,6 +378,20 @@ static bool extract_medium_track_lengths_for_recrawl(
         [](bool value) { return value; });
 }
 
+static long long frames_to_ms(long long frames) {
+    return std::llround(static_cast<long double>(frames) * 1000 / CDIO_CD_FRAMES_PER_SEC);
+}
+
+static bool track_length_matches(const CdRipTrackInfo& track, long long actual_ms, int tolerance_percent) {
+    if (track.end < track.start || actual_ms <= 0) return false;
+    const long long expected_ms = frames_to_ms(static_cast<long long>(track.end) - track.start + 1);
+    const long long percent_tolerance_ms = static_cast<long long>(std::ceil(
+        expected_ms * static_cast<long double>(tolerance_percent) / 100));
+    // Update-mode TOCs may reconstruct the last track only at whole-second precision.
+    const long long allowed_ms = std::max(kMinimumTrackLengthToleranceMs, percent_tolerance_ms);
+    return std::llabs(actual_ms - expected_ms) <= allowed_ms;
+}
+
 static bool track_lengths_match_for_recrawl(
     const CdRipDiscToc* toc,
     const std::vector<int>& track_lengths_ms,
@@ -389,19 +403,7 @@ static bool track_lengths_match_for_recrawl(
     const int safe_tolerance_percent =
         sanitize_recrawl_track_length_tolerance_percent(tolerance_percent);
     for (size_t i = 0; i < toc->tracks_count; ++i) {
-        const auto& track = toc->tracks[i];
-        const long track_frames = track.end - track.start + 1;
-        if (track_frames <= 0) return false;
-
-        const long long expected_ms = static_cast<long long>(std::llround(
-            (static_cast<long double>(track_frames) * 1000.0L) / CDIO_CD_FRAMES_PER_SEC));
-        const long long actual_ms = track_lengths_ms[i];
-        const long long percent_tolerance_ms = static_cast<long long>(std::ceil(
-            (expected_ms * static_cast<long double>(safe_tolerance_percent)) / 100.0L));
-        // Update-mode TOCs may reconstruct the last track only at whole-second precision.
-        const long long allowed_ms = std::max(kMinimumTrackLengthToleranceMs, percent_tolerance_ms);
-        const long long diff_ms = std::llabs(actual_ms - expected_ms);
-        if (diff_ms > allowed_ms) return false;
+        if (!track_length_matches(toc->tracks[i], track_lengths_ms[i], safe_tolerance_percent)) return false;
     }
     return true;
 }
@@ -1358,10 +1360,31 @@ static ServerFetchResult fetch_entries_from_musicbrainz(
     return out;
 }
 
+enum class CddbTrackMatch { Verified, Unknown, Mismatch };
+
+static CddbTrackMatch match_cddb_tracks(const CdRipDiscToc* toc, const cddb_disc_t* disc, int tolerance_percent) {
+    const int count = cddb_disc_get_track_count(disc);
+    if (count <= 0) return CddbTrackMatch::Unknown;
+    if (static_cast<size_t>(count) != toc->tracks_count) return CddbTrackMatch::Mismatch;
+    const long long end = static_cast<long long>(cddb_disc_get_length(disc)) * CDIO_CD_FRAMES_PER_SEC;
+    auto match = CddbTrackMatch::Verified;
+    for (int i = 0; i < count; ++i) {
+        const int start = cddb_track_get_frame_offset(cddb_disc_get_track(disc, i));
+        const long long next = i + 1 < count
+            ? cddb_track_get_frame_offset(cddb_disc_get_track(disc, i + 1)) : end;
+        if (start < 0 || next < 0 || (i + 1 == count && end == 0)) {
+            match = CddbTrackMatch::Unknown;
+        } else if (!track_length_matches(toc->tracks[i], frames_to_ms(next - start), tolerance_percent)) {
+            return CddbTrackMatch::Mismatch;
+        }
+    }
+    return match;
+}
+
 static ServerFetchResult fetch_entries_from_cddb_server(
     const CdRipDiscToc* toc,
     const CdRipCddbServer& server,
-    const std::string& toc_discid) {
+    int tolerance_percent) {
 
     ServerFetchResult out;
     const std::string server_label = to_string_or_empty(server.label);
@@ -1378,24 +1401,13 @@ static ServerFetchResult fetch_entries_from_cddb_server(
     cddb_set_http_path_query(conn, server_path.c_str());
     cddb_http_enable(conn);
 
-    cddb_disc_t* disc = cddb_disc_new();
+    std::string toc_discid;
+    cddb_disc_t* disc = build_cddb_query_disc(toc, toc_discid);
     if (!disc) {
         out.error = "Failed to create CDDB disc object";
         cddb_destroy(conn);
         return out;
     }
-    for (size_t ti = 0; ti < toc->tracks_count; ++ti) {
-        const auto& t = toc->tracks[ti];
-        cddb_track_t* track = cddb_track_new();
-        cddb_track_set_frame_offset(track, static_cast<int>(t.start));
-        cddb_disc_add_track(disc, track);
-    }
-    cddb_disc_set_length(disc, toc->length_seconds);
-    cddb_disc_set_discid(
-        disc,
-        static_cast<unsigned int>(
-            std::strtoul(toc_discid.c_str(), nullptr, 16)));
-
     const int matches = cddb_query(conn, disc);
     if (matches <= 0) {
         cddb_disc_destroy(disc);
@@ -1411,13 +1423,25 @@ static ServerFetchResult fetch_entries_from_cddb_server(
     url_builder << server_path;
     const std::string url = url_builder.str();
 
-    int index = 0;
-    do {
-        cddb_disc_t* entry_disc = cddb_disc_clone(disc);
+    for (int index = 0; index < matches; ++index) {
+        if (index > 0 && !cddb_query_next(conn, disc)) break;
+        // Read into an empty disc so missing offsets cannot be inherited from the query.
+        cddb_disc_t* entry_disc = cddb_disc_new();
         if (!entry_disc) continue;
-        cddb_read(conn, entry_disc);
+        cddb_disc_set_category(entry_disc, cddb_disc_get_category(disc));
+        cddb_disc_set_discid(entry_disc, cddb_disc_get_discid(disc));
+        if (!cddb_read(conn, entry_disc)) {
+            cddb_disc_destroy(entry_disc);
+            continue;
+        }
+        const auto match = match_cddb_tracks(toc, entry_disc, tolerance_percent);
+        if (match == CddbTrackMatch::Mismatch) {
+            cddb_disc_destroy(entry_disc);
+            continue;
+        }
 
         CdRipCddbEntry entry{};
+        entry.manual_only = match == CddbTrackMatch::Unknown;
         entry.cddb_discid = make_cstr_copy(toc_discid);
         entry.source_label = make_cstr_copy(server_label);
         entry.source_url = make_cstr_copy(url);
@@ -1430,8 +1454,10 @@ static ServerFetchResult fetch_entries_from_cddb_server(
             album_tags.push_back(make_kv(key, val));
         };
 
-        add_album("ARTIST", cddb_disc_get_artist(entry_disc) ? cddb_disc_get_artist(entry_disc) : "");
-        add_album("ALBUM", cddb_disc_get_title(entry_disc) ? cddb_disc_get_title(entry_disc) : "");
+        const char* artist = cddb_disc_get_artist(entry_disc);
+        const char* title = cddb_disc_get_title(entry_disc);
+        add_album("ARTIST", to_string_or_empty(artist ? artist : cddb_disc_get_artist(disc)));
+        add_album("ALBUM", to_string_or_empty(title ? title : cddb_disc_get_title(disc)));
         add_album("GENRE", cddb_disc_get_genre(entry_disc) ? cddb_disc_get_genre(entry_disc) : "");
         const int year = cddb_disc_get_year(entry_disc);
         if (year > 0) add_album("DATE", std::to_string(year));
@@ -1473,8 +1499,7 @@ static ServerFetchResult fetch_entries_from_cddb_server(
 
         out.entries.push_back(entry);
         cddb_disc_destroy(entry_disc);
-        ++index;
-    } while (index < matches && cddb_query_next(conn, disc) == 1);
+    }
 
     cddb_disc_destroy(disc);
     cddb_destroy(conn);
@@ -1508,7 +1533,7 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
         return list;
     }
 
-    std::string toc_discid = to_string_or_empty(toc->cddb_discid);
+    const int cddb_tolerance = sanitize_recrawl_track_length_tolerance_percent(recrawl_track_length_tolerance_percent);
     const size_t initial_total_sources = servers->count;
     std::atomic<size_t> completed_sources{0};
     emit_metadata_activity(
@@ -1537,7 +1562,7 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
         futures.push_back(std::async(std::launch::async, [
             toc,
             server,
-            toc_discid,
+            cddb_tolerance,
             observer,
             state,
             initial_total_sources,
@@ -1558,7 +1583,7 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
                 if (to_lower(label) == kMusicBrainzLabel) {
                     result = fetch_entries_from_musicbrainz(toc);
                 } else {
-                    result = fetch_entries_from_cddb_server(toc, server, toc_discid);
+                    result = fetch_entries_from_cddb_server(toc, server, cddb_tolerance);
                 }
             } catch (const std::exception& ex) {
                 result.error = std::string{"CDDB fetch failed: "} + ex.what();
@@ -1602,7 +1627,7 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
                 continue;
             }
             for (const auto& e : per_server[si].entries) {
-                other_entries.push_back(&e);
+                if (!e.manual_only) other_entries.push_back(&e);
             }
         }
         const bool has_cddb_candidates = !other_entries.empty();

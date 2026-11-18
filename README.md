@@ -219,6 +219,8 @@ To suppress only these permission correction warnings, specify `[cdrip] permissi
 - CDDB servers primarily return text fields like track titles, while MusicBrainz returns precise release-level metadata and stable IDs, improving tagging accuracy.
 - In Scheme CD ripper, simply include `musicbrainz` in the `[cddb]` `servers` list to enable it; it is already included in the default server list.
 
+CDDB matches are checked against the disc's track count and per-track durations. An entry marked `unverified track lengths` can be selected by number. Automatic selection and MusicBrainz title searches use entries with verified durations.
+
 ### Cover Art Embedding
 
 When fetching information from MusicBrainz, it additionally attempts to retrieve cover art images.
@@ -402,7 +404,7 @@ cover_art=auto       # auto / kitty / ascii / none; terminal preview mode
 accuraterip=true     # compare ripped audio with AccurateRip
 discogs=always       # no / always / fallback (cover art preference order, default: always)
 replaygain=true      # true / false (default: true; false = save each track immediately)
-recrawl_percent=2    # Per-track length tolerance for MusicBrainz candidates (non-negative %, default: 2)
+recrawl_percent=2    # Per-track length tolerance for CDDB matches and MusicBrainz title searches (non-negative %, default 2)
 mode=best            # best / fast / default (default is equivalent to best)
 repeat=false
 sort=false
