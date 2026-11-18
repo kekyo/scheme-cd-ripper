@@ -118,8 +118,7 @@ AccurateRipDatabase accuraterip_lookup(const CdRipDiscToc& toc) {
     return db;
 }
 
-std::string accuraterip_report(const AccurateRipDatabase& db, size_t track_index,
-    const AccurateRipChecksum& sum) {
+std::string accuraterip_lookup_report(const AccurateRipDatabase& db) {
     switch (db.status) {
         case AccurateRipStatus::NotFound: return "not in database";
         case AccurateRipStatus::NetworkError: return "network error: " + db.detail;
@@ -127,6 +126,15 @@ std::string accuraterip_report(const AccurateRipDatabase& db, size_t track_index
         case AccurateRipStatus::Unsupported: return "unsupported disc layout";
         case AccurateRipStatus::Available: break;
     }
+    const auto records = db.pressings.size();
+    const auto tracks = records ? db.pressings.front().size() : 0;
+    return "found " + std::to_string(records) + (records == 1 ? " record for " : " records for ") +
+        std::to_string(tracks) + (tracks == 1 ? " track" : " tracks");
+}
+
+std::string accuraterip_report(const AccurateRipDatabase& db, size_t track_index,
+    const AccurateRipChecksum& sum) {
+    if (db.status != AccurateRipStatus::Available) return accuraterip_lookup_report(db);
     unsigned v1 = 0, v2 = 0;
     for (const auto& pressing : db.pressings) {
         if (track_index >= pressing.size()) continue;

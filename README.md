@@ -288,6 +288,8 @@ Correction preserves each track's length. Audio is read from adjacent audio trac
 
 AccurateRip verification is enabled by default. Disable it with `--no-accurate` (`-na`) or `[cdrip] accuraterip=false`. Read offset correction still applies when verification is disabled.
 
+The line after `Looking up AccurateRip...` shows how many database records were found for the disc and how many tracks each record covers, for example `AccurateRip: found 2 records for 12 tracks`. If the disc is unregistered or the lookup fails, this line gives the reason.
+
 Verification compares v1/v2 checksums calculated during ripping with the AccurateRip database. It supports ordinary audio CDs; discs containing data tracks are unsupported. Results are displayed for each track:
 
 | Result | Meaning |

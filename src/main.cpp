@@ -3336,8 +3336,9 @@ int main(int argc, char** argv) {
 
         cdrip::detail::AccurateRipDatabase ar_database{};
         if (accuraterip) {
-            std::cout << "Looking up AccurateRip...\n";
+            std::cout << "Looking up AccurateRip...\n" << std::flush;
             ar_database = cdrip::detail::accuraterip_lookup(*toc);
+            std::cout << "AccurateRip: " << cdrip::detail::accuraterip_lookup_report(ar_database) << "\n\n" << std::flush;
         }
         bool success = true;
         double completed_before = 0.0;

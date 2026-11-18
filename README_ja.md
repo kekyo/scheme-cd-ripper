@@ -274,6 +274,8 @@ cdrip -ro 6 --no-eject
 
 AccurateRip照合は既定で有効です。`--no-accurate`（`-na`）または`[cdrip] accuraterip=false`で無効化できます。読み取りオフセットの補正は、照合を無効にしても適用されます。
 
+`Looking up AccurateRip...`の次の行に`AccurateRip: found 2 records for 12 tracks`とあれば、12曲のCDに照合用のデータが2件登録されているという意味です。CDが未登録の場合や照会に失敗した場合は、同じ行にその理由を表示します。
+
 リッピング中に計算したv1/v2チェックサムをAccurateRipデータベースと比較します。通常の音楽CDが対象で、データトラックを含むCDは未対応です。トラックごとに次の結果を表示します。
 
 | 表示 | 意味 |

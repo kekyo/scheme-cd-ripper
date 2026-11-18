@@ -59,6 +59,11 @@ AccurateRipDatabase accuraterip_response(const AccurateRipDisc& disc, unsigned s
  * @return Parsed records, or the lookup failure reason.
  */
 AccurateRipDatabase accuraterip_lookup(const CdRipDiscToc& toc);
+/** Describe the disc lookup before reading any audio.
+ * @param db Database lookup result.
+ * @return Record and track counts, or the reason records are unavailable.
+ */
+std::string accuraterip_lookup_report(const AccurateRipDatabase& db);
 /** Format the result for one successfully saved track.
  * @param db Database lookup result.
  * @param track_index Zero-based track index.

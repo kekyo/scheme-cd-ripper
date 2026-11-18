@@ -223,7 +223,7 @@ OffsetMeasurement measure_offsets(CdRip* rip, const CdRipDiscToc& toc,
     AccurateRipDisc disc{};
     if (!tracks || !accuraterip_disc(toc, disc)) { result.error = "unsupported disc layout or track count"; return result; }
     if (database.status != AccurateRipStatus::Available) {
-        result.error = accuraterip_report(database, 0, {});
+        result.error = accuraterip_lookup_report(database);
         return result;
     }
     const size_t count = std::min<size_t>(tracks, toc.tracks_count);
