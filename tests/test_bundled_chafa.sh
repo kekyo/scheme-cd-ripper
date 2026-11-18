@@ -50,14 +50,18 @@ readelf -d "$CLI" | grep -F '(RUNPATH)' | grep -F '$ORIGIN/../lib/cdrip'
 ! readelf -d "$CLI" | grep -F "$TEST_DIR"
 env -u LD_LIBRARY_PATH ldd "$CLI" | grep -F "libchafa.so.0 => $TEST_DIR/relocated/usr/bin/../lib/cdrip/"
 env -u LD_LIBRARY_PATH "$CLI" --help >/dev/null
-env -u LD_LIBRARY_PATH "$CLI" --help | grep -F 'Chafa: Copyright (C) 2018-2023 Hans Petter Jansson'
-env -u LD_LIBRARY_PATH "$CLI" --help | grep -F 'LGPL-3.0-or-later'
 ! readelf -d "$TEST_DIR/unused-build/libcdrip.so" | grep -F libchafa
 DOC_DIR="$TEST_DIR/relocated/usr/share/doc/cdrip"
 cmp "$ROOT_DIR/deps/chafa/COPYING" "$DOC_DIR/chafa/COPYING"
 cmp "$ROOT_DIR/deps/chafa/COPYING.LESSER" "$DOC_DIR/chafa/COPYING.LESSER"
 cmp "$ROOT_DIR/deps/chafa/chafa/internal/smolscale/COPYING" "$DOC_DIR/chafa/smolscale/COPYING"
-test -f "$DOC_DIR/THIRD_PARTY.md"
+for notice in "$DOC_DIR/THIRD_PARTY.md" "$DOC_DIR/THIRD_PARTY_ja.md"; do
+    if ! grep -Fq 'Copyright (C) 2018-2023 Hans Petter Jansson' "$notice" ||
+       ! grep -Fq 'LGPL-3.0-or-later' "$notice"; then
+        echo "Missing Chafa copyright notice or license identifier in $notice" >&2
+        exit 1
+    fi
+done
 
 mkdir "$TEST_DIR/relocated/DEBIAN"
 depends=$("$ROOT_DIR/scripts/package_shlibdeps.sh" "$TEST_DIR/relocated" cdrip "$CLI" "$LIB_DIR/libchafa.so.0")
