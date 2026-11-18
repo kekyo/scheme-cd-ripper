@@ -139,7 +139,8 @@ static void test_cddb_candidates(const CdRipDiscToc& toc) {
     for (size_t i = 0; i < entries->count; ++i) titles.push_back(get_album_tag(&entries->entries[i], "ALBUM"));
     check(titles == std::vector<std::string>{"Missing Length", "Matching Album"},
         "manual selection includes the unknown and verified discs only");
-    check(title_queries.size() == 1 && title_queries.front().find("matching album") != std::string::npos,
+    check(!title_queries.empty() && std::all_of(title_queries.begin(), title_queries.end(),
+        [](const auto& q) { return q.find("matching album") != std::string::npos; }),
         "only a verified CDDB disc can seed title searches");
     EntryListCache cache;
     cache[build_metadata_cache_key(&toc)] = EntryListPtr(entries);
@@ -203,6 +204,79 @@ static void test_release_cache(const CdRipDiscToc& toc) {
     cdrip_release_cddbentry_list(list);
 }
 
+static void test_title_search(const CdRipDiscToc& toc) {
+    records = {{"Matching Album", {150, 15150}, 362, true, R"(A "B" & C\D)"}};
+    mb_response = [](const std::string& path, const std::string&) -> std::string {
+        if (path == "/ws/2/release/") return R"({"releases":[
+            {"id":"wrong","media":[{"format":"Digital Media","track-count":2},{"format":"CD","track-count":3}]},
+            {"id":"mixed","media":[{"format":"Enhanced CD","track-count":2},{"format":"Digital Media","track-count":2}]},
+            {"id":"incomplete"}]})";
+        if (path == "/ws/2/release/mixed") return R"({"id":"mixed","media":[)" +
+            medium_json("audio", "Enhanced CD", 200000) + "," + medium_json("download", "Digital Media", 200000) + "]}";
+        if (path == "/ws/2/release/incomplete") return R"({"id":"incomplete","media":[)" +
+            medium_json("cd-side", "DualDisc (CD side)", 200000) + "," +
+            medium_json("dvdplus-cd", "DVDplus (CD side)", 200000) + "]}";
+        return R"({"releases":[]})";
+    };
+    title_queries.clear();
+    detail_reads.clear();
+    auto* list = cdrip_fetch_cddb_entries(&toc, &servers, true, 2, false, nullptr, nullptr, nullptr, nullptr);
+    check(title_queries.size() == 1 && title_queries[0].find("tracksmedium:2") != std::string::npos &&
+        title_queries[0].find(R"(artist:"A \"B\" & C\\D")") != std::string::npos,
+        "a reliable artist is quoted literally and the disc's track count restricts the first search");
+    check(detail_reads.count("wrong") == 0 && detail_reads["mixed"] == 1 && detail_reads["incomplete"] == 1,
+        "summary format and count must agree on the same medium; incomplete summaries can be checked in detail");
+    check(list->count == 4 && get_album_tag(&list->entries[1], "MUSICBRAINZ_MEDIUM") == "audio" &&
+        get_album_tag(&list->entries[2], "MUSICBRAINZ_MEDIUM") == "cd-side" &&
+        get_album_tag(&list->entries[3], "MUSICBRAINZ_MEDIUM") == "dvdplus-cd",
+        "only CD-compatible media from matching multi-format releases are listed");
+    cdrip_release_cddbentry_list(list);
+
+    mb_response = [](const std::string& path, const std::string&) -> std::string {
+        if (path == "/ws/2/release/") return R"({"releases":[{"id":"known"}]})";
+        return R"({"id":"known","media":[)" + medium_json("cd", "CD", 200000) + "]}";
+    };
+    auto tagged = toc;
+    tagged.mb_release_id = "known";
+    title_queries.clear();
+    detail_reads.clear();
+    list = cdrip_fetch_cddb_entries(&tagged, &servers, true, 2, false, nullptr, nullptr, nullptr, nullptr);
+    check(list->count == 2 && title_queries.size() == 1 && detail_reads["known"] == 1,
+        "an already-listed artist-qualified match ends the title search without broadening it");
+    cdrip_release_cddbentry_list(list);
+
+    // A title hit under the supplied artist may still fail the length check.
+    mb_response = [](const std::string& path, const std::string& query) -> std::string {
+        if (path == "/ws/2/release/") return query.find("artist:") != std::string::npos
+            ? R"({"releases":[{"id":"other"}]})" : R"({"releases":[{"id":"found"}]})";
+        if (path == "/ws/2/release/other") return R"({"id":"other","media":[)" + medium_json("a", "CD", 10000) + "]}";
+        if (path == "/ws/2/release/found") return R"({"id":"found","media":[)" + medium_json("b", "CD", 200000) + "]}";
+        return R"({"releases":[]})";
+    };
+    title_queries.clear();
+    list = cdrip_fetch_cddb_entries(&toc, &servers, true, 2, false, nullptr, nullptr, nullptr, nullptr);
+    check(title_queries.size() == 2 && title_queries[0].find("artist:") != std::string::npos &&
+        title_queries[1].find("artist:") == std::string::npos && title_queries[1].find("tracksmedium:2") != std::string::npos &&
+        list->count == 2, "fall back to title and medium track count after artist-qualified hits fail validation");
+    cdrip_release_cddbentry_list(list);
+
+    for (const std::string artist : {"Various Artists", "Unknown Artist", ""}) {
+        records.front().artist = artist;
+        title_queries.clear();
+        list = cdrip_fetch_cddb_entries(&toc, &servers, true, 2, false, nullptr, nullptr, nullptr, nullptr);
+        check(title_queries.size() == 1 && title_queries.front().find("artist:") == std::string::npos,
+            "compilation, placeholder, and missing artist names do not restrict title searches");
+        cdrip_release_cddbentry_list(list);
+    }
+    records.front().artist = "Singer A";
+    records.push_back({"Matching Album", {150, 15150}, 362, true, "Singer B"});
+    title_queries.clear();
+    list = cdrip_fetch_cddb_entries(&toc, &servers, true, 2, false, nullptr, nullptr, nullptr, nullptr);
+    check(title_queries.size() == 1 && title_queries.front().find("artist:") == std::string::npos,
+        "conflicting verified artist credits leave the shared title unrestricted");
+    cdrip_release_cddbentry_list(list);
+}
+
 int main() {
     test_query_layout();
     CdRipTrackInfo tracks[]{{1, 0, 14999, 1}, {2, 15000, 26999, 1}};
@@ -214,5 +288,6 @@ int main() {
     toc.cddb_discid = "01016802";
     test_cddb_candidates(toc);
     test_release_cache(toc);
+    test_title_search(toc);
     return failures ? 1 : 0;
 }

@@ -14,18 +14,7 @@
 #include "internal.h"
 
 namespace cdrip::detail {
-namespace {
-
-constexpr int kMinMatchLen = 6;
-constexpr double kMinMatchRatio = 0.6;
-constexpr size_t kMinCandidateLen = 6;
-
-struct TitleItem {
-    std::string normalized;
-    std::vector<std::string> tokens;
-};
-
-std::string normalize_album_title(const std::string& input) {
+std::string normalize_metadata_text(const std::string& input) {
     std::string out;
     out.reserve(input.size());
     bool last_space = false;
@@ -47,6 +36,24 @@ std::string normalize_album_title(const std::string& input) {
     }
     return trim(out);
 }
+
+bool is_various_artist(const std::string& artist) {
+    const std::string normalized = normalize_metadata_text(artist);
+    return normalized == "various" || normalized == "various artists" ||
+        normalized == "v a" || normalized == "va" || normalized == "compilation";
+}
+
+namespace {
+
+constexpr int kMinMatchLen = 6;
+constexpr double kMinMatchRatio = 0.6;
+constexpr size_t kMinCandidateLen = 6;
+
+struct TitleItem {
+    std::string normalized;
+    std::vector<std::string> tokens;
+    std::string artist;
+};
 
 std::vector<std::string> split_tokens(const std::string& normalized) {
     std::vector<std::string> tokens;
@@ -142,7 +149,7 @@ private:
 
 }  // namespace
 
-std::vector<std::string> extract_album_title_candidates(
+std::vector<AlbumTitleCandidate> extract_album_title_candidates(
     const std::vector<const CdRipCddbEntry*>& entries) {
 
     std::vector<TitleItem> items;
@@ -151,9 +158,9 @@ std::vector<std::string> extract_album_title_candidates(
         if (!entry) continue;
         const std::string title = trim(album_tag(entry, "ALBUM"));
         if (title.empty()) continue;
-        const std::string normalized = normalize_album_title(title);
+        const std::string normalized = normalize_metadata_text(title);
         if (normalized.empty()) continue;
-        items.push_back({normalized, split_tokens(normalized)});
+        items.push_back({normalized, split_tokens(normalized), trim(album_tag(entry, "ARTIST"))});
     }
 
     if (items.empty()) return {};
@@ -173,7 +180,7 @@ std::vector<std::string> extract_album_title_candidates(
         groups[static_cast<size_t>(root)].push_back(i);
     }
 
-    std::vector<std::string> candidates;
+    std::vector<AlbumTitleCandidate> candidates;
     for (const auto& group : groups) {
         if (group.empty()) continue;
         std::unordered_map<std::string, size_t> freq;
@@ -241,16 +248,23 @@ std::vector<std::string> extract_album_title_candidates(
 
         const std::string candidate = trim(items[best_index].normalized);
         if (candidate.size() < kMinCandidateLen) continue;
-        candidates.push_back(candidate);
+        std::string artist = items[best_index].artist;
+        const std::string credit = normalize_metadata_text(artist);
+        if (credit.empty() || credit == "unknown" || credit == "unknown artist" || is_various_artist(artist) ||
+            std::any_of(group.begin(), group.end(), [&](size_t i) {
+                return normalize_metadata_text(items[i].artist) != credit;
+            })) {
+            artist.clear();
+        }
+        candidates.push_back({candidate, artist});
     }
 
     std::sort(candidates.begin(), candidates.end(),
-        [](const std::string& a, const std::string& b) {
-            if (a.size() != b.size()) return a.size() > b.size();
-            return a < b;
+        [](const AlbumTitleCandidate& a, const AlbumTitleCandidate& b) {
+            if (a.title.size() != b.title.size()) return a.title.size() > b.title.size();
+            return a.title < b.title;
         });
 
-    candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
     return candidates;
 }
 

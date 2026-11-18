@@ -221,6 +221,8 @@ To suppress only these permission correction warnings, specify `[cdrip] permissi
 
 CDDB matches are checked against the disc's track count and per-track durations. An entry marked `unverified track lengths` can be selected by number. Automatic selection and MusicBrainz title searches use entries with verified durations.
 
+MusicBrainz title searches use the album name and the number of tracks on the individual disc. When the CDDB candidates agree on an artist, the first search includes that name. If no disc matches, the search continues without the artist restriction.
+
 ### Cover Art Embedding
 
 When fetching information from MusicBrainz, it additionally attempts to retrieve cover art images.
