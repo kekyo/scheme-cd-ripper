@@ -2835,10 +2835,6 @@ Options parse_args(int argc, char** argv) {
             while (i + 1 < argc && argv[i + 1][0] != '-') opts.update_paths.push_back(argv[++i]);
         } else if (arg == "-?" || arg == "-h" || arg == "--help") {
             std::cout << "Usage: cdrip [-d device] [-f format] [-m mode] [-c compression] [-w px] [--max-width px] [-s] [-ft regex] [-nr] [-l] [-r] [-ne] [-a] [-ss|-sf] [-g|-ng] [-dc no|always|fallback] [-v mode|-nv] [-na] [-ro samples] [--measure-offset [tracks]] [--permissions ugo] [--permission-warnings|--no-permission-warnings] [--tag key=value] [-i config] [-u file|dir ...]\n";
-            std::cout << "  -na / --no-accurate: Disable AccurateRip v1/v2 verification (enabled by default)\n";
-            std::cout << "  --measure-offset [tracks]: Measure the inserted CD without saving FLAC (default: 3 tracks); normal rip output, repeat and metadata options do not apply\n";
-            std::cout << "  -ro / --read-offset samples: Signed stereo sample correction; overrides [read_offset] device settings (default: 0 if unconfigured); disc/data edges are zero-filled\n";
-            std::cout << "  -v / --cover-art auto|kitty|ascii|none: Terminal cover preview (default: auto)\n";
             std::cout << "  -d  / --device: CD device path (default: auto-detect)\n";
             std::cout << "  -f  / --format: FLAC destination path format (default: \"{album:n/medium:n/tracknumber:02d}_{title:n}.flac\")\n";
             std::cout << "  -m  / --mode: Integrity check mode: \"best\" (full integrity checks, default), \"fast\" (disable drive read integrity checks), \"default\" (same as best); AccurateRip is independent\n";
@@ -2855,13 +2851,17 @@ Options parse_args(int argc, char** argv) {
             std::cout << "  -g  / --replaygain: Enable ReplayGain tagging (default)\n";
             std::cout << "  -ng / --no-replaygain: Disable ReplayGain tagging and save each track immediately\n";
             std::cout << "  -dc / --discogs: Cover art preference for Discogs: no, always (default), fallback\n";
+            std::cout << "  -v / --cover-art auto|kitty|ascii|none: Terminal cover preview (default: auto)\n";
             std::cout << "  -nv / --no-cover-art: Disable terminal cover previews (same as -v none)\n";
+            std::cout << "  -na / --no-accurate: Disable AccurateRip v1/v2 verification (enabled by default)\n";
+            std::cout << "  -ro / --read-offset samples: Signed stereo sample correction; overrides [read_offset] device settings (default: 0 if unconfigured); disc/data edges are zero-filled\n";
             std::cout << "  -l  / --logs: Print debug logs for MusicBrainz recrawl and selected metadata\n";
+            std::cout << "  -i  / --input: cdrip config file path (default search: ./cdrip.conf --> ~/.cdrip.conf)\n";
+            std::cout << "  -u  / --update <file|dir> [more ...]: Update existing FLAC tags from CDDB using embedded tags (other options ignored)\n";
             std::cout << "  --permissions: Set output file permissions as 3-digit octal (default: derived from umask; ignored with -u)\n";
             std::cout << "  --permission-warnings / --no-permission-warnings: Show or hide output permission adjustment warnings (default: show; ignored with -u)\n";
             std::cout << "  --tag / --tags: Override a tag for normal ripping (repeatable, key=value; ignored with -u)\n";
-            std::cout << "  -i  / --input: cdrip config file path (default search: ./cdrip.conf --> ~/.cdrip.conf)\n";
-            std::cout << "  -u  / --update <file|dir> [more ...]: Update existing FLAC tags from CDDB using embedded tags (other options ignored)\n";
+            std::cout << "  --measure-offset [tracks]: Measure the inserted CD without saving FLAC (default: 3 tracks); normal rip output, repeat and metadata options do not apply\n";
             std::exit(0);
         } else {
             std::cerr << "Error: unknown option " << arg << "\n";
