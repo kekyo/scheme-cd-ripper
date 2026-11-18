@@ -20,6 +20,9 @@ static unsigned int query_seconds;
 static unsigned int query_id;
 static size_t record_index;
 static std::vector<std::string> title_queries;
+static std::function<std::string(const std::string&, const std::string&)> mb_response =
+    [](const std::string&, const std::string&) { return R"({"releases":[]})"; };
+static std::map<std::string, int> detail_reads;
 static CdRipCddbServer endpoints[]{{"example.invalid", 80, "/", "test-cddb"}, {"", 80, "", "musicbrainz"}};
 static CdRipCddbServerList servers{endpoints, 2};
 static int failures;
@@ -78,12 +81,16 @@ extern "C" SoupStatus __wrap_soup_message_get_status(SoupMessage*) { return SOUP
 extern "C" GBytes* __wrap_soup_session_send_and_read(SoupSession*, SoupMessage* msg, GCancellable*, GError**) {
     GUri* uri = soup_message_get_uri(msg);
     const std::string path = g_uri_get_path(uri);
+    std::string search;
     if (path == "/ws/2/release/") {
         char* query = g_uri_unescape_string(g_uri_get_query(uri), nullptr);
-        title_queries.emplace_back(query);
+        search = query;
+        title_queries.push_back(search);
         g_free(query);
+    } else if (path.find("/ws/2/release/") == 0) {
+        ++detail_reads[path.substr(path.rfind('/') + 1)];
     }
-    const std::string body = R"({"releases":[]})";
+    const std::string body = mb_response(path, search);
     return g_bytes_new(body.data(), body.size());
 }
 
@@ -153,6 +160,49 @@ static void test_cddb_candidates(const CdRipDiscToc& toc) {
     cdrip_release_cddbentry_list(by_number.entries);
 }
 
+static std::string medium_json(const std::string& id, const std::string& format, int first_ms) {
+    return R"({"id":")" + id + R"(","format":")" + format +
+        R"(","track-count":2,"tracks":[{"position":1,"length":)" + std::to_string(first_ms) +
+        R"(},{"position":2,"length":160000}]})";
+}
+
+static void test_release_cache(const CdRipDiscToc& toc) {
+    records = {{"Orchard OST Disc 1", {150, 15150}, 362, true, "Various Artists"},
+               {"Nebula Vol II Pt X", {150, 15150}, 362, true, "Various Artists"}};
+    std::string hits;
+    for (int i = 0; i < 10; ++i) {
+        if (i) hits += ",";
+        hits += R"({"id":"r)" + std::to_string(i) + R"(","media":[{"format":"CD","track-count":2}]})";
+    }
+    mb_response = [&](const std::string& path, const std::string&) {
+        if (path.find("/ws/2/discid/") == 0) return std::string{R"({"releases":[{"id":"r0"}]})"};
+        if (path == "/ws/2/release/") return R"({"releases":[)" + hits + "]}";
+        return R"({"id":"rejected","media":[)" + medium_json("disc", "CD", 10000) + "]}";
+    };
+    detail_reads.clear();
+    title_queries.clear();
+    auto* list = cdrip_fetch_cddb_entries(&toc, &servers, true, 2, false, nullptr, nullptr, nullptr, nullptr);
+    check(list->count == 2 && title_queries.size() == 16,
+        "two verified CDDB titles with eight variants each yield no mismatched MusicBrainz releases");
+    check(detail_reads.size() == 10 && std::all_of(detail_reads.begin(), detail_reads.end(),
+        [](const auto& item) { return item.second == 1; }), "each of ten distinct release IDs is fetched just once");
+    cdrip_release_cddbentry_list(list);
+
+    records.resize(1);
+    mb_response = [](const std::string& path, const std::string&) {
+        if (path == "/ws/2/release/") return std::string{R"({"releases":[{"id":"r0"}]})"};
+        return R"({"id":"r0","media":[)" + medium_json("disc1", "CD", 207000) + "," +
+            medium_json("disc2", "CD", 208000) + "]}";
+    };
+    CdRipDiscToc tagged = toc;
+    tagged.mb_release_id = "r0";
+    detail_reads.clear();
+    list = cdrip_fetch_cddb_entries(&tagged, &servers, true, 5, false, nullptr, nullptr, nullptr, nullptr);
+    check(detail_reads["r0"] == 1 && list->count == 3,
+        "a fresh lookup reuses a tagged release response and evaluates both media with the title search tolerance");
+    cdrip_release_cddbentry_list(list);
+}
+
 int main() {
     test_query_layout();
     CdRipTrackInfo tracks[]{{1, 0, 14999, 1}, {2, 15000, 26999, 1}};
@@ -163,5 +213,6 @@ int main() {
     toc.leadout_sector = 27000;
     toc.cddb_discid = "01016802";
     test_cddb_candidates(toc);
+    test_release_cache(toc);
     return failures ? 1 : 0;
 }

@@ -11,6 +11,8 @@
 #include <cstdlib>
 #include <future>
 #include <iostream>
+#include <map>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -808,8 +810,29 @@ static bool build_entries_from_release(
     const MusicBrainzRecrawlMatchOptions* recrawl_options,
     std::vector<CdRipCddbEntry>& results);
 
+struct ReleaseResponse {
+    std::string body;
+    std::string error;
+};
+
+struct MusicBrainzReleaseCache {
+    std::mutex mutex;
+    std::map<std::string, ReleaseResponse> responses;
+
+    const ReleaseResponse& get(const std::string& id, const std::string& url) {
+        // Configured MusicBrainz sources may run concurrently. Map entries stay valid
+        // until this disc lookup finishes, including responses rejected by a match filter.
+        std::lock_guard<std::mutex> lock(mutex);
+        auto [it, inserted] = responses.try_emplace(id);
+        auto& response = it->second;
+        if (inserted) http_get_json(url, response.body, response.error);
+        return response;
+    }
+};
+
 static bool fetch_release_details_and_build(
     const CdRipDiscToc* toc,
+    MusicBrainzReleaseCache& cache,
     const std::string& release_id,
     const std::vector<long>& offsets,
     const std::string& discid,
@@ -821,14 +844,15 @@ static bool fetch_release_details_and_build(
     const std::string url = "https://musicbrainz.org/ws/2/release/" + release_id +
         "?fmt=json&inc=" + kMusicBrainzReleaseInc;
 
-    std::string body;
-    if (!http_get_json(url, body, err)) {
+    const auto& response = cache.get(release_id, url);
+    if (!response.error.empty()) {
+        err = response.error;
         return false;
     }
 
     JsonParser* parser = json_parser_new();
     GError* gerr = nullptr;
-    if (!json_parser_load_from_data(parser, body.c_str(), body.size(), &gerr)) {
+    if (!json_parser_load_from_data(parser, response.body.c_str(), response.body.size(), &gerr)) {
         err = gerr && gerr->message ? std::string{gerr->message} : "MusicBrainz release parse error";
         if (gerr) g_error_free(gerr);
         g_object_unref(parser);
@@ -1117,6 +1141,7 @@ static bool build_entries_from_release(
 
 static bool fetch_musicbrainz_entries(
     const CdRipDiscToc* toc,
+    MusicBrainzReleaseCache& cache,
     std::vector<CdRipCddbEntry>& results,
     std::string& err) {
 
@@ -1149,27 +1174,20 @@ static bool fetch_musicbrainz_entries(
         nullptr,
     };
 
-    std::string url;
-    bool use_release_endpoint = false;
     if (!release_id.empty()) {
-        url = "https://musicbrainz.org/ws/2/release/" + release_id +
-            "?fmt=json&inc=" + kMusicBrainzReleaseInc;
-        use_release_endpoint = true;
-    } else {
-        const std::string toc_param = build_toc_param(toc);
-        if (toc_param.empty()) {
-            err = "MusicBrainz query failed: unable to build TOC";
-            return false;
-        }
-
-        // Prefer release matches over CD stubs, and allow fuzzy TOC lookups even when a CD stub exists.
-        // See: https://musicbrainz.org/doc/MusicBrainz_API#discid
-        const std::string discid_path = discid.empty() ? "-" : discid;
-        url = "https://musicbrainz.org/ws/2/discid/" + discid_path +
-            "?fmt=json&toc=" + toc_param +
-            "&cdstubs=no" +
-            "&inc=" + kMusicBrainzInc;
+        return fetch_release_details_and_build(toc, cache, release_id, offsets, discid, &match_options, results, err);
     }
+    const std::string toc_param = build_toc_param(toc);
+    if (toc_param.empty()) {
+        err = "MusicBrainz query failed: unable to build TOC";
+        return false;
+    }
+
+    // Prefer release matches over CD stubs, and allow fuzzy TOC lookups even when a CD stub exists.
+    // See: https://musicbrainz.org/doc/MusicBrainz_API#discid
+    const std::string discid_path = discid.empty() ? "-" : discid;
+    const std::string url = "https://musicbrainz.org/ws/2/discid/" + discid_path +
+        "?fmt=json&toc=" + toc_param + "&cdstubs=no&inc=" + kMusicBrainzInc;
 
     std::string body;
     if (!http_get_json(url, body, err)) {
@@ -1192,52 +1210,48 @@ static bool fetch_musicbrainz_entries(
     }
     JsonObject* root_obj = json_node_get_object(root);
 
-    if (use_release_endpoint) {
-        build_entries_from_release(toc, url, root_obj, offsets, discid, &match_options, results);
-    } else {
-        JsonArray* releases = get_array_member(root_obj, "releases");
-        if (releases) {
-            const guint len = json_array_get_length(releases);
-            bool any_success = false;
-            std::string last_err;
+    if (JsonArray* releases = get_array_member(root_obj, "releases")) {
+        const guint len = json_array_get_length(releases);
+        bool any_success = false;
+        std::string last_err;
+        for (guint i = 0; i < len; ++i) {
+            JsonObject* release_obj = json_array_get_object_element(releases, i);
+            if (!release_obj) continue;
+            const std::string rid = get_string_member(release_obj, "id");
+            if (rid.empty()) continue;
+            std::string rel_err;
+            if (fetch_release_details_and_build(
+                    toc,
+                    cache,
+                    rid,
+                    offsets,
+                    discid,
+                    &match_options,
+                    results,
+                    rel_err)) {
+                any_success = true;
+            } else if (!rel_err.empty()) {
+                last_err = rel_err;
+            }
+        }
+        if (!any_success) {
+            // Fallback: build from the discid response if release lookups failed.
             for (guint i = 0; i < len; ++i) {
                 JsonObject* release_obj = json_array_get_object_element(releases, i);
                 if (!release_obj) continue;
-                const std::string rid = get_string_member(release_obj, "id");
-                if (rid.empty()) continue;
-                std::string rel_err;
-                if (fetch_release_details_and_build(
-                        toc,
-                        rid,
-                        offsets,
-                        discid,
-                        &match_options,
-                        results,
-                        rel_err)) {
-                    any_success = true;
-                } else if (!rel_err.empty()) {
-                    last_err = rel_err;
-                }
+                build_entries_from_release(
+                    toc,
+                    url,
+                    release_obj,
+                    offsets,
+                    discid,
+                    &match_options,
+                    results);
             }
-            if (!any_success) {
-                // Fallback: build from the discid response if release lookups failed.
-                for (guint i = 0; i < len; ++i) {
-                    JsonObject* release_obj = json_array_get_object_element(releases, i);
-                    if (!release_obj) continue;
-                    build_entries_from_release(
-                        toc,
-                        url,
-                        release_obj,
-                        offsets,
-                        discid,
-                        &match_options,
-                        results);
-                }
-                if (results.empty() && !last_err.empty()) {
-                    err = last_err;
-                    g_object_unref(parser);
-                    return false;
-                }
+            if (results.empty() && !last_err.empty()) {
+                err = last_err;
+                g_object_unref(parser);
+                return false;
             }
         }
     }
@@ -1248,6 +1262,7 @@ static bool fetch_musicbrainz_entries(
 
 static bool fetch_musicbrainz_entries_by_title(
     const CdRipDiscToc* toc,
+    MusicBrainzReleaseCache& cache,
     const std::string& album_title,
     int recrawl_track_length_tolerance_percent,
     bool log_recrawl,
@@ -1320,6 +1335,7 @@ static bool fetch_musicbrainz_entries_by_title(
             std::string rel_err;
             if (fetch_release_details_and_build(
                     toc,
+                    cache,
                     rid,
                     offsets,
                     discid,
@@ -1351,14 +1367,6 @@ struct ServerFetchResult {
     std::vector<CdRipCddbEntry> entries;
     std::string error;
 };
-
-static ServerFetchResult fetch_entries_from_musicbrainz(
-    const CdRipDiscToc* toc) {
-
-    ServerFetchResult out;
-    fetch_musicbrainz_entries(toc, out.entries, out.error);
-    return out;
-}
 
 enum class CddbTrackMatch { Verified, Unknown, Mismatch };
 
@@ -1544,6 +1552,7 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
         0,
         initial_total_sources);
 
+    MusicBrainzReleaseCache release_cache;
     std::vector<std::future<ServerFetchResult>> futures;
     futures.reserve(servers->count);
     bool has_musicbrainz_server = false;
@@ -1563,6 +1572,7 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
             toc,
             server,
             cddb_tolerance,
+            &release_cache,
             observer,
             state,
             initial_total_sources,
@@ -1581,7 +1591,7 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
             ServerFetchResult result;
             try {
                 if (to_lower(label) == kMusicBrainzLabel) {
-                    result = fetch_entries_from_musicbrainz(toc);
+                    fetch_musicbrainz_entries(toc, release_cache, result.entries, result.error);
                 } else {
                     result = fetch_entries_from_cddb_server(toc, server, cddb_tolerance);
                 }
@@ -1694,6 +1704,7 @@ CdRipCddbEntryList* cdrip_fetch_cddb_entries(
                         std::string candidate_err;
                         if (!fetch_musicbrainz_entries_by_title(
                                 toc,
+                                release_cache,
                                 variant,
                                 recrawl_track_length_tolerance_percent,
                                 log_recrawl,
