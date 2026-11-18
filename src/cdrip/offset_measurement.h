@@ -63,8 +63,12 @@ OffsetMeasurement measure_offsets(CdRip* rip, const CdRipDiscToc& toc,
     const AccurateRipDatabase& database, std::optional<int> listed_offset,
     unsigned tracks, const MeasurementProgress& progress);
 
-/** Render values, track matches and common record matches for one CD. */
-void print_offset_measurement(std::ostream& out, const OffsetMeasurement& result);
+/** Render the track and disc matches, then a configuration example for a single matching offset.
+ * @param out Measurement output stream.
+ * @param result Measurements from the inserted CD.
+ * @param config_device Device path to use in the read_offset section.
+ */
+void print_offset_measurement(std::ostream& out, const OffsetMeasurement& result, const std::string& config_device);
 
 /** Injectable network lookups used by the measurement command. */
 struct OffsetLookupServices {
@@ -72,6 +76,14 @@ struct OffsetLookupServices {
     AccurateRipDatabase (*disc_database)(const CdRipDiscToc&);
 };
 
-/** Measure the inserted disc and finish without encoding, ejecting, or updating configuration. */
-int run_offset_measurement(CdRip* rip, unsigned tracks, const OffsetLookupServices& services, std::ostream& out);
+/** Measure the inserted disc and finish without encoding, ejecting, or updating configuration.
+ * @param rip Open drive to measure.
+ * @param tracks Requested number of tracks.
+ * @param services Drive catalogue and disc database lookups.
+ * @param device_ids Stable paths for this drive, or an empty list to use the device path.
+ * @param out Measurement output stream.
+ * @return Zero on a completed measurement, nonzero if it was unavailable or incomplete.
+ */
+int run_offset_measurement(CdRip* rip, unsigned tracks, const OffsetLookupServices& services,
+    const std::vector<std::string>& device_ids, std::ostream& out);
 }

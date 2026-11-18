@@ -3196,10 +3196,11 @@ int main(int argc, char** argv) {
     }
 
     if (cli_opts.measure_tracks) {
-        print_device_identity(std::cout, device, cdrip::detail::device_id_paths(device, "/dev/disk/by-id"));
+        const auto device_ids = cdrip::detail::device_id_paths(device, "/dev/disk/by-id");
+        print_device_identity(std::cout, device, device_ids);
         const cdrip::detail::OffsetLookupServices services{
             cdrip::detail::lookup_drive_offset, cdrip::detail::accuraterip_lookup};
-        const int status = cdrip::detail::run_offset_measurement(drive, *cli_opts.measure_tracks, services, std::cout);
+        const int status = cdrip::detail::run_offset_measurement(drive, *cli_opts.measure_tracks, services, device_ids, std::cout);
         cdrip_close(drive, false, nullptr);
         return status;
     }

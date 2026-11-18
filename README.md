@@ -374,13 +374,15 @@ The `record` number identifies a database record. A match across measured tracks
 Multiple matching candidates, including those caused by silence, are shown individually. No match means no candidate within the tested range; it does not establish a zero correction.
 Unregistered discs, network failures, read errors, and missing audio are reported separately.
 
+When exactly one measured offset matches all tested tracks in the same database record, the command ends with a `[read_offset]` example for `cdrip.conf`. It uses a stable `/dev/disk/by-id/` path when available and otherwise uses the device path, such as `/dev/sr0`.
+
 Measurement does not save FLAC files, fetch cover art, scan ReplayGain, or eject the disc. The normal ripping `repeat` setting does not apply.
 The command works even with `accuraterip=false` in the configuration. Combining it with `--no-accurate`, `--read-offset`, or `--update` is an error.
 Use the regular speed and integrity options, such as `--speed-fast` and `--mode`, to control reading.
 
 Different pressings of the same recording may have different audio positions, so a single disc may not distinguish a drive offset from a pressing offset.
 See the [AccurateRip explanation](https://www.accuraterip.com/keydiscs.htm).
-Compare results from your own pressed CDs and choose the value to enter in `[read_offset]`. The command does not aggregate measurements, choose a final setting, or modify configuration files.
+Compare results from your own pressed CDs and copy the value you choose into your configuration. If you already have a `[read_offset]` section, add or update the drive's entry there.
 
 ## Config file format
 

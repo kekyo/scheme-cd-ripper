@@ -3,10 +3,12 @@
 #include "pcm_reader.h"
 #include "settings.h"
 #include <algorithm>
+#include <cctype>
 #include <iomanip>
 #include <map>
 #include <memory>
 #include <ostream>
+#include <set>
 #include <sstream>
 #include <libsoup/soup.h>
 
@@ -282,7 +284,13 @@ static std::string signed_samples(int samples) {
     return (samples >= 0 ? "+" : "") + std::to_string(samples);
 }
 
-void print_offset_measurement(std::ostream& out, const OffsetMeasurement& result) {
+static bool usable_config_device(const std::string& path) {
+    // GKeyFile reserves '=' and locale brackets, and trims whitespace before '='.
+    return !path.empty() && path.front() == '/' && path.find_first_of("=[]\r\n") == std::string::npos &&
+        !std::isspace(static_cast<unsigned char>(path.back()));
+}
+
+void print_offset_measurement(std::ostream& out, const OffsetMeasurement& result, const std::string& config_device) {
     out << "Requested tracks: " << result.requested_tracks << "; measured tracks: " << result.tracks.size() << '\n';
     if (!result.error.empty()) out << "Measurement unavailable: " << result.error << '\n';
     if (result.searched) out << "Offset search bounds: " << signed_samples(result.search_min) << ".." << signed_samples(result.search_max) << " stereo samples\n";
@@ -310,32 +318,43 @@ void print_offset_measurement(std::ostream& out, const OffsetMeasurement& result
             ++common[{match.samples, match.record}];
         }
     }
-    bool full_match = false;
+    std::set<int> matching_offsets;
     for (const auto& [key, count] : common) {
         if (count != result.tracks.size()) continue;
-        full_match = true;
+        matching_offsets.insert(key.first);
         out << "Offset " << signed_samples(key.first) << ": all " << count
             << " measured tracks match record " << key.second + 1 << '\n';
     }
-    if (!full_match && !result.tracks.empty()) out << "No single database record matches all measured tracks at one offset\n";
+    if (matching_offsets.size() == 1 && result.error.empty()) {
+        if (usable_config_device(config_device)) {
+            out << "\nExample for cdrip.conf\n[read_offset]\n" << config_device << '=' << *matching_offsets.begin() << '\n';
+        } else {
+            out << "The drive path cannot be used as a cdrip.conf key.\n";
+        }
+    } else if (matching_offsets.size() > 1) {
+        out << "Multiple offsets match all measured tracks on this disc.\n";
+    } else if (matching_offsets.empty() && !result.tracks.empty()) {
+        out << "No single database record matches all measured tracks at one offset\n";
+    }
 }
 
-int run_offset_measurement(CdRip* rip, unsigned tracks, const OffsetLookupServices& services, std::ostream& out) {
+int run_offset_measurement(CdRip* rip, unsigned tracks, const OffsetLookupServices& services,
+    const std::vector<std::string>& device_ids, std::ostream& out) {
     const char* error = nullptr;
     std::unique_ptr<CdRipDiscToc, decltype(&cdrip_release_disctoc)> toc(
         cdrip_build_disc_toc(rip, &error), &cdrip_release_disctoc);
     if (!toc) {
-        out << "Measurement unavailable: " << to_string_or_empty(error) << '\n';
+        out << "\nMeasurement unavailable: " << to_string_or_empty(error) << '\n';
         cdrip_release_error(error);
         return 1;
     }
     cdrip_release_error(error);
     AccurateRipDisc disc{};
-    if (!accuraterip_disc(*toc, disc)) { out << "Measurement unavailable: unsupported disc layout\n"; return 1; }
+    if (!accuraterip_disc(*toc, disc)) { out << "\nMeasurement unavailable: unsupported disc layout\n"; return 1; }
     DriveIdentity identity;
     std::string identity_error;
     if (rip->backend && rip->backend->get_identity) rip->backend->get_identity(rip->drive, identity, identity_error);
-    out << "Drive: " << identity.vendor << ' ' << identity.model << " revision=" << identity.revision << '\n';
+    out << "\nDrive: " << identity.vendor << ' ' << identity.model << " revision=" << identity.revision << '\n';
     if (!identity_error.empty()) out << "Drive identity: " << identity_error << '\n';
     out << "AccurateRip disc: " << disc.path << "\nFetching drive offset catalogue...\n" << std::flush;
     const auto listed = services.drive_offset(identity);
@@ -349,7 +368,11 @@ int run_offset_measurement(CdRip* rip, unsigned tracks, const OffsetLookupServic
             if (done == total) out << '\n';
         });
     out << '\n';
-    print_offset_measurement(out, result);
+    const auto id = std::find_if(device_ids.begin(), device_ids.end(), usable_config_device);
+    std::string config_device = rip->device;
+    if (id != device_ids.end()) config_device = *id;
+    else if (!usable_config_device(config_device)) config_device = canonicalize_device_path(rip->device);
+    print_offset_measurement(out, result, config_device);
     if (!result.error.empty()) return 1;
     return std::all_of(result.tracks.begin(), result.tracks.end(),
         [](const auto& track) { return track.error.empty() && (track.listed_checksum || track.search_range); }) ? 0 : 1;

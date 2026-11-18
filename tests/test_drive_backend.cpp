@@ -11,6 +11,7 @@
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <vector>
 
 #include "../src/cdrip/internal.h"
@@ -1521,9 +1522,31 @@ static void test_offset_measurement() {
         [](const DriveIdentity&) { return DriveOffsetLookup{589, "listed"}; },
         [](const CdRipDiscToc&) { return database; }};
     std::ostringstream output;
-    expect_true(run_offset_measurement(rip, 3, services, output) == 0, "dedicated command must finish using injected network responses");
+    expect_true(run_offset_measurement(rip, 3, services, {}, output) == 0, "dedicated command must finish using injected network responses");
     expect_contains(output.str(), "all 3 measured tracks match record 1", "full matches must share a record");
+    const auto section = output.str().find("[read_offset]\n");
+    expect_true(section != std::string::npos, "measurement must end with a cdrip.conf example");
+    expect_eq("[read_offset]\n/dev/fake-cdrom=589\n", output.str().substr(section),
+        "use the measured correction and fall back to the selected device");
     expect_true(state.eject_calls == 0, "measurement must keep the disc inserted");
+
+    const std::string device_id = "/dev/disk/by-id/usb-Fake_Optical-0:0";
+    database.pressings.push_back(database.pressings.front());
+    output.str("");
+    const std::vector<std::string> device_ids{"/dev/disk/by-id/ata-Model=1", device_id};
+    expect_true(run_offset_measurement(rip, 99, services, device_ids, output) == 0, "measure both identical records");
+    database.pressings.pop_back();
+    const auto stable_section = output.str().find("[read_offset]\n");
+    expect_true(stable_section != std::string::npos, "multiple records confirming one offset give one setting");
+    const auto example = output.str().substr(stable_section);
+    expect_eq("[read_offset]\n" + device_id + "=589\n", example, "use a stable device path that is valid as a configuration key");
+    const auto config_path = std::filesystem::temp_directory_path() / ("cdrip-offset-example-" + std::to_string(getpid()) + ".conf");
+    { std::ofstream file(config_path); file << example; }
+    auto* config = cdrip_load_config(config_path.c_str(), &error);
+    expect_true(config && !error, "the printed example must load as cdrip.conf");
+    expect_true(select_read_offset(*config, device_id, std::nullopt).samples == correction, "the example sets the measured offset");
+    cdrip_release_config(config);
+    std::filesystem::remove(config_path);
 
     const int before_search = state.read_calls;
     auto searched = measure_offsets(rip, *toc, database, std::nullopt, 3, {});
@@ -1538,6 +1561,9 @@ static void test_offset_measurement() {
     searched = measure_offsets(rip, *toc, database, -6, 3, {});
     expect_true(searched.searched && state.read_calls - before_wrong == captured_reads,
         "a mismatching listed offset must search without rereading candidate PCM");
+    output.str("");
+    print_offset_measurement(output, searched, device_id);
+    expect_contains(output.str(), device_id + "=589\n", "a measured search result replaces the unmatched catalogue value");
     expect_true(searched.tracks[0].search_range == std::pair{-2939, 2940},
         "unreadable disc-edge samples must reduce the searched range");
     for (int shift : {-589, 0}) {
@@ -1546,6 +1572,9 @@ static void test_offset_measurement() {
             expect_true(track.matches.size() == 1 && track.matches[0].samples == shift,
                 "negative and zero corrections must be measured without selecting a default");
         }
+        output.str("");
+        print_offset_measurement(output, searched, device_id);
+        expect_contains(output.str(), device_id + "=" + std::to_string(shift) + "\n", "preserve negative and zero measured offsets");
     }
     searched = measure_offsets(rip, *toc, database, -4000, 3, {});
     expect_true(!searched.tracks[0].listed_checksum && searched.tracks[0].matches[0].samples == correction,
@@ -1562,8 +1591,9 @@ static void test_offset_measurement() {
     auto split = measure_offsets(rip, *toc, database, correction, 3, {});
     split.tracks[1].matches[0].record = 1;
     output.str("");
-    print_offset_measurement(output, split);
+    print_offset_measurement(output, split, device_id);
     expect_contains(output.str(), "No single database record matches all", "unrelated per-track records must not form a full match");
+    expect_true(output.str().find("[read_offset]") == std::string::npos, "partial matches must not suggest a drive setting");
     auto separate = database;
     separate.pressings.push_back(separate.pressings[0]);
     separate.pressings[0][1].confidence = 0;
@@ -1591,9 +1621,10 @@ static void test_offset_measurement() {
     searched = measure_offsets(rip, *toc, silence_database, std::nullopt, 3, {});
     for (const auto& track : searched.tracks) expect_true(track.matches.size() > 1, "silence must report multiple candidates");
     output.str("");
-    print_offset_measurement(output, searched);
+    print_offset_measurement(output, searched, device_id);
     expect_contains(output.str(), "Offset +0: all 3", "all silent candidates remain visible");
     expect_contains(output.str(), "Offset +1: all 3", "silence must not choose just the first candidate");
+    expect_true(output.str().find("[read_offset]") == std::string::npos, "ambiguous offsets must not suggest a drive setting");
     cdrip_release_disctoc(toc);
     cdrip_close(rip, false, nullptr);
 }
