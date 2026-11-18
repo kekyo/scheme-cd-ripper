@@ -215,6 +215,10 @@ repeat/autoモードを含むコマンド実行全体に適用されるため、
 - CDDBサーバーは主にトラックタイトルなどのテキストフィールドを返しますが、MusicBrainzは正確なリリースレベルのメタデータと安定したIDを返すため、タグ付けの精度が向上します。
 - Scheme CD ripperでは、`[cddb]`セクションの`servers`リストに`musicbrainz`を追加するだけで有効化できます。デフォルトのサーバーリストには既に含まれています。
 
+CDDBの候補は、曲数と各曲の長さを手元のCDと照合します。長さを確認できなかった候補には選択画面で`unverified track lengths`と表示します。こうした候補を使う場合は番号を指定してください。自動選択とMusicBrainzのタイトル再検索には、照合できた候補を使います。
+
+MusicBrainzのタイトル再検索で使うのは、アルバム名と取り込むディスク1枚の曲数です。CDDBの候補からアーティスト名を特定できる場合は、最初の検索にその名前も加えます。一致する盤が見つからなければ、アーティスト名の条件を外して検索します。
+
 ### カバーアートの埋め込み
 
 MusicBrainzから情報を取得した場合は、追加でカバーアート画像の取得を試みます。
@@ -269,6 +273,8 @@ cdrip -ro 6 --no-eject
 補正しても各トラックの長さは変わりません。隣接する音声トラックから必要な分を読み足し、ディスク端やデータトラックとの境界を越える部分は無音で埋めます。補正値と無音で埋めたサンプル数は、FLACの`READ_OFFSET`と`READ_OFFSET_PADDED_SAMPLES`タグに記録します。ReplayGainとAccurateRipにも補正後の音声を使用します。
 
 AccurateRip照合は既定で有効です。`--no-accurate`（`-na`）または`[cdrip] accuraterip=false`で無効化できます。読み取りオフセットの補正は、照合を無効にしても適用されます。
+
+`Looking up AccurateRip...`の次の行に`AccurateRip: found 2 records for 12 tracks`とあれば、12曲のCDに照合用のデータが2件登録されているという意味です。CDが未登録の場合や照会に失敗した場合は、同じ行にその理由を表示します。
 
 リッピング中に計算したv1/v2チェックサムをAccurateRipデータベースと比較します。通常の音楽CDが対象で、データトラックを含むCDは未対応です。トラックごとに次の結果を表示します。
 
@@ -388,7 +394,7 @@ cover_art=auto       # auto / kitty / ascii / none。端末でのプレビュー
 accuraterip=true     # リップした音声をAccurateRipと照合
 discogs=always       # no / always / fallback（カバーアートの優先順。デフォルト: always）
 replaygain=true      # true / false（デフォルト: true。false ならトラック単位で即時保存）
-recrawl_percent=2    # MusicBrainz候補のトラック長許容差(%)（0以上、デフォルト: 2）
+recrawl_percent=2    # CDDB候補とMusicBrainzタイトル再検索の曲長許容差（0以上の%、既定値2）
 mode=best            # best / fast / default（defaultはbestと同じ）
 repeat=false
 sort=false

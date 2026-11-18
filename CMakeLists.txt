@@ -165,6 +165,14 @@ target_compile_options(cdrip_test_musicbrainz_recrawl_filter PRIVATE ${COMMON_CF
 target_link_libraries(cdrip_test_musicbrainz_recrawl_filter PRIVATE cdrip_static)
 add_dependencies(cdrip_test_musicbrainz_recrawl_filter version_header)
 
+add_executable(cdrip_test_metadata_lookup tests/test_metadata_lookup.cpp)
+target_include_directories(cdrip_test_metadata_lookup PRIVATE ${COMMON_INCLUDES})
+target_link_libraries(cdrip_test_metadata_lookup PRIVATE cdrip_static cdrip_chafa cdrip_terminal)
+target_compile_options(cdrip_test_metadata_lookup PRIVATE ${COMMON_CFLAGS})
+target_link_options(cdrip_test_metadata_lookup PRIVATE
+    -Wl,--wrap=cddb_query,--wrap=cddb_query_next,--wrap=cddb_read
+    -Wl,--wrap=soup_session_send_and_read,--wrap=soup_message_get_status)
+
 add_executable(cdrip_test_requery_seed_tags
     tests/test_requery_seed_tags.cpp
 )

@@ -219,6 +219,10 @@ To suppress only these permission correction warnings, specify `[cdrip] permissi
 - CDDB servers primarily return text fields like track titles, while MusicBrainz returns precise release-level metadata and stable IDs, improving tagging accuracy.
 - In Scheme CD ripper, simply include `musicbrainz` in the `[cddb]` `servers` list to enable it; it is already included in the default server list.
 
+CDDB matches are checked against the disc's track count and per-track durations. An entry marked `unverified track lengths` can be selected by number. Automatic selection and MusicBrainz title searches use entries with verified durations.
+
+MusicBrainz title searches use the album name and the number of tracks on the individual disc. When the CDDB candidates agree on an artist, the first search includes that name. If no disc matches, the search continues without the artist restriction.
+
 ### Cover Art Embedding
 
 When fetching information from MusicBrainz, it additionally attempts to retrieve cover art images.
@@ -283,6 +287,8 @@ For example, configure a drive as follows, replacing the path and value with tho
 Correction preserves each track's length. Audio is read from adjacent audio tracks when needed. Samples beyond disc edges or data-track boundaries are filled with silence. FLAC tags `READ_OFFSET` and `READ_OFFSET_PADDED_SAMPLES` record the correction and the number of padded sample frames. ReplayGain and AccurateRip also use the corrected audio.
 
 AccurateRip verification is enabled by default. Disable it with `--no-accurate` (`-na`) or `[cdrip] accuraterip=false`. Read offset correction still applies when verification is disabled.
+
+The line after `Looking up AccurateRip...` shows how many database records were found for the disc and how many tracks each record covers, for example `AccurateRip: found 2 records for 12 tracks`. If the disc is unregistered or the lookup fails, this line gives the reason.
 
 Verification compares v1/v2 checksums calculated during ripping with the AccurateRip database. It supports ordinary audio CDs; discs containing data tracks are unsupported. Results are displayed for each track:
 
@@ -402,7 +408,7 @@ cover_art=auto       # auto / kitty / ascii / none; terminal preview mode
 accuraterip=true     # compare ripped audio with AccurateRip
 discogs=always       # no / always / fallback (cover art preference order, default: always)
 replaygain=true      # true / false (default: true; false = save each track immediately)
-recrawl_percent=2    # Per-track length tolerance for MusicBrainz candidates (non-negative %, default: 2)
+recrawl_percent=2    # Per-track length tolerance for CDDB matches and MusicBrainz title searches (non-negative %, default 2)
 mode=best            # best / fast / default (default is equivalent to best)
 repeat=false
 sort=false

@@ -20,6 +20,7 @@
 
 #include <cdio/cdio.h>
 #include <cdio/cd_types.h>
+#include <cddb/cddb.h>
 #include <ebur128.h>
 #include <FLAC/metadata.h>
 
@@ -256,7 +257,14 @@ static inline std::string track_tag(
     return find_tag(tt.tags, tt.tags_count, to_upper(key));
 }
 
-std::vector<std::string> extract_album_title_candidates(
+struct AlbumTitleCandidate {
+    std::string title;
+    std::string artist;  // Empty if the verified entries have no unambiguous artist credit.
+};
+
+std::string normalize_metadata_text(const std::string& input);
+bool is_various_artist(const std::string& artist);
+std::vector<AlbumTitleCandidate> extract_album_title_candidates(
     const std::vector<const CdRipCddbEntry*>& entries);
 
 struct DiscogsCoverArtCandidate {
@@ -483,6 +491,11 @@ static inline void prune_empty_tags(
 
 // Helpers shared across translation units.
 namespace cdrip::detail {
+/** Build a libcddb query from the internal sector positions and return its computed ID.
+ * The caller owns the returned disc and must free it with cddb_disc_destroy().
+ */
+cddb_disc_t* build_cddb_query_disc(const CdRipDiscToc* toc, std::string& discid);
+
 bool compute_musicbrainz_discid(
     const CdRipDiscToc* toc,
     std::string& out_discid,

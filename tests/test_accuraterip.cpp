@@ -39,6 +39,15 @@ int main() {
     }
     const auto db = accuraterip_response(disc, 200, body);
     expect(db.status == AccurateRipStatus::Available && db.pressings.size() == 2, "multiple pressings");
+    expect(accuraterip_lookup_report(db) == "found 2 records for 2 tracks", "report disc records before any audio is read");
+    auto single = db;
+    single.pressings.resize(1);
+    single.pressings.front().resize(1);
+    expect(accuraterip_lookup_report(single) == "found 1 record for 1 track", "singular record and track counts");
+    expect(accuraterip_lookup_report(accuraterip_response(disc, 404, {})) == "not in database", "report unregistered discs");
+    expect(accuraterip_lookup_report(accuraterip_response(disc, 503, {})) == "network error: HTTP 503", "show the network error detail");
+    expect(accuraterip_lookup_report(accuraterip_response(disc, 200, {})) == "invalid database response", "report malformed records");
+    expect(accuraterip_lookup_report({}) == "unsupported disc layout", "report unsupported discs");
     expect(db.pressings[1][0].offset_checksum == 0x89abcdef, "offset signature must retain its little-endian value");
     expect(accuraterip_report(db, 0, {0x1234,0x5678,7056}).find("v2 confidence=7") != std::string::npos, "match all candidates");
     expect(accuraterip_report(db, 1, {1,2,7056}).find("mismatch") == 0, "mismatch");

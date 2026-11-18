@@ -910,27 +910,6 @@ static std::string strip_discogs_artist_suffix(const std::string& input) {
     return trim(value.substr(0, open));
 }
 
-static std::string normalize_discogs_compare_text(const std::string& input) {
-    std::string out;
-    out.reserve(input.size());
-    bool last_space = false;
-    for (unsigned char ch : input) {
-        if (ch < 0x80) {
-            if (std::isalnum(ch)) {
-                out.push_back(static_cast<char>(std::tolower(ch)));
-                last_space = false;
-            } else if (!last_space) {
-                out.push_back(' ');
-                last_space = true;
-            }
-        } else {
-            out.push_back(static_cast<char>(ch));
-            last_space = false;
-        }
-    }
-    return trim(out);
-}
-
 static std::vector<std::string> split_normalized_tokens(const std::string& normalized) {
     std::vector<std::string> tokens;
     size_t pos = 0;
@@ -966,20 +945,11 @@ static bool strong_discogs_text_match(
     const std::string& expected,
     const std::string& actual) {
 
-    const std::string expected_normalized = normalize_discogs_compare_text(expected);
-    const std::string actual_normalized = normalize_discogs_compare_text(actual);
+    const std::string expected_normalized = normalize_metadata_text(expected);
+    const std::string actual_normalized = normalize_metadata_text(actual);
     if (expected_normalized.empty() || actual_normalized.empty()) return false;
     if (expected_normalized == actual_normalized) return true;
     return token_overlap_ratio(expected_normalized, actual_normalized) >= 0.90;
-}
-
-static bool is_various_artist(const std::string& artist) {
-    const std::string normalized = normalize_discogs_compare_text(artist);
-    return normalized == "various" ||
-        normalized == "various artists" ||
-        normalized == "v a" ||
-        normalized == "va" ||
-        normalized == "compilation";
 }
 
 static bool discogs_release_has_cd_format(JsonObject* release_obj) {
@@ -989,7 +959,7 @@ static bool discogs_release_has_cd_format(JsonObject* release_obj) {
     for (guint i = 0; i < len; ++i) {
         JsonObject* format = json_array_get_object_element(formats, i);
         if (!format) continue;
-        const std::string name = normalize_discogs_compare_text(json_get_string_member(format, "name"));
+        const std::string name = normalize_metadata_text(json_get_string_member(format, "name"));
         if (name == "cd") return true;
     }
     return false;
@@ -1051,7 +1021,7 @@ static bool is_generic_track_title(
     const std::string& title,
     size_t track_index_zero_based) {
 
-    const std::string normalized = normalize_discogs_compare_text(title);
+    const std::string normalized = normalize_metadata_text(title);
     if (normalized.empty()) return true;
     if (normalized == "untitled") return true;
     if (normalized == "track") return true;
@@ -1131,7 +1101,7 @@ static bool build_discogs_candidate_from_release_obj(
         if (album.empty() || artist.empty()) return false;
         if (!discogs_release_has_cd_format(release_obj)) return false;
         if (!strong_discogs_text_match(album, release_title)) return false;
-        score += normalize_discogs_compare_text(album) == normalize_discogs_compare_text(release_title)
+        score += normalize_metadata_text(album) == normalize_metadata_text(release_title)
             ? 50.0
             : 40.0;
 
