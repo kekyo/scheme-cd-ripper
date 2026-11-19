@@ -250,6 +250,16 @@ MusicBrainzから情報を取得した場合は、追加でカバーアート画
 
 tmuxやscreen経由ではANSI/ASCII表示に戻ります。標準出力をファイルへリダイレクトした場合は画像を表示しません。`--no-cover-art`（`-nv`）は、方式にかかわらず端末表示を無効にします。画像の取得とFLACへの埋め込みには影響しません。
 
+以下は [elder-terms](https://github.com/kekyo/elder-terms/) を使用して scheme-cd-ripper を実行した例です:
+
+Kittyでのカバーアート例 (`--cover-art auto`):
+
+![Kitty cover art](./images/aa3-kitty.png)
+
+ASCIIでのカバーアート例 (`--cover-art ascii`):
+
+![ASCII cover art](./images/aa3-ascii.png)
+
 ### 読み取りオフセットとAccurateRip照合
 
 ドライブの読み取り位置のずれは`--read-offset`で補正できます。値の単位は左右1組のサンプルで、正の値は後方の音声を読みます。CLIで指定しなければ、設定ファイルの`[read_offset]`から使用するデバイスの値を選びます。一致する設定がなければ0です。明示的な`-ro 0`も設定ファイルより優先します。

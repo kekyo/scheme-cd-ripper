@@ -265,6 +265,16 @@ Inside tmux or screen, previews fall back to ANSI/ASCII.
 No images are printed when standard output is redirected to a file.
 `--no-cover-art` (`-nv`) disables terminal cover previews in all formats. Cover downloads and embedding in FLAC files remain enabled.
 
+These screenshots show how Scheme CD Ripper displays cover art in [elder-terms](https://github.com/kekyo/elder-terms/).
+
+Kitty graphics with `--cover-art auto`
+
+![Kitty cover art](./images/aa3-kitty.png)
+
+ASCII art with `--cover-art ascii`
+
+![ASCII cover art](./images/aa3-ascii.png)
+
 ### Read offsets and AccurateRip verification
 
 Use `--read-offset` to correct a drive's read position.
