@@ -14,6 +14,19 @@
 
 #include "internal.h"
 
+static bool live_get_identity(void* drive, cdrip::detail::DriveIdentity& identity, std::string& error) {
+    cdio_hwinfo_t hardware{};
+    if (!drive || !cdio_get_hwinfo(static_cast<cdrom_drive_t*>(drive)->p_cdio, &hardware)) {
+        error = "SCSI INQUIRY did not return hardware identifiers";
+        return false;
+    }
+    identity.vendor = cdrip::detail::trim(hardware.psz_vendor);
+    identity.model = cdrip::detail::trim(hardware.psz_model);
+    identity.revision = cdrip::detail::trim(hardware.psz_revision);
+    error.clear();
+    return true;
+}
+
 namespace {
 
 using cdrip::detail::BackendDetectedDrive;
@@ -211,9 +224,22 @@ auto live_seek_reader = [](
         err = "Reader handle is null";
         return false;
     }
-    paranoia_seek(static_cast<cdrom_paranoia*>(reader), sector, SEEK_SET);
+    if (sector < 0 || sector > INT32_MAX ||
+        paranoia_seek(static_cast<cdrom_paranoia*>(reader), sector, SEEK_SET) == -1) {
+        err = "Failed to seek to sector " + std::to_string(sector);
+        return false;
+    }
     return true;
 };
+
+// The callback has no user data; reads are synchronous on the calling thread.
+static thread_local std::string read_diagnostic;
+static void record_read_diagnostic(long position, paranoia_cb_mode_t event) {
+    if (event == PARANOIA_CB_SKIP || event == PARANOIA_CB_READERR || event == PARANOIA_CB_CACHEERR) {
+        read_diagnostic = "paranoia event " + std::to_string(event) +
+            " at sample " + std::to_string(position);
+    }
+}
 
 auto live_read_sector = [](
     void* reader,
@@ -226,7 +252,13 @@ auto live_read_sector = [](
         err = "Reader handle is null";
         return false;
     }
-    out_buffer = paranoia_read(static_cast<cdrom_paranoia*>(reader), nullptr);
+    read_diagnostic.clear();
+    out_buffer = paranoia_read(static_cast<cdrom_paranoia*>(reader), record_read_diagnostic);
+    if (!read_diagnostic.empty()) {
+        err = read_diagnostic;
+        out_buffer = nullptr;
+        return false;
+    }
     if (!out_buffer) {
         err = "Failed to read audio sector";
         return false;
@@ -247,6 +279,7 @@ const DriveBackend kLiveDriveBackend{
     live_get_disc_last_sector,
     live_seek_reader,
     live_read_sector,
+    live_get_identity,
 };
 
 const DriveBackend* g_override_drive_backend = nullptr;

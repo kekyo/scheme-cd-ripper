@@ -72,6 +72,14 @@ typedef enum CdRipRipModes {
     RIP_MODES_DEFAULT = 2,
 } CdRipRipModes;
 
+/** A configured read correction for one device path. */
+typedef struct CdRipReadOffset {
+    /** Owned absolute device path, including stable symlinks. */
+    const char* device;
+    /** Signed correction in stereo sample frames. */
+    int samples;
+} CdRipReadOffset;
+
 /** Global configuration loaded from INI or defaults. */
 typedef struct CdRipConfig {
     /** CD device path (nullable => auto-detect). */
@@ -82,6 +90,22 @@ typedef struct CdRipConfig {
     int compression_level;
     /** Cover art maximum width in pixels (<=0 => default). */
     int max_width;
+    /** Owned terminal preview mode: auto, kitty, ascii, or none; default auto. */
+    const char* cover_art;
+    /** Compare corrected PCM with AccurateRip; enabled by default. */
+    bool accuraterip;
+    /** Request maximum read speed instead of 1x; disabled by default. */
+    bool speed_fast;
+    /** Scan and write ReplayGain tags; enabled by default. */
+    bool replaygain;
+    /** Owned Discogs preference: no, always, or fallback; default always. */
+    const char* discogs;
+    /** Per-track tolerance (%) for CDDB matches and MusicBrainz title searches; nonnegative, default 2. */
+    int recrawl_percent;
+    /** Owned device-specific offsets; null when no offsets are configured. */
+    CdRipReadOffset* read_offsets;
+    /** Number of entries in read_offsets. */
+    size_t read_offsets_count;
     /** Output permissions as 3-digit octal file mode, or <0 for umask-derived default. */
     int permissions;
     /** Non-zero to show warnings when output permission adjustments fail. */
@@ -186,6 +210,14 @@ CdRip* cdrip_open(
     const CdRipSettings* settings,
     const char** error /* nullable */);
 /**
+ * Set the drive read correction offset (default: zero).
+ * @param rip Open drive handle; null is ignored.
+ * @param samples Signed stereo sample frames. Positive values read later audio.
+ * @remarks Unreadable disc/data boundaries are zero-filled; track length is preserved.
+ */
+void cdrip_set_read_offset(CdRip* rip, int samples);
+
+/**
  * Close Scheme CD Ripper and optionally eject the disc.
  * @param cdrip Ripper handle.
  * @param will_eject True to eject the disc.
@@ -212,6 +244,8 @@ typedef struct CdRipTrackInfo {
 
 /** Disc TOC information. */
 typedef struct CdRipDiscToc {
+    /** True when the original disc includes data tracks. */
+    bool has_data_tracks;
     /** CDDB disc ID (hex). */
     const char* cddb_discid;
     /** MusicBrainz disc ID (base64 variant). */
@@ -292,6 +326,8 @@ typedef struct CdRipCddbEntry {
     size_t tracks_count;
     /** Cover art info and cached image data (front cover only). */
     CdRipCoverArt cover_art;
+    /** True when CDDB track lengths could not be verified. Only offer this entry for manual selection. */
+    bool manual_only;
 } CdRipCddbEntry;
 
 /** List of CDDB entries. */
@@ -405,7 +441,7 @@ typedef struct CdRipDiagnosticObserver {
  * @param servers Server list to query.
  * @param allow_recrawl When true, always re-search MusicBrainz by title if CDDB candidates exist.
  *                      When false, only re-search when MusicBrainz returned no entries.
- * @param recrawl_track_length_tolerance_percent Allowed per-track length drift for MusicBrainz candidates.
+ * @param recrawl_track_length_tolerance_percent Allowed per-track length drift for CDDB candidates and MusicBrainz title searches.
  * @param log_recrawl When true, emit debug logs for recrawl queries.
  * @param observer Optional activity observer for long-running work.
  * @param diagnostic_observer Optional verbose diagnostic observer.

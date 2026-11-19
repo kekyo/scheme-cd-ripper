@@ -81,13 +81,19 @@ The following are the options:
 - `-ng`, `--no-replaygain`: Disable ReplayGain tagging and save each track immediately as before.
 - `-dc`, `--discogs`: Discogs cover art preference: `no`, `always` (default), `fallback`.
   In interactive mode, this also controls the default choice when both Discogs and CAA cover art candidates are available.
-- `-na`, `--no-aa`: Disable cover art ANSI/ASCII art output.
+- `-v`, `--cover-art <mode>`: Select `auto`, `kitty`, `ascii`, or `none` for terminal previews (default: `auto`).
+- `-nv`, `--no-cover-art`: Disable terminal cover previews; equivalent to `-v none`.
+- `-ro`, `--read-offset <num>`: Correct the read position in stereo sample frames.
+- `-na`, `--no-accurate`: Disable AccurateRip verification, which is enabled by default.
+- `--measure-offset [tracks]`: Measure a read offset using the inserted CD (default: 3 tracks).
 - `-l`, `--logs`: Print debug logs.
 - `--permissions <ugo>`: Set output permissions as a 3-digit octal file mode such as `664`. Ignored by `--update`.
 - `--permission-warnings`, `--no-permission-warnings`: Show or hide warnings when output permission adjustment fails. Ignored by `--update`.
 - `--tag`, `--tags <key=value>`: Override a Vorbis comment tag for normal ripping. Repeatable, ignored by `--update`.
 - `-i`, `--input`: cdrip config file path (default search: `./cdrip.conf` --> `~/.cdrip.conf`)
 - `-u`, `--update <file|dir> [more ...]`: Update existing FLAC tags from CDDB using embedded tags (other options ignored)
+
+CLI settings override configuration values. If an option is repeated, the last value wins; for example, `-nv -v kitty` enables Kitty previews. `mode=fast` controls drive reading checks independently of AccurateRip verification.
 
 Command-line options with config counterparts (except `-u` and `-i`) can override the contents of the config file specified with `-i`.
 
@@ -213,6 +219,10 @@ To suppress only these permission correction warnings, specify `[cdrip] permissi
 - CDDB servers primarily return text fields like track titles, while MusicBrainz returns precise release-level metadata and stable IDs, improving tagging accuracy.
 - In Scheme CD ripper, simply include `musicbrainz` in the `[cddb]` `servers` list to enable it; it is already included in the default server list.
 
+CDDB matches are checked against the disc's track count and per-track durations. An entry marked `unverified track lengths` can be selected by number. Automatic selection and MusicBrainz title searches use entries with verified durations.
+
+MusicBrainz title searches use the album name and the number of tracks on the individual disc. When the CDDB candidates agree on an artist, the first search includes that name. If no disc matches, the search continues without the artist restriction.
+
 ### Cover Art Embedding
 
 When fetching information from MusicBrainz, it additionally attempts to retrieve cover art images.
@@ -235,6 +245,73 @@ If the player supports cover art display, the cover art image will be shown:
 - If more than two Discogs title-search image candidates remain, only the top two are offered in interactive mode. Repeat mode and fully automatic mode use the highest-ranked candidate.
 - You can choose the preference order with `-dc`/`--discogs`: `always` (default: Discogs first, then CAA), `fallback` (CAA first, then Discogs), `no` (do not use Discogs).
 - Discogs data and images are retrieved through the Discogs API. See the Discogs API Terms of Use: https://support.discogs.com/hc/en-us/articles/360009334593-API-Terms-of-Use
+
+### Terminal cover art
+
+Select the preview format with `--cover-art auto|kitty|ascii|none`.
+The default, `auto`, uses Kitty graphics without querying the terminal when `TERM=xterm-kitty`.
+For other terminals, it queries Kitty graphics support at the first preview.
+Confirmed support enables Kitty graphics; unsupported terminals and queries that time out use ANSI/ASCII.
+The result is reused for subsequent previews during the same run.
+`kitty` selects Kitty graphics, `ascii` selects ANSI/ASCII, and `none` disables previews.
+
+No query is sent when replies cannot be read from the output terminal, for example when standard input is redirected.
+If your terminal supports Kitty images but automatic detection fails, you can select `--cover-art kitty`.
+You do not need to change `TERM`.
+If a preview cannot be generated, the reason will be displayed on standard error.
+Even if candidate images cannot be displayed, you can still select cover art by number.
+
+Inside tmux or screen, previews fall back to ANSI/ASCII.
+No images are printed when standard output is redirected to a file.
+`--no-cover-art` (`-nv`) disables terminal cover previews in all formats. Cover downloads and embedding in FLAC files remain enabled.
+
+These screenshots show how Scheme CD Ripper displays cover art in [elder-terms](https://github.com/kekyo/elder-terms/).
+
+Kitty graphics with `--cover-art auto`
+
+![Kitty cover art](./images/aa3-kitty.png)
+
+ASCII art with `--cover-art ascii`
+
+![ASCII cover art](./images/aa3-ascii.png)
+
+### Read offsets and AccurateRip verification
+
+Use `--read-offset` to correct a drive's read position.
+The unit is one stereo sample frame; positive values read later audio.
+Without a CLI override, the value is selected from `[read_offset]` for the active device, falling back to zero. An explicit `-ro 0` also overrides configuration. Startup output includes matching `/dev/disk/by-id/` paths, or `(unavailable)` when none exist. Use a stable path as a configuration key; symlinks to the same device are resolved, and conflicting offsets are rejected.
+
+For example, for a drive with a +6 correction offset:
+
+```bash
+cdrip -ro 6 --no-eject
+```
+
+For example, configure a drive as follows, replacing the path and value with those appropriate for your device:
+
+```ini
+[read_offset]
+/dev/disk/by-id/usb-VENDOR_MODEL_SERIAL-0:0=6
+```
+
+Correction preserves each track's length. Audio is read from adjacent audio tracks when needed. Samples beyond disc edges or data-track boundaries are filled with silence. FLAC tags `READ_OFFSET` and `READ_OFFSET_PADDED_SAMPLES` record the correction and the number of padded sample frames. ReplayGain and AccurateRip also use the corrected audio.
+
+AccurateRip verification is enabled by default. Disable it with `--no-accurate` (`-na`) or `[cdrip] accuraterip=false`. Read offset correction still applies when verification is disabled.
+
+The line after `Looking up AccurateRip...` shows how many database records were found for the disc and how many tracks each record covers, for example `AccurateRip: found 2 records for 12 tracks`. If the disc is unregistered or the lookup fails, this line gives the reason.
+
+Verification compares v1/v2 checksums calculated during ripping with the AccurateRip database. It supports ordinary audio CDs; discs containing data tracks are unsupported. Results are displayed for each track:
+
+| Result | Meaning |
+|---|---|
+| `match` | Matches the database. Also shows the matching version and confidence (submission count). |
+| `mismatch` | The disc is registered, but no stored checksum matches this audio. |
+| `not in database` | The disc is not registered. |
+| `network error` | The lookup failed due to a communication error. |
+| `invalid database response` | The response could not be used for verification. |
+| `unsupported disc layout` | The disc layout is unsupported. |
+
+Verification results do not delete FLAC files or change the exit code. Files are saved even when verification does not match, so check the reported results. The `best` mode checks drive reads and can be selected independently of AccurateRip verification.
 
 ## Filename formatting
 
@@ -288,12 +365,45 @@ Requirements: FLAC files must contain these tags (These tags are automatically i
 CDDB candidates are fetched the same way as during ripping; you still select the desired match interactively (except auto mode.)
 `--tag` overrides, `--permissions`, and permission warning options are ignored in update mode.
 
+### Measuring offsets with a CD
+
+`--measure-offset` obtains a candidate from the AccurateRip drive catalogue and checks it against records for the inserted audio CD. The disc must be registered in AccurateRip.
+It reads the first requested number of tracks in full, reports that disc's results, and exits. The default is three tracks; if the disc has fewer tracks, all available tracks are measured.
+
+```sh
+cdrip --measure-offset
+cdrip --measure-offset 5 -d /dev/sr0
+```
+
+If no listed value is available, or the listed value does not match every measured track in one database record, the command searches offsets using the captured audio.
+The search covers −2940 through +2940 stereo sample frames. A listed value outside this range is also checked directly.
+Candidates requiring unavailable audio at disc edges are excluded; each track shows the range actually searched.
+
+Results include the stable device path, disc ID, listed value, candidate values, checksum versions (v1/v2), and confidence for each track.
+The `record` number identifies a database record. A match across measured tracks requires the same offset and the same record for every track.
+Multiple matching candidates, including those caused by silence, are shown individually. No match means no candidate within the tested range; it does not establish a zero correction.
+Unregistered discs, network failures, read errors, and missing audio are reported separately.
+
+When exactly one measured offset matches all tested tracks in the same database record, the command ends with a `[read_offset]` example for `cdrip.conf`. It uses a stable `/dev/disk/by-id/` path when available and otherwise uses the device path, such as `/dev/sr0`.
+
+Measurement does not save FLAC files, fetch cover art, scan ReplayGain, or eject the disc. The normal ripping `repeat` setting does not apply.
+The command works even with `accuraterip=false` in the configuration. Combining it with `--no-accurate`, `--read-offset`, or `--update` is an error.
+Use the regular speed and integrity options, such as `--speed-fast` and `--mode`, to control reading.
+
+Different pressings of the same recording may have different audio positions, so a single disc may not distinguish a drive offset from a pressing offset.
+See the [AccurateRip explanation](https://www.accuraterip.com/keydiscs.htm).
+Compare results from your own pressed CDs and copy the value you choose into your configuration. If you already have a `[read_offset]` section, add or update the drive's entry there.
+
 ## Config file format
 
 Scheme CD ripper will refer config file. It is INI-like format.
 
 `cdrip.conf` (current directory) --> `~/.cdrip.conf`: The first file found in this order is loaded.
 You can also explicitly specify the file using the `-i`/`--input` option.
+
+Explicit CLI values override configuration values. If an option is repeated, its last value wins.
+Unknown `[cdrip]` keys and invalid values are errors. Unspecified `[cdrip]` settings use the defaults shown below.
+Omit `device` for automatic detection, `permissions` to derive modes from umask, and `filter_title` to leave candidates unfiltered.
 
 Example config file:
 
@@ -306,15 +416,20 @@ max_width=512        # cover art max width in pixels (> 0)
 permissions=664      # optional 3-digit octal file mode; default is derived from umask
 permission_warnings=true  # true / false (default: true; false hides chmod/GIO mode warnings)
 speed=slow           # slow or fast (default: slow)
-aa=true              # show cover art as ANSI/ASCII art (TTY only)
+cover_art=auto       # auto / kitty / ascii / none; terminal preview mode
+accuraterip=true     # compare ripped audio with AccurateRip
 discogs=always       # no / always / fallback (cover art preference order, default: always)
 replaygain=true      # true / false (default: true; false = save each track immediately)
-recrawl_percent=2    # Per-track length tolerance for MusicBrainz candidates (default: 2)
-mode=best            # best / fast / default
+recrawl_percent=2    # Per-track length tolerance for CDDB matches and MusicBrainz title searches (non-negative %, default 2)
+mode=best            # best / fast / default (default is equivalent to best)
 repeat=false
 sort=false
 filter_title=         # Filter CDDB candidates by title using regex (empty = no filter, ignore casing)
 auto=false
+
+[read_offset]
+# Enter the value you choose from measurements; unconfigured devices use zero
+# /dev/disk/by-id/usb-VENDOR_MODEL_SERIAL-0:0=6
 
 [cddb]
 servers=musicbrainz,freedb_japan,gnudb,dbpoweramp   # Comma separated labels
@@ -361,8 +476,8 @@ A special server id `musicbrainz` is not required `[cddb.musicbrainz]` section d
 - libpng
 - libjpeg
 - liblcms 2.0
-- chafa (libchafa)
-- CMake and a C++17 compiler
+- Chafa 1.14.2, built automatically from the pinned submodule
+- CMake, a C compiler, a C++17 compiler, Autoconf, Automake and Libtool
 - Node.js and [screw-up](https://github.com/kekyo/screw-up) (Automated-versioning tool)
 
 `build_package.sh`:
@@ -374,15 +489,22 @@ A special server id `musicbrainz` is not required `[cddb.musicbrainz]` section d
 
 ### Build
 
-In Ubuntu noble/jammy:
+Install the build dependencies on Debian/Ubuntu:
 
 ```bash
-sudo apt-get install build-essential cmake dpkg-dev nodejs \
-  libcdio-paranoia-dev libcddb2-dev libebur128-dev libflac++-dev libglib2.0-dev libsoup-3.0-dev libjson-glib-dev libchafa-dev libpng-dev libjpeg-dev liblcms2-dev
+sudo apt-get install build-essential cmake dpkg-dev nodejs npm autoconf automake libtool pkg-config xz-utils \
+  libcdio-paranoia-dev libcddb2-dev libebur128-dev libflac++-dev libglib2.0-dev libsoup-3.0-dev libjson-glib-dev libpng-dev libjpeg-dev liblcms2-dev
 npm install -g screw-up
 
+git submodule update --init --recursive
 ./build.sh
 ```
+
+The build creates CLI and development Debian packages and a corresponding source archive in `build/deb/`.
+Refresh existing package build images with `./prereq.sh --force` to include the required build tools.
+
+The CLI loads its private shared library from `/usr/lib/cdrip/`.
+See [bundled libraries and corresponding source](THIRD_PARTY.md) for replacement instructions, source rebuilds and distribution requirements.
 
 ### Build packages
 
@@ -444,3 +566,5 @@ Pull requests are welcome! Please submit them as diffs against the `develop` bra
 ## License
 
 Under MIT.
+
+The bundled Chafa is licensed under LGPLv3 or later. See [bundled libraries and corresponding source](THIRD_PARTY.md) for copyright notices and the locations of the complete license texts.

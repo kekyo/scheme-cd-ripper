@@ -28,6 +28,8 @@ EOF
 
 container_packages() {
 	cat <<'EOF'
+autoconf
+automake
 binutils
 build-essential
 ca-certificates
@@ -36,7 +38,6 @@ dpkg-dev
 libcdio-paranoia-dev
 libcddb2-dev
 libebur128-dev
-libchafa-dev
 libflac++-dev
 libglib2.0-dev
 libjpeg-dev
@@ -44,6 +45,7 @@ libjson-glib-dev
 liblcms2-dev
 libpng-dev
 libsoup-3.0-dev
+libtool
 pkg-config
 EOF
 }
@@ -67,6 +69,7 @@ EOF
 		done
 		cat <<'EOF'
     && rm -rf /var/lib/apt/lists/*
+
 EOF
 	} >"$containerfile"
 }

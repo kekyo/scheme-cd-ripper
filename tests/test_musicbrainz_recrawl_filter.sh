@@ -11,3 +11,4 @@ cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release
 
 cmake --build "${BUILD_DIR}"
 "${BUILD_DIR}/cdrip_test_musicbrainz_recrawl_filter"
+"${BUILD_DIR}/cdrip_test_metadata_lookup"

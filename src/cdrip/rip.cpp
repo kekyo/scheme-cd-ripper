@@ -1,3 +1,4 @@
+#include "pcm_reader.h"
 // Scheme CD music/sound ripper
 // Copyright (c) Kouji Matsui. (@kekyo@mi.kekyo.net)
 // Under MIT.
@@ -308,6 +309,8 @@ bool rip_track_with_options(
     std::string& err) {
 
     err.clear();
+    AccurateRipChecksum checksum{};
+    if (options && options->accuraterip_result) *options->accuraterip_result = {};
     if (replaygain_result) {
         *replaygain_result = ReplayGainScanResult{};
     }
@@ -383,7 +386,28 @@ bool rip_track_with_options(
     encoder.set_total_samples_estimate(
         static_cast<uint64_t>(sectors) * kSamplesPerSector);
 
+    // Only extend into adjacent audio tracks. Filtered-out data tracks leave gaps.
+    long audio_start = track->start;
+    long audio_end = track->end;
+    for (size_t i = toc->tracks_count; i > 0; --i) {
+        const auto& adjacent = toc->tracks[i - 1];
+        if (adjacent.is_audio && adjacent.end + 1 == audio_start) audio_start = adjacent.start;
+    }
+    for (size_t i = 0; i < toc->tracks_count; ++i) {
+        const auto& adjacent = toc->tracks[i];
+        if (adjacent.is_audio && adjacent.start == audio_end + 1) audio_end = adjacent.end;
+    }
+    const int64_t source_start = static_cast<int64_t>(track->start) * kSamplesPerSector + rip->read_offset;
+    const int64_t frame_count = static_cast<int64_t>(sectors) * kSamplesPerSector;
+    const int64_t audio_first = static_cast<int64_t>(audio_start) * kSamplesPerSector;
+    const int64_t audio_limit = (static_cast<int64_t>(audio_end) + 1) * kSamplesPerSector;
+    const int64_t valid_first = std::max(source_start, audio_first);
+    const int64_t valid_limit = std::min(source_start + frame_count, audio_limit);
+    const int64_t padded = frame_count - std::max<int64_t>(0, valid_limit - valid_first);
+
     std::map<std::string, std::string> vorbis_tags = tags;
+    vorbis_tags["READ_OFFSET"] = std::to_string(rip->read_offset);
+    vorbis_tags["READ_OFFSET_PADDED_SAMPLES"] = std::to_string(padded);
     drop_format_only_tags(vorbis_tags);
     FLAC__StreamMetadata* vorbis = build_vorbis_comments(vorbis_tags);
     FLAC__StreamMetadata* picture = nullptr;
@@ -420,7 +444,8 @@ bool rip_track_with_options(
         return false;
     }
 
-    if (!backend.seek_reader(rip->reader, track->start, backend_err)) {
+    PcmReadState pcm_reader{rip};
+    if (valid_first < valid_limit && !seek_pcm_frame(pcm_reader, valid_first, backend_err)) {
         err = backend_err;
         encoder.finish();
         cleanup_encoder_state();
@@ -438,6 +463,7 @@ bool rip_track_with_options(
             .count() / 1000.0
         - wall_start_sec;
 
+    int16_t corrected[kSamplesPerSector * kChannels]{};
     long processed = 0;
     while (processed < sectors) {
         const int chunk = static_cast<int>(
@@ -445,9 +471,11 @@ bool rip_track_with_options(
         int read_sectors = 0;
 
         for (int c = 0; c < chunk; ++c) {
-            const int16_t* buffer = nullptr;
-            if (!backend.read_sector(rip->reader, buffer, backend_err)) {
-                err = "Read error on track " + std::to_string(track->number);
+            const int16_t* buffer = corrected;
+            if (!read_pcm_frames(pcm_reader, source_start + (processed + c) * kSamplesPerSector,
+                    kSamplesPerSector, audio_first, audio_limit, corrected, backend_err)) {
+                err = "Read error on track " + std::to_string(track->number) +
+                    " at sector " + std::to_string(track->start + processed + c) + ": " + backend_err;
                 encoder.finish();
                 cleanup_encoder_state();
                 remove_local_file_quietly(temp_path);
@@ -473,6 +501,10 @@ bool rip_track_with_options(
                 }
             }
 
+            if (options && options->accuraterip_result) {
+                accuraterip_update(checksum, buffer, kSamplesPerSector, frame_count,
+                    track->number == 1, track->number == static_cast<int>(toc->tracks_count));
+            }
             const int base = c * kSamplesPerSector;
             for (int i = 0; i < kSamplesPerSector; ++i) {
                 left[base + i] = buffer[i * 2];
@@ -534,8 +566,13 @@ bool rip_track_with_options(
         }
     }
 
-    encoder.finish();
+    const bool finished = encoder.finish();
     cleanup_encoder_state();
+    if (!finished) {
+        err = "Failed to finalize FLAC on track " + std::to_string(track->number);
+        remove_local_file_quietly(temp_path);
+        return false;
+    }
 
     if (replaygain_result && options && options->track_replaygain_state) {
         if (!finalize_replaygain_scan(options->track_replaygain_state, *replaygain_result, err)) {
@@ -560,6 +597,7 @@ bool rip_track_with_options(
         return false;
     }
     remove_local_file_quietly(temp_path);
+    if (options && options->accuraterip_result) *options->accuraterip_result = checksum;
     return true;
 }
 

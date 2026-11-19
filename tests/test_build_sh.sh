@@ -23,10 +23,21 @@ set -eu
 if [ "$1" = "--build" ]; then
 	build_dir=$2
 	mkdir -p "$build_dir"
-	printf '%s\n' '#!/bin/sh' >"$build_dir/cdrip"
-	chmod +x "$build_dir/cdrip"
+	# Real ELF files exercise dependency calculation without a system Chafa.
+	mkdir -p "$build_dir/private"
+	printf '%s\n' 'int fixture(void) { return 0; }' | \
+		cc -x c - -fPIC -shared -Wl,-soname,libchafa.so.0 -o "$build_dir/private/libchafa.so.0"
+	printf '%s\n' 'int fixture(void); int main(void) { return fixture(); }' | \
+		cc -x c - -o "$build_dir/cdrip" -L"$build_dir/private" -l:libchafa.so.0 -Wl,-rpath,'$ORIGIN/../lib/cdrip'
 	: >"$build_dir/libcdrip.so"
 	: >"$build_dir/libcdrip.a"
+	exit 0
+fi
+
+if [ "$1" = "--install" ]; then
+	mkdir -p "$DESTDIR/usr/bin" "$DESTDIR/usr/lib/cdrip"
+	cp "$2/cdrip" "$DESTDIR/usr/bin/"
+	cp "$2/private/libchafa.so.0" "$DESTDIR/usr/lib/cdrip/"
 	exit 0
 fi
 
@@ -60,12 +71,6 @@ fi
 exit 1
 EOF
 
-cat >"${STUB_BIN_DIR}/dpkg-shlibdeps" <<'EOF'
-#!/bin/sh
-set -eu
-printf '%s\n' 'shlibs:Depends=libc6 (>= 2.38)'
-EOF
-
 cat >"${STUB_BIN_DIR}/dpkg-deb" <<'EOF'
 #!/bin/sh
 set -eu
@@ -81,7 +86,6 @@ EOF
 chmod +x "${STUB_BIN_DIR}/screw-up" \
     "${STUB_BIN_DIR}/cmake" \
     "${STUB_BIN_DIR}/dpkg" \
-    "${STUB_BIN_DIR}/dpkg-shlibdeps" \
     "${STUB_BIN_DIR}/dpkg-deb"
 
 PATH="${STUB_BIN_DIR}:${PATH}" BUILD_DIR="${BUILD_DIR}" "${ROOT_DIR}/build.sh"
@@ -115,3 +119,10 @@ assert_contains_text() {
 assert_eq "9.9.9-test" "$(cat "${BUILD_DIR}/cmake-version.txt")" "build.sh should pass screw-up version to cmake"
 assert_contains_text "${BUILD_DIR}/deb/libcdrip-dev/DEBIAN/control" "Version: 9.9.9-test" "dev package control should use screw-up version"
 assert_contains_text "${BUILD_DIR}/deb/cdrip/DEBIAN/control" "Version: 9.9.9-test" "cli package control should use screw-up version"
+test -f "${BUILD_DIR}/deb/cdrip/usr/lib/cdrip/libchafa.so.0"
+test -f "${BUILD_DIR}/deb/cdrip-9.9.9-test-source.tar.xz"
+if grep -E 'libchafa|Depends:.*cdrip' "${BUILD_DIR}/deb/cdrip/DEBIAN/control"; then
+    cat "${BUILD_DIR}/deb/cdrip/DEBIAN/control" >&2
+    echo 'CLI runtime dependencies must exclude the bundled library and itself' >&2
+    exit 1
+fi

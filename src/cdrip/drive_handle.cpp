@@ -51,6 +51,10 @@ CdRip* cdrip_open(
     return new CdRip{&backend, raw, reader, effective_mode, device_str, format, compression_level, speed_fast};
 }
 
+void cdrip_set_read_offset(CdRip* rip, int samples) {
+    if (rip) rip->read_offset = samples;
+}
+
 void cdrip_close(
     CdRip* cdrip,
     bool will_eject,

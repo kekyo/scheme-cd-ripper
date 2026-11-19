@@ -77,13 +77,20 @@ cdrip -d /dev/sr1 -f "{artist:n/title:n}.flac" -r
 - `-ng`, `--no-replaygain`: ReplayGain タグ付与を無効化し、従来どおりトラック単位で即時保存する。
 - `-dc`, `--discogs`: Discogsのカバーアートの使用方法（`no`,`always`,`fallback`、デフォルト: `always`）。
   対話モードでは、DiscogsとCAAの両方が候補になったときのデフォルト選択にも使われます。
-- `-na`, `--no-aa`: カバーアートのANSI/ASCIIアート表示を無効化する。
+- `-v`, `--cover-art <mode>`: 端末でのカバー表示を`auto`、`kitty`、`ascii`、`none`から選ぶ。既定値は`auto`。
+- `-nv`, `--no-cover-art`: カバーアートの端末表示を無効化する。`-v none`と同じ。
+- `-ro`, `--read-offset <num>`: 左右1組のサンプル単位で読み取り位置を補正する。
+- `-na`, `--no-accurate`: 既定で有効なAccurateRip照合を無効化する。
+- `--measure-offset [tracks]`: 挿入中のCDを使って読み取りオフセットを測定する。トラック数省略時は3。
 - `-l`, `--logs`: デバッグログを出力する。
 - `--permissions <ugo>`: 出力パーミッションを`664`のような3桁8進数で指定する。`--update`では無視。
 - `--permission-warnings`, `--no-permission-warnings`: 出力パーミッション補正失敗時のwarning表示を切り替える。`--update`では無視。
 - `--tag`, `--tags <key=value>`: 通常リッピング時にVorbis commentタグを上書きする。複数指定可、`--update`では無視。
 - `-i`, `--input`: cdrip設定ファイルのパス（デフォルト検索: `./cdrip.conf` --> `~/.cdrip.conf`）
 - `-u`, `--update <file|dir> [more ...]`: 埋め込みタグを使用してCDDBから既存のFLACタグを更新（他のオプションは無視）
+
+同じ設定をCLIで複数回指定した場合は後の値を採用します。例えば`-nv -v kitty`ではKitty表示が有効です。
+`mode=fast`はドライブ読み取り時の検査方法を選び、AccurateRip照合とは独立しています。
 
 対応する設定項目を持つコマンドラインオプション（`-u` および `-i` を除く）は、`-i` で指定された設定ファイルの内容を上書きできます。
 
@@ -208,6 +215,10 @@ repeat/autoモードを含むコマンド実行全体に適用されるため、
 - CDDBサーバーは主にトラックタイトルなどのテキストフィールドを返しますが、MusicBrainzは正確なリリースレベルのメタデータと安定したIDを返すため、タグ付けの精度が向上します。
 - Scheme CD ripperでは、`[cddb]`セクションの`servers`リストに`musicbrainz`を追加するだけで有効化できます。デフォルトのサーバーリストには既に含まれています。
 
+CDDBの候補は、曲数と各曲の長さを手元のCDと照合します。長さを確認できなかった候補には選択画面で`unverified track lengths`と表示します。こうした候補を使う場合は番号を指定してください。自動選択とMusicBrainzのタイトル再検索には、照合できた候補を使います。
+
+MusicBrainzのタイトル再検索で使うのは、アルバム名と取り込むディスク1枚の曲数です。CDDBの候補からアーティスト名を特定できる場合は、最初の検索にその名前も加えます。一致する盤が見つからなければ、アーティスト名の条件を外して検索します。
+
 ### カバーアートの埋め込み
 
 MusicBrainzから情報を取得した場合は、追加でカバーアート画像の取得を試みます。
@@ -229,6 +240,64 @@ MusicBrainzから情報を取得した場合は、追加でカバーアート画
 - Discogsのタイトル検索で3件以上の画像候補が残る場合、対話モードでは上位2件だけを提示します。リピートモードおよび完全自動モードでは最上位候補を使用します。
 - `-dc`/`--discogs` で優先順を指定できます: `always`（デフォルト: Discogsを優先し失敗時にCAA）、`fallback`（CAA優先で失敗時にDiscogs）、`no`（Discogsを使用しない）。
 - Discogsのデータと画像はDiscogs API経由で取得します。Discogs API Terms of Use: https://support.discogs.com/hc/en-us/articles/360009334593-API-Terms-of-Use
+
+### 端末でのカバーアート表示
+
+`--cover-art auto|kitty|ascii|none`で表示方式を選べます。初期値は`auto`です。`auto`では、`TERM=xterm-kitty`なら問い合わせを行わずKitty画像表示を使います。それ以外の端末では、初回のプレビュー時にKitty方式への対応を問い合わせます。対応を確認できればKitty方式、未対応や応答待ちの期限切れの場合はANSI/ASCII表示です。判定結果は、その実行中のプレビューで再利用します。
+
+`kitty`はKitty方式、`ascii`はANSI/ASCII表示、`none`は非表示です。標準入力がリダイレクトされているなど、表示先の端末から応答を読めない場合は問い合わせを行いません。Kitty方式に対応しているのに自動検出できない端末では、`--cover-art kitty`を指定できます。`TERM`を変更する必要はありません。
+プレビューを生成できない場合は、理由を標準エラーへ表示します。候補画像を表示できなくても、番号によるカバーアートの選択は続けられます。
+
+tmuxやscreen経由ではANSI/ASCII表示に戻ります。標準出力をファイルへリダイレクトした場合は画像を表示しません。`--no-cover-art`（`-nv`）は、方式にかかわらず端末表示を無効にします。画像の取得とFLACへの埋め込みには影響しません。
+
+以下は [elder-terms](https://github.com/kekyo/elder-terms/) を使用して scheme-cd-ripper を実行した例です:
+
+Kittyでのカバーアート例 (`--cover-art auto`):
+
+![Kitty cover art](./images/aa3-kitty.png)
+
+ASCIIでのカバーアート例 (`--cover-art ascii`):
+
+![ASCII cover art](./images/aa3-ascii.png)
+
+### 読み取りオフセットとAccurateRip照合
+
+ドライブの読み取り位置のずれは`--read-offset`で補正できます。値の単位は左右1組のサンプルで、正の値は後方の音声を読みます。CLIで指定しなければ、設定ファイルの`[read_offset]`から使用するデバイスの値を選びます。一致する設定がなければ0です。明示的な`-ro 0`も設定ファイルより優先します。
+
+リップ開始時には、使用するデバイスと対応する`/dev/disk/by-id/`の固有パスを表示します。固有パスがない場合は`(unavailable)`と表示し、処理を続けます。
+設定には直接のデバイス名のほか、表示された固有パスを使えます。シンボリックリンクを解決して照合するため、同じ機器を指す複数の設定に異なる値がある場合はエラーになります。
+
+例えば、補正値が+6のドライブでは次のように指定します。
+
+```bash
+cdrip -ro 6 --no-eject
+```
+
+設定ファイルには、例えば次のように記述します。機器に適した値とパスへ置き換えてください。
+
+```ini
+[read_offset]
+/dev/disk/by-id/usb-VENDOR_MODEL_SERIAL-0:0=6
+```
+
+補正しても各トラックの長さは変わりません。隣接する音声トラックから必要な分を読み足し、ディスク端やデータトラックとの境界を越える部分は無音で埋めます。補正値と無音で埋めたサンプル数は、FLACの`READ_OFFSET`と`READ_OFFSET_PADDED_SAMPLES`タグに記録します。ReplayGainとAccurateRipにも補正後の音声を使用します。
+
+AccurateRip照合は既定で有効です。`--no-accurate`（`-na`）または`[cdrip] accuraterip=false`で無効化できます。読み取りオフセットの補正は、照合を無効にしても適用されます。
+
+`Looking up AccurateRip...`の次の行に`AccurateRip: found 2 records for 12 tracks`とあれば、12曲のCDに照合用のデータが2件登録されているという意味です。CDが未登録の場合や照会に失敗した場合は、同じ行にその理由を表示します。
+
+リッピング中に計算したv1/v2チェックサムをAccurateRipデータベースと比較します。通常の音楽CDが対象で、データトラックを含むCDは未対応です。トラックごとに次の結果を表示します。
+
+| 表示 | 意味 |
+|---|---|
+| `match` | データベースの値と一致。照合方式と登録件数を表すconfidenceも表示します。 |
+| `mismatch` | 登録はありますが、今回の音声と一致する値がありません。 |
+| `not in database` | CDが未登録です。 |
+| `network error` | 通信に失敗しました。 |
+| `invalid database response` | 応答が不正で照合できませんでした。 |
+| `unsupported disc layout` | 未対応のディスク構成です。 |
+
+照合結果によってFLACを削除したり、終了コードを変更したりはしません。一致しなかった場合も保存されるため、表示された結果を確認してください。`best`モードはドライブの読み取りを検査する設定で、AccurateRip照合とは別に指定できます。
 
 ## ファイル名のフォーマット
 
@@ -282,6 +351,35 @@ cdrip -u album1 album2/track03.flac /path/to/archive
 CDDB候補の取得はリッピング時と同様の方法で行われます。希望する一致を対話的に選択する必要があります（自動モードを除く）。
 update modeでは`--tag`による上書き、`--permissions`、permission warningオプションは無視されます。
 
+### CDを使ったオフセット測定
+
+`--measure-offset`は、AccurateRipのドライブ一覧から取得した候補値を、挿入中のCDの登録データと照合します。対象はAccurateRipに登録された通常の音楽CDです。
+先頭から指定数のトラックを最後まで読み、1枚分の測定結果を表示して終了します。個数を省略すると3トラック、指定数より曲数が少ないCDでは全トラックを調べます。
+
+```sh
+cdrip --measure-offset
+cdrip --measure-offset 5 -d /dev/sr0
+```
+
+掲載値がない場合や、掲載値で全測定トラックが同じ登録レコードに一致しない場合は、読み取り済みの音声をずらして候補を探索します。
+探索範囲は左右1組のサンプル単位で−2940～+2940です。この範囲外の掲載値も、その値での照合は行います。
+CDの端で必要な音声を取得できない候補は照合せず、実際に調べた範囲をトラックごとに表示します。
+
+測定結果には、デバイス固有パス、CD識別子、掲載値、候補値、トラックごとの照合方式（v1/v2）と登録件数を表示します。
+`record`はCDの登録レコードを区別する番号です。複数トラックの一致は、同じ補正値で同じレコードに一致した場合に表示します。
+無音などで複数の候補が一致した場合は、その候補を併記します。候補がない場合は探索範囲内での不一致であり、補正値0の確認結果ではありません。
+CD未登録、通信失敗、読み取りエラー、必要な音声の不足は、それぞれ理由を表示します。
+
+測定した全トラックが同じ登録レコードに一致し、その補正値が1つに絞れた場合は、最後に`cdrip.conf`の`[read_offset]`に追加できる設定例を表示します。設定例のキーはドライブの`/dev/disk/by-id/`の固有パスです。設定に使える固有パスがないときは、`/dev/sr0`などのデバイスパスを使います。
+
+測定ではFLACの保存、カバー画像取得、ReplayGain処理、ディスクの排出を行わず、通常リップの`repeat`設定も適用しません。
+通常リップ用の`accuraterip=false`でも測定は可能です。`--no-accurate`、`--read-offset`、`--update`との同時指定はエラーになります。
+読み取り速度や検査モードには、通常の`--speed-fast`や`--mode`などを使えます。
+
+同じ曲でもCDの製造版によって音声の位置が異なる場合があります。1枚の結果だけでは、ドライブと製造版によるずれを区別できないことがあります。
+詳しくは[AccurateRipの説明](https://www.accuraterip.com/keydiscs.htm)を参照してください。
+手元の複数のプレスCDで結果を比較し、採用する値を設定ファイルへ転記してください。`[read_offset]`がすでにある場合は、そのセクションで対象ドライブの行を追加または更新します。
+
 ## 設定ファイルフォーマット
 
 Scheme CD ripperは設定ファイルを参照します。INI形式に似た形式です。
@@ -289,7 +387,11 @@ Scheme CD ripperは設定ファイルを参照します。INI形式に似た形�
 `cdrip.conf` (現在のディレクトリ) --> `~/.cdrip.conf`: この順序で最初に発見されたファイルが読み込まれます。
 `-i`/`--input` オプションを使用してファイルを明示的に指定することもできます。
 
-以下は設定ファイルの例です:
+CLIで明示した値は設定ファイルより優先します。同じ設定をCLIに複数回指定した場合は、最後の値を使います。
+`[cdrip]`の未知のキーや、不正な値はエラーになります。`[cdrip]`の未指定の値には、以下の例に記した既定値を使います。
+`device`、`permissions`、`filter_title`は省略でき、それぞれ自動検出、umaskから算出、絞り込みなしになります。
+
+設定ファイルの例を示します。
 
 ```ini
 [cdrip]
@@ -300,15 +402,20 @@ max_width=512        # カバーアート最大幅(px、1以上)
 permissions=664      # 任意の3桁8進数ファイルモード。未指定時はumaskから計算
 permission_warnings=true  # true / false（デフォルト: true。falseならchmod/GIO mode warningを非表示）
 speed=slow           # slow または fast（デフォルト: slow）
-aa=true              # カバーアートをANSI/ASCIIアートで表示（TTYのみ）
+cover_art=auto       # auto / kitty / ascii / none。端末でのプレビュー方式
+accuraterip=true     # リップした音声をAccurateRipと照合
 discogs=always       # no / always / fallback（カバーアートの優先順。デフォルト: always）
 replaygain=true      # true / false（デフォルト: true。false ならトラック単位で即時保存）
-recrawl_percent=2    # MusicBrainz候補のトラック長許容差(%)（デフォルト: 2）
-mode=best            # best / fast / default
+recrawl_percent=2    # CDDB候補とMusicBrainzタイトル再検索の曲長許容差（0以上の%、既定値2）
+mode=best            # best / fast / default（defaultはbestと同じ）
 repeat=false
 sort=false
 filter_title=         # CDDB候補のタイトルを正規表現でフィルタ（未指定/空=フィルタなし、大文字小文字無視）
 auto=false
+
+[read_offset]
+# オフセットは測定者が選んだ値を設定。未設定のデバイスは0
+# /dev/disk/by-id/usb-VENDOR_MODEL_SERIAL-0:0=6
 
 [cddb]
 servers=musicbrainz,freedb_japan,gnudb,dbpoweramp   # カンマ区切りのラベル
@@ -339,6 +446,26 @@ path=/~cddb/cddb.cgi
 
 -----
 
+## ソースからのビルド
+
+Debian/Ubuntuでは、ビルドに必要なパッケージを導入してから実行してください。
+CMake、Cコンパイラ、C++17対応コンパイラ、Autoconf、Automake、Libtool、Node.js用の[screw-up](https://github.com/kekyo/screw-up)を使います。
+Chafaは、固定したsubmoduleからビルドに取り込みます。
+
+```bash
+sudo apt-get install build-essential cmake dpkg-dev nodejs npm autoconf automake libtool pkg-config xz-utils \
+  libcdio-paranoia-dev libcddb2-dev libebur128-dev libflac++-dev libglib2.0-dev libsoup-3.0-dev libjson-glib-dev libpng-dev libjpeg-dev liblcms2-dev
+npm install -g screw-up
+git submodule update --init --recursive
+./build.sh
+```
+
+生成先は`build/deb/`です。CLIと開発用ライブラリのDebianパッケージ、および対応するソースアーカイブが入ります。
+既存の配布用コンテナを使う場合は、`./prereq.sh --force`でビルドツールを含むイメージに更新してください。
+
+Chafaの共有ライブラリは`/usr/lib/cdrip/`に配置され、CLIがそこから読み込みます。
+改変版ライブラリへの差し替え方、対応ソースの再ビルドと配布条件は、[同梱ライブラリの説明](THIRD_PARTY_ja.md)を参照してください。
+
 ## 備考
 
 このソフトウェアにおいて、「CDDB」は特定の製品の用語を指すのではなく、「CDメタデータデータベース」を指します。
@@ -350,3 +477,5 @@ path=/~cddb/cddb.cgi
 ## License
 
 Under MIT.
+
+同梱するChafaにはLGPLv3以降が適用されます。著作権表示とライセンス全文の場所は[同梱ライブラリの説明](THIRD_PARTY_ja.md)を参照してください。

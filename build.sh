@@ -32,7 +32,7 @@ require_command() {
 detect_version() {
     require_command screw-up
     local detected_version
-    detected_version="$(printf '%s\n' '{version}' | screw-up format | tr -d '\r' | head -n 1)"
+    detected_version="$(printf '%s\n' '{version}' | screw-up -f format | tr -d '\r' | head -n 1)"
     [ -n "${detected_version}" ] || fail 'screw-up did not return a version'
     printf '%s\n' "${detected_version}"
 }
@@ -52,13 +52,13 @@ done
 shift $((OPTIND - 1))
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="$(detect_version)"
+VERSION="${CDRIP_PACKAGE_VERSION:-$(detect_version)}"
 ARCH="${ARCH:-$(dpkg --print-architecture)}"
 BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build}"
 
 echo "Building for ARCH=${ARCH}, VERSION=${VERSION}, BUILD_TYPE=${BUILD_TYPE}"
 
-rm -rf ${BUILD_DIR}
+rm -rf "${BUILD_DIR}"
 CDRIP_PACKAGE_VERSION="${VERSION}" \
 cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
 cmake --build "${BUILD_DIR}" -j 16
@@ -87,28 +87,10 @@ EOF
 # cdrip package
 CLI_ROOT="${PKG_ROOT}/cdrip"
 mkdir -p "${CLI_ROOT}/DEBIAN" "${CLI_ROOT}/usr/bin"
-cp "${BUILD_DIR}/cdrip" "${CLI_ROOT}/usr/bin/"
-SHLIBDEPS_TMP="$(mktemp -d)"
-trap 'rm -rf "${SHLIBDEPS_TMP}"' EXIT
-mkdir -p "${SHLIBDEPS_TMP}/debian"
-cat > "${SHLIBDEPS_TMP}/debian/control" <<EOF
-Source: cdrip
-Section: sound
-Priority: optional
-Maintainer: cd-ripper
-Standards-Version: 4.6.2
-
-Package: cdrip
-Architecture: ${ARCH}
-Description: CLI CD ripper using libcdrip
-EOF
-CLI_DEPS="$(cd "${SHLIBDEPS_TMP}" && dpkg-shlibdeps -O "${CLI_ROOT}/usr/bin/cdrip" | sed -n 's/^shlibs:Depends=//p')"
-if [[ -z "${CLI_DEPS}" ]]; then
-    echo "dpkg-shlibdeps failed to calculate runtime dependencies" >&2
-    exit 1
-else
-    echo "Calculated runtime deps: ${CLI_DEPS}"
-fi
+DESTDIR="${CLI_ROOT}" cmake --install "${BUILD_DIR}" --prefix /usr --component cli
+CLI_DEPS="$("${ROOT_DIR}/scripts/package_shlibdeps.sh" "${CLI_ROOT}" cdrip \
+    "${CLI_ROOT}/usr/bin/cdrip" "${CLI_ROOT}/usr/lib/cdrip/libchafa.so.0")"
+echo "Calculated runtime deps: ${CLI_DEPS}"
 cat > "${CLI_ROOT}/DEBIAN/control" <<EOF
 Package: cdrip
 Version: ${VERSION}
@@ -122,6 +104,7 @@ EOF
 
 dpkg-deb --build "${DEV_ROOT}"
 dpkg-deb --build "${CLI_ROOT}"
+"${ROOT_DIR}/scripts/create_source_archive.sh" "${PKG_ROOT}/cdrip-${VERSION}-source.tar.xz"
 
 echo "Packages created under ${PKG_ROOT}:"
 ls -1 "${PKG_ROOT}"/*.deb

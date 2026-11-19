@@ -123,7 +123,7 @@ min_int() {
 
 detect_version() {
 	require_command screw-up
-	detected_version=$(printf '%s\n' '{version}' | screw-up format | tr -d '\r' | head -n 1)
+	detected_version=$(printf '%s\n' '{version}' | screw-up -f format | tr -d '\r' | head -n 1)
 	[ -n "$detected_version" ] || fail 'screw-up did not return a version'
 	printf '%s\n' "$detected_version"
 }
@@ -496,10 +496,23 @@ validate_cli_deb_package() {
 	assert_file "$tmp_dir/usr/bin/cdrip"
 	assert_file "$tmp_dir/usr/share/doc/$CLI_PACKAGE_NAME/README.md"
 	assert_file "$tmp_dir/usr/share/doc/$CLI_PACKAGE_NAME/README_ja.md"
+	assert_file "$tmp_dir/usr/lib/cdrip/libchafa.so.0"
+	assert_file "$tmp_dir/usr/share/doc/$CLI_PACKAGE_NAME/chafa/COPYING.LESSER"
+	assert_file "$tmp_dir/usr/share/doc/$CLI_PACKAGE_NAME/chafa/COPYING"
+	assert_file "$tmp_dir/usr/share/doc/$CLI_PACKAGE_NAME/THIRD_PARTY.md"
+	case $(dpkg-deb -f "$package_path" Depends) in
+		*libchafa*) fail "Unexpected system Chafa dependency in $package_path" ;;
+	esac
 
 	readelf -h "$tmp_dir/usr/bin/cdrip" >"$tmp_dir/readelf-cli.txt"
 	assert_contains "$tmp_dir/readelf-cli.txt" "$(expected_elf_class "$expected_arch")"
 	assert_contains "$tmp_dir/readelf-cli.txt" "$(expected_elf_machine "$expected_arch")"
+	readelf -d "$tmp_dir/usr/bin/cdrip" >"$tmp_dir/dynamic-cli.txt"
+	assert_contains "$tmp_dir/dynamic-cli.txt" 'RUNPATH'
+	assert_contains "$tmp_dir/dynamic-cli.txt" '$ORIGIN/../lib/cdrip'
+	readelf -h "$tmp_dir/usr/lib/cdrip/libchafa.so.0" >"$tmp_dir/readelf-chafa.txt"
+	assert_contains "$tmp_dir/readelf-chafa.txt" "$(expected_elf_class "$expected_arch")"
+	assert_contains "$tmp_dir/readelf-chafa.txt" "$(expected_elf_machine "$expected_arch")"
 
 	rm -rf "$tmp_dir"
 }
@@ -704,6 +717,7 @@ main() {
 
 	wait_for_all_jobs
 	validate_artifacts
+	"$PROJECT_ROOT/scripts/create_source_archive.sh" "$ARTIFACT_ROOT/source/cdrip-$VERSION-source.tar.xz"
 
 	printf '%s\n' "Artifacts generated in $ARTIFACT_ROOT"
 }
