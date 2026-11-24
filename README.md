@@ -568,3 +568,48 @@ Pull requests are welcome! Please submit them as diffs against the `develop` bra
 Under MIT.
 
 The bundled Chafa is licensed under LGPLv3 or later. See [bundled libraries and corresponding source](THIRD_PARTY.md) for copyright notices and the locations of the complete license texts.
+
+-----
+
+## History
+
+- 1.9.0
+  - Enabled AccurateRip v1 and v2 verification by default for audio CDs.
+  - Added per-drive read offset correction. Use `--measure-offset` with a CD listed in AccurateRip to measure the offset for your drive.
+  - Added automatic detection of Kitty graphics for cover art previews, with ASCII art as a fallback. Use `-nv` to hide previews. The old preview switch `-na` now disables AccurateRip verification.
+  - CDDB lookups now check track counts and durations before selecting a match automatically or using its title to search MusicBrainz.
+  - Fixed cases where a sector read error or a failed FLAC write went unreported.
+- 1.8.0
+  - Added `--tag` to override metadata in both FLAC tags and filenames.
+  - Added `{year}` to filename templates to extract the year from the `date` tag.
+  - Output files and their parent directories now respect the user's umask by default. Use `--permissions` to set an explicit mode.
+- 1.7.0
+  - Added Discogs cover art searches by artist and album for CDDB matches without a MusicBrainz release. The search checks the track list before offering a cover.
+  - Added `prereq.sh` to prepare reusable Podman images for Debian and Ubuntu package builds.
+- 1.6.0
+  - Fixed the progress display so completed tracks show a full bar and zero time remaining.
+  - Fixed the version shown in the CLI banner for packaged builds.
+- 1.5.0
+  - Enabled track and album ReplayGain tagging by default. The ripper saves the tagged files to the destination once it has scanned the whole disc.
+  - Added side-by-side previews for choosing cover art from Discogs or the Cover Art Archive.
+  - Added progress spinners for metadata lookups and ripping.
+  - MusicBrainz title searches now compare individual track lengths. FLAC files ripped with CDDB metadata now retain the disc information needed for later MusicBrainz lookups.
+- 1.4.0
+  - Added MusicBrainz album searches using titles from CDDB matches and removed duplicate MusicBrainz results.
+  - Extended filename templates with `/` to build directory paths, `+` to join fields with spaces, and `:n` to make tag values safe for use in filenames.
+  - Added a fallback to the other cover art source if a Discogs or Cover Art Archive download fails.
+- 1.3.0
+  - Added Discogs cover art and the `--discogs` option to choose which cover art source to try first.
+  - The default output path now gives each disc in a multi-disc release its own directory, using the disc title or number.
+  - Added packages for Debian trixie.
+- 1.2.0
+  - CDDB queries now run in parallel. Fixed metadata lookup for discs containing both audio and data tracks.
+  - Added `--filter-title` to match album titles against a regular expression.
+  - Added `--speed-slow` and `--speed-fast` to request 1x or maximum drive read speed.
+  - Fixed parsing of inline comments in `cdrip.conf`.
+- 1.1.0
+  - Added tag merging across selected CDDB matches and fuzzy MusicBrainz matching based on the disc's table of contents.
+  - Added ASCII cover art previews in the terminal and converted cover images to PNG for embedding.
+  - Changed the default FLAC compression level in `best` mode from 8 to 5.
+- 1.0.0
+  - Initial Linux release with audio CD ripping to FLAC, CDDB and MusicBrainz tagging, embedded cover art, and a repeat mode for processing multiple discs.
